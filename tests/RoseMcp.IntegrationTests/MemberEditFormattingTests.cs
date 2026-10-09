@@ -33,7 +33,7 @@ public sealed class MemberEditFormattingTests
 
 		result.Applied.ShouldBeTrue();
 		result.Symbol.ShouldBe("string Library.Greeter.Greet(string name)");
-		result.Members.ShouldBe(["Greet"]);
+		result.Members.ShouldBeNull("the symbol already names the one member written");
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 

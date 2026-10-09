@@ -22,6 +22,12 @@ public sealed record DiagnosticsRequest
 
 	public int MaxResults { get; init; } = 200;
 
+	/// <summary>Only diagnostics with this id, ignoring case; null for every id.</summary>
+	public string? Id { get; init; }
+
+	/// <summary>True for only diagnostics in source-generated code, false for only those in files.</summary>
+	public bool? IsGenerated { get; init; }
+
 	/// <summary>
 	/// Leaves out the projects with no restore output whose errors are references that resolve to nothing,
 	/// and names them in a notice instead. Only a solution-wide pass asks this: there two such projects

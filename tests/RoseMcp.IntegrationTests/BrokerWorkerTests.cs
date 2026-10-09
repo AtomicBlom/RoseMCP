@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
 
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
+
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 
@@ -346,6 +349,38 @@ public sealed class BrokerWorkerTests
 		replacement.ProcessId.ShouldNotBe(original.ProcessId);
 		replacement.SolutionPath.ShouldBe(fixture.SolutionPath);
 		replacement.IsAlive.ShouldBeTrue($"the replacement should be alive; exit reason was '{replacement.ExitReason}'");
+	}
+
+	/// <summary>
+	/// A worker spoken to directly, as one is when run standalone against a solution, writes its
+	/// text block with its plus signs as themselves. The broker reads only a worker's structured
+	/// content, so nothing reached through the broker would notice a worker registration that left
+	/// the SDK's default encoder in place.
+	/// </summary>
+	[Test]
+	public async Task A_standalone_worker_spells_its_source_as_written()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		var transport = new StdioClientTransport(new StdioClientTransportOptions
+		{
+			Command = WorkerLauncher.ResolveWorkerPath(new BrokerOptions()),
+			Arguments = ["--solution", fixture.SolutionPath],
+			Name = "rose-worker text test",
+		});
+
+		await using var worker = await McpClient.CreateAsync(transport, cancellationToken: cancellationToken);
+
+		var result = await worker.CallToolAsync(
+			ToolNames.SymbolInfo,
+			new Dictionary<string, object?> { ["symbols"] = new[] { "Core.Calculator.Add" }, ["includeSource"] = true },
+			cancellationToken: cancellationToken);
+
+		result.IsError.ShouldNotBe(true);
+		var text = result.Content.OfType<TextContentBlock>().ShouldHaveSingleItem().Text;
+		text.ShouldContain("left + right", Case.Sensitive);
+		text.ShouldNotContain("\\" + "u002B", Case.Sensitive);
 	}
 
 	/// <summary>The worker this server started, waited for rather than assumed to exist already.</summary>

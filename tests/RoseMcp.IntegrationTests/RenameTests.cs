@@ -13,7 +13,7 @@ public sealed class RenameTests
 		var result = await RenameAsync(session, fixture, "Product");
 
 		result.Applied.ShouldBeTrue();
-		result.FilesChanged.ShouldBe(2);
+		result.ChangedFiles.Count.ShouldBe(2);
 		result.OldName.ShouldBe("Multiply");
 		result.Conflicts.ShouldBeEmpty();
 
@@ -39,9 +39,9 @@ public sealed class RenameTests
 
 		var result = await RenameAsync(session, fixture, "Product");
 
-		result.Diff.ShouldContain("-\tpublic static int Multiply(int left, int right) => left * right;", Case.Sensitive);
-		result.Diff.ShouldContain("+\tpublic static int Product(int left, int right) => left * right;", Case.Sensitive);
-		result.Diff.ShouldContain("@@", Case.Sensitive);
+		result.Diff.ShouldNotBeNull().ShouldContain("-\tpublic static int Multiply(int left, int right) => left * right;", Case.Sensitive);
+		result.Diff.ShouldNotBeNull().ShouldContain("+\tpublic static int Product(int left, int right) => left * right;", Case.Sensitive);
+		result.Diff.ShouldNotBeNull().ShouldContain("@@", Case.Sensitive);
 	}
 
 	[Test]

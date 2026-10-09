@@ -16,6 +16,7 @@ public static class ToolNames
 	public const string WorkspaceStatus = "rose_workspace_status";
 	public const string WorkspaceReload = "rose_workspace_reload";
 	public const string WorkspaceClose = "rose_workspace_close";
+	public const string WorkspaceList = "rose_workspace_list";
 	public const string Diagnostics = "rose_diagnostics";
 	public const string FindReferences = "rose_find_references";
 	public const string SymbolInfo = "rose_symbol_info";

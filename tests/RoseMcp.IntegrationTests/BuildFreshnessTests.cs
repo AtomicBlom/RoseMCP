@@ -139,6 +139,7 @@ public sealed class BuildFreshnessTests
 			fixture.SolutionPath,
 			[],
 			restore: null,
+			[],
 			snapshot.Revision,
 			loadSeconds: 0,
 			TestContext.Current!.Execution.CancellationToken);

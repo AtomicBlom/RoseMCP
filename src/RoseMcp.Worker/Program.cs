@@ -2,6 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
+using ModelContextProtocol;
+
 using RoseMcp.Contracts;
 
 using RoseMcp.Logging;
@@ -57,7 +59,7 @@ internal static class Program
 				Version = HostVersion.Of(typeof(Program).Assembly),
 			})
 			.WithStdioServerTransport()
-			.WithToolsFromAssembly()
+			.WithToolsFromAssembly(typeof(Program).Assembly, ToolJson.Readable(McpJsonUtilities.DefaultOptions))
 			.WithAbsolutePathArguments()
 			.WithToolErrorMessages(options.SolutionPath);
 

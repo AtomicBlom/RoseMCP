@@ -32,6 +32,14 @@ public sealed record ChangeSignatureRequest
 	/// </summary>
 	public IReadOnlyList<string> Arguments { get; init; } = [];
 
+	/// <summary>
+	/// Imports the new or retyped parameters need, each as <see cref="ImportDirective.Parse"/> reads one,
+	/// ensured in every file whose declaration this rewrites: the member named, and each override and
+	/// implementation that moves with it. Not at the call sites, which name no parameter type, and where
+	/// an import nothing uses is IDE0005. One already in scope is reported rather than added.
+	/// </summary>
+	public IReadOnlyList<string> Usings { get; init; } = [];
+
 	/// <summary>Which file, when the member is declared in more than one -- a partial.</summary>
 	public string? FilePath { get; init; }
 

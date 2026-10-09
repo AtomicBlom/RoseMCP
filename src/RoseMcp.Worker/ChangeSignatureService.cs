@@ -55,6 +55,8 @@ public static class ChangeSignatureService
 				"Nothing to change. Pass parameters for the parameter list, accessibility for who may see it, or both.");
 		}
 
+		GuardUsings(request);
+
 		var plan = ParameterPlan.None;
 		var wanted = default(SeparatedSyntaxList<ParameterSyntax>);
 		IReadOnlyList<IMethodSymbol> group = [];
@@ -110,7 +112,7 @@ public static class ChangeSignatureService
 
 		progress?.Report("Rewriting", 55);
 
-		var applied = await ApplyAsync(snapshot.Solution, work, plan, supplied, cancellationToken);
+		var applied = await ApplyAsync(snapshot.Solution, work, plan, supplied, request.Usings, cancellationToken);
 
 		progress?.Report(request.Apply ? "Writing the changed files" : "Building the diff", 70);
 
@@ -119,7 +121,10 @@ public static class ChangeSignatureService
 		if (request.Verify && edit.Changed) progress?.Report("Compiling the solution to see what moved", 80);
 
 		await edit.VerifyAsync(
-			target.FilePath, EditVerification.AllProjects(applied.Solution), cancellationToken);
+			target.FilePath,
+			EditVerification.AllProjects(applied.Solution),
+			UsingsReach(snapshot.Solution, work),
+			cancellationToken);
 
 		var unchanged = await DescribeUnchangedAsync(snapshot.Solution, work, applied, plan, cancellationToken);
 
@@ -140,7 +145,7 @@ public static class ChangeSignatureService
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
 			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
-			TotalErrorCount = edit.Verification.TotalCount,
+			PreexistingErrorCount = edit.Verification.PreexistingCount,
 			ProjectsChecked = edit.Verification.Projects,
 			ChangedFiles = edit.Outcome.ChangedFiles,
 			Notices = notices,
@@ -148,6 +153,46 @@ public static class ChangeSignatureService
 
 		return new MutationResult<SignatureChangeResult>(result, edit.Kept);
 	}
+
+	/// <summary>
+	/// Refuses <c>usings</c> on a change that writes no parameter, and an entry in it that is not an
+	/// import, before the search across the solution rather than after it.
+	/// <para>
+	/// The imports go into the files whose parameter lists change, so a change of accessibility alone has
+	/// nowhere to put them, and writing one anyway would be an import nothing uses -- IDE0005.
+	/// </para>
+	/// </summary>
+	/// <exception cref="ArgumentException">There are usings and no parameters, or one is not an import.</exception>
+	private static void GuardUsings(ChangeSignatureRequest request)
+	{
+		var named = request.Usings.Where(requested => !string.IsNullOrWhiteSpace(requested)).ToArray();
+
+		if (named.Length == 0) return;
+
+		if (request.Parameters is null)
+		{
+			throw new ArgumentException(
+				"usings imports what a new or retyped parameter names, into each file whose declaration this "
+					+ "rewrites, and no parameters were given. Pass parameters with it, or call rose_add_using to "
+					+ "import into a file on its own.");
+		}
+
+		foreach (var requested in named) _ = ImportDirective.Parse(requested);
+	}
+
+	/// <summary>
+	/// The files the caller's <c>usings</c> reach: each one holding a declaration whose parameter list
+	/// changes. A name left unresolved anywhere else -- in an argument written at a call site -- is
+	/// one the suggestion answers with rose_add_using, since passing usings again would not reach it.
+	/// </summary>
+	private static IReadOnlyCollection<string> UsingsReach(Solution solution, IReadOnlyList<DocumentWork> work) =>
+	[
+		.. work
+			.Where(item => item.Declarations.Values.Any(change => change.Parameters is not null))
+			.Select(item => solution.GetDocument(item.Id)?.FilePath)
+			.OfType<string>()
+			.Distinct(StringComparer.OrdinalIgnoreCase),
+	];
 
 	/// <summary>
 	/// The declarations that have to change together: the member, the declaration it overrides or
@@ -707,11 +752,13 @@ public static class ChangeSignatureService
 		IReadOnlyList<DocumentWork> work,
 		ParameterPlan plan,
 		IReadOnlyDictionary<string, string> supplied,
+		IReadOnlyList<string> usings,
 		CancellationToken cancellationToken)
 	{
 		var rewritten = new List<Location>();
 		var refused = new List<RefusedCallSite>();
 		var documentation = new List<string>();
+		var imports = new List<FileImports>();
 
 		// Every document is read from the solution as it arrived, not from the one being built up.
 		// The spans in `work` were found there, and so was the binding each call site is rewritten
@@ -753,10 +800,58 @@ public static class ChangeSignatureService
 
 			var rules = await Whitespace.RulesForAsync(document, cancellationToken);
 
+			if (Imported(document, root, model, updated, item, usings, rules, cancellationToken) is { } import)
+			{
+				updated = import.Root;
+				imports.Add(import.Report);
+			}
+
 			solution = await NormalisedAsync(solution, item.Id, updated, marker, rules, cancellationToken);
 		}
 
-		return new Applied(solution, rewritten, refused, documentation);
+		return new Applied(solution, rewritten, refused, documentation, imports);
+	}
+
+	/// <summary>
+	/// <paramref name="updated"/> with the imports the caller asked for, where this document holds a
+	/// declaration whose parameters change, or null where it holds none or nothing was asked.
+	/// <para>
+	/// Only the declarations' files. A new or retyped parameter is written into each override and
+	/// implementation as well as into the member named, so each of those files needs the type as much as
+	/// the first one does; a call site names no parameter type, and an import written there that nothing
+	/// uses is IDE0005, which is a build error where the analyzers are turned up.
+	/// </para>
+	/// <para>
+	/// Asked of the model of the document as it arrived, which is what can say a namespace is already in
+	/// scope from a global or implicit using, and done before the whitespace pass: a directive is written
+	/// in the file's own layout and needs nothing from it. The import region joins what this document was
+	/// asked to change, so the write does not report it as a change nobody asked for.
+	/// </para>
+	/// </summary>
+	private static (SyntaxNode Root, FileImports Report)? Imported(
+		Document document,
+		SyntaxNode root,
+		SemanticModel model,
+		SyntaxNode updated,
+		DocumentWork item,
+		IReadOnlyList<string> usings,
+		WhitespaceRules rules,
+		CancellationToken cancellationToken)
+	{
+		var reshapes = item.Declarations.Values.Any(change => change.Parameters is not null);
+		var wanted = usings.Count > 0 && reshapes;
+
+		if (!wanted) return null;
+		if (root is not CompilationUnitSyntax before || updated is not CompilationUnitSyntax after) return null;
+
+		var style = UsingStyle.For(document.Project, model.SyntaxTree, before, rules.LineEnding);
+		var insertion = UsingDirectives.Ensure(after, model, usings, style, cancellationToken);
+
+		if (insertion.Changed) item.Asked.Add(UsingDirectives.Region(before));
+
+		var file = document.FilePath ?? document.Name;
+
+		return (insertion.Root, new FileImports(file, insertion.Added, insertion.AlreadyInScope));
 	}
 
 	/// <summary>What the whole change asks of each file it rewrites, which is what its work recorded.</summary>
@@ -940,7 +1035,6 @@ public static class ChangeSignatureService
 		// First, because it is the only thing here that is nobody's work but this tool's.
 		foreach (var defect in Defects(applied, verification)) yield return defect;
 
-		if (!request.Apply) yield return "Preview only; nothing was written to disk.";
 		if (outcome.ChangedFiles.Count == 0) yield return "The signature already read exactly like that.";
 
 		if (access.Count > 0 && AccessibilityModifiers.Spelled(symbol.DeclaredAccessibility) is { } was)
@@ -966,9 +1060,11 @@ public static class ChangeSignatureService
 			}
 		}
 
-		// What the diff could not show, which for a change reaching several files is worth saying
-		// before anything about what compiled.
+		// What the write did beyond what it was asked to, which for a change reaching several files is
+		// worth saying before anything about what compiled.
 		foreach (var notice in outcome.Notices) yield return notice;
+
+		foreach (var notice in ImportNotices(applied.Imports)) yield return notice;
 
 		if (plan.Converted.Any())
 		{
@@ -983,47 +1079,42 @@ public static class ChangeSignatureService
 				+ "compile reports it only where those are errors.";
 		}
 
-		if (unchanged.Count > 0)
-		{
-			yield return $"{unchanged.Count} use(s) were left as they were; each says why.";
-		}
-
-		if (!verification.Ran)
-		{
-			if (outcome.ChangedFiles.Count > 0)
-			{
-				yield return "Nothing was compiled, so this says nothing about what the change broke. Pass "
-					+ "verify=true, or ask rose_diagnostics with scope=solution.";
-			}
-
-			yield break;
-		}
+		if (!verification.Ran) yield break;
 
 		foreach (var notice in verification.Notices) yield return notice;
 
-		// What this change did, in prose, as every writing tool reports it. A result that silently
-		// stopped at twenty entries reads as a change that broke twenty things.
-		if (verification.Introduced.Count > 0)
+		// Only where the list was cut: a result that silently stopped at twenty entries reads as a change
+		// that broke twenty things, and one that did not stop says its count by its length.
+		if (verification.Introduced.Count > EditPipeline.Listed)
 		{
-			yield return verification.Introduced.Count > EditPipeline.Listed
-				? $"This introduced {verification.Introduced.Count} error(s) in the solution; the first "
-					+ $"{EditPipeline.Listed} are listed."
-				: $"This introduced {verification.Introduced.Count} error(s) in the solution.";
+			yield return $"This introduced {verification.Introduced.Count} errors; introducedDiagnostics lists the "
+				+ $"first {EditPipeline.Listed}.";
 		}
 
-		if (verification.TotalCount == 0) yield return verification.Clean("The whole solution");
-
-		var existing = verification.TotalCount - verification.Introduced.Count;
-
-		if (existing > 0)
-		{
-			yield return $"{existing} error(s) in the solution were there before this change.";
-		}
+		if (verification.HasNoErrors) yield return verification.Clean("The whole solution");
+		if (verification.PreexistingAdvice() is { } advice) yield return advice;
 
 		// A new or retyped parameter names a type, and the declaration's file is as likely to be
 		// missing the import for it as any other. This tool writes to files it was never pointed at,
 		// so the caller has no reason to have thought about their imports at all.
 		foreach (var suggestion in verification.Suggestions) yield return suggestion;
+	}
+
+	/// <summary>
+	/// What the caller's usings did in each file, named by file because a change reaching overrides and
+	/// implementations imports into several, and an import already in scope in one of them is the reason
+	/// it is missing from that file's diff. A file held by more than one project is said once.
+	/// </summary>
+	private static IEnumerable<string> ImportNotices(IReadOnlyList<FileImports> imports)
+	{
+		foreach (var file in imports.DistinctBy(import => import.FilePath, StringComparer.OrdinalIgnoreCase))
+		{
+			var name = Path.GetFileName(file.FilePath);
+
+			if (file.Added.Count > 0) yield return $"Imported {string.Join(", ", file.Added)} into {name}.";
+
+			foreach (var covered in file.AlreadyInScope) yield return $"In {name}, did not import {covered}.";
+		}
 	}
 
 	/// <summary>
@@ -1230,7 +1321,8 @@ public static class ChangeSignatureService
 
 		/// <summary>
 		/// What rewriting this document asks to change: the parameter lists and argument lists it
-		/// rewrites, and the documentation above a declaration whose param tags move with them.
+		/// rewrites, the documentation above a declaration whose param tags move with them, and the
+		/// import region where the caller's usings were written in.
 		/// </summary>
 		public List<TextSpan> Asked { get; } = [];
 	}
@@ -1246,9 +1338,16 @@ public static class ChangeSignatureService
 	/// <summary>One declaration whose accessibility changes, and what it changes to.</summary>
 	private sealed record AccessChange(ISymbol Symbol, Accessibility Accessibility);
 
+	/// <summary>
+	/// What importing into one declaration's file did: the imports written, and the ones that needed
+	/// nothing, each with the reason.
+	/// </summary>
+	private sealed record FileImports(string FilePath, IReadOnlyList<string> Added, IReadOnlyList<string> AlreadyInScope);
+
 	private sealed record Applied(
 		Solution Solution,
 		IReadOnlyList<Location> RewrittenCallSites,
 		IReadOnlyList<RefusedCallSite> RefusedCallSites,
-		IReadOnlyList<string> Documentation);
+		IReadOnlyList<string> Documentation,
+		IReadOnlyList<FileImports> Imports);
 }

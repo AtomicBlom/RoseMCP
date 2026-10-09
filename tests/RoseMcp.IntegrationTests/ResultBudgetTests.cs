@@ -1,58 +1,84 @@
 using System.Text.Json;
 
+using ModelContextProtocol;
+
+using RoseMcp.Broker;
+using RoseMcp.Broker.Tools;
+
 namespace RoseMcp.IntegrationTests;
 
 /// <summary>
 /// What an answer costs the caller who has to read it, per item.
 /// <para>
 /// The unit suite's <c>ToolBudgetTests</c> measures what the model is shown before it calls
-/// anything; nothing measured what came back. The surface it did not cover is where the cost
-/// actually is: a compact outline of a 24-member type came back at 10.1 KB with both of its size
-/// controls off, and an agent that pays that once and learns nothing it could not have grepped does
-/// not pay it twice. Four cards in tier 3 are about result size, and without a number they are
-/// unverifiable and silently regress.
+/// anything; this measures what comes back, which is where most of the cost is. An agent that pays
+/// for a large answer once and learns nothing it could not have grepped does not pay it twice.
+/// Work that shrinks a result is unverifiable without a number, and a result nobody measures
+/// silently grows.
 /// </para>
 /// <para>
 /// Per item rather than per result, because a result is as big as the answer needs to be and the
-/// question is what each item of it costs. The ceilings below are what the shapes cost now: they are
-/// a ratchet for work that has not happened, so the cards that shrink these results lower them, and
-/// the diff is the record of what the work bought.
+/// question is what each item of it costs. Each ceiling sits just above what its shape measures: it
+/// is a ratchet, so a change that shrinks a result lowers it, and the diff is the record of what the
+/// change bought.
 /// </para>
 /// <para>
-/// Measured over the record as the tool returns it, serialised the way a structured result is, which
-/// is within a few percent of the wire and stable enough to compare. Attribution is added by the
-/// broker, so a real result carries about 150 bytes this does not -- once per result, not per item.
+/// Measured over the record as the tool returns it, serialised with the MCP layer's own options --
+/// which leave out nulls, so a field a result does not fill costs nothing here, as it costs nothing
+/// on the wire. Attribution is added by the broker, so a real read result carries about 150 bytes
+/// this does not -- once per result, not per item. The write is measured after the broker's
+/// shaping, attribution included, because that shaping is most of what makes it small.
 /// </para>
 /// </summary>
 public sealed class ResultBudgetTests
 {
 	/// <summary>
-	/// One outlined member with both of the tool's size controls off, which costs 512. The tool's own
-	/// description says to use it "instead of reading the file to find out what is in it", and at
-	/// this size a grep answers the same question for a twentieth of it, because the location record
-	/// on each member carries the absolute path, the whole source line, the containing member, the
-	/// project and its test-ness. Card 11's target is under 120.
+	/// One outlined member at the tool's defaults, which costs 70: its name, kind, line and
+	/// accessibility, and nothing else. Measured over the members alone, the type they belong to taken
+	/// out, because what the type says once -- the file, the project, its declarations -- is the cost
+	/// the members no longer pay. A field that every member of a type shares, added back per member,
+	/// is what this exists to catch: the absolute path alone is longer than the rest of an entry.
 	/// </summary>
-	private const int PerOutlinedMember = 520;
+	private const int PerOutlinedMember = 75;
 
 	/// <summary>
-	/// One reference with previews off, which costs 275. Every hit repeats the absolute path and
-	/// carries four facets the tool will not filter on, which is what makes an overflow answerable
-	/// only with a bigger artefact. Card 11e is where both halves of that go.
+	/// One member of a referenced assembly's type in rose_symbol_info, which costs 172 -- StringBuilder's
+	/// 101 come to about 17 KB. Dearer than an outlined member because its signature is always given: a
+	/// metadata member has no line, so overloads would otherwise be one name repeated. The signature is
+	/// most of it, the containing type's full name included, which is the one field this could still
+	/// shed.
 	/// </summary>
-	private const int PerReference = 280;
+	private const int PerMetadataMember = 180;
 
 	/// <summary>
-	/// A whole write result for adding a doc comment, which costs 1,895 -- the floor for an edit that
-	/// introduces no diagnostic at all, where card 11b measured about 4,000 for one that did. Most of
-	/// it is the doc comment the caller composed, read back in the diff. An edit loop pays this per
-	/// edit, so it is the number tier 3 moves furthest.
+	/// One listed reference with previews off, which costs 71 over string's uses in the fixture: its line,
+	/// column and containing member, with its file's path, project and test-ness said once for every
+	/// reference in that file rather than on each, and the path relative to the caller's directory. Measured over a symbol whose files hold several
+	/// references apiece, since a file per reference is the case where the grouping saves nothing and
+	/// the case where size never matters.
 	/// </summary>
-	private const int PerWriteResult = 1950;
+	private const int PerReference = 75;
 
 	/// <summary>
-	/// The read shapes, measured against one loaded fixture because a load is the expensive part and
-	/// sharing one is card 18's work rather than this test's.
+	/// What one entry of a read that takes a list adds to its answer: the request as sent, its status
+	/// and the nesting, which costs 69 over three names in the fixture -- most of it the
+	/// names themselves. Measured beyond the answer, which has budgets of its own, so a field every
+	/// answer of a batch shares, added back per entry, fails here.
+	/// </summary>
+	private const int PerBatchEntry = 75;
+
+	/// <summary>
+	/// A whole write result for adding a doc comment, as the caller is shown it, which costs 503: the
+	/// symbol, where the file changed, which projects compiled clean, and the attribution. With the diff
+	/// carried -- the doc comment the caller had just composed, read back -- and every path absolute, it
+	/// costs about three times that. An edit loop pays this per edit, which makes it the result whose size
+	/// matters most.
+	/// </summary>
+	private const int PerWriteResult = 550;
+
+	/// <summary>
+	/// The read shapes, measured against one loaded fixture, because a load is the expensive part of
+	/// this test and one is enough for both.
 	/// </summary>
 	[Test]
 	public async Task A_read_costs_no_more_per_item_than_its_budget()
@@ -75,26 +101,120 @@ public sealed class ResultBudgetTests
 
 		AssertWithin(
 			PerOutlinedMember,
-			Size(outline) - Size(outline with { Types = [] }),
+			Size(outline) - Size(outline with { Types = [.. outline.Types.Select(type => type with { Members = [] })] }),
 			members,
 			"an outlined member with signatures and documentation off");
 
-		var references = await NavigationService.FindReferencesAsync(
-			snapshot,
-			new SymbolTarget { Symbol = "Library.Greeter" },
-			200,
-			TestContext.Current!.Execution.CancellationToken,
-			includePreviews: false);
+		// A symbol used all over the fixture, so files hold several references each, as they do in
+		// any answer large enough for its size to matter.
+		// Measured as the broker sends it, with each path relative to a caller standing in the
+		// solution's directory, since that shortening is the broker's and the worker never does it.
+		var references = ResultPaths.RelativeTo(
+			await NavigationService.FindReferencesAsync(
+				snapshot,
+				new SymbolTarget { Symbol = "System.String" },
+				1000,
+				TestContext.Current!.Execution.CancellationToken,
+				includePreviews: false),
+			Path.GetDirectoryName(fixture.SolutionPath)!,
+			out _);
 
-		var hits = references.References.Count + references.Definitions.Count;
-		hits.ShouldBeGreaterThan(0, "the fixture should have references to measure");
+		var hits = references.Files.Sum(file => file.References.Count);
+		hits.ShouldBeGreaterThan(references.Files.Count, "the fixture should have files with several references");
 
 		AssertWithin(
 			PerReference,
-			Size(references) - Size(references with { References = [], Definitions = [] }),
+			Size(references) - Size(references with { Files = [] }),
 			hits,
 			"a reference with previews off");
+
+		// A list of reads costs its answers and, per entry, only what matches an answer to its request:
+		// what every answer shares -- the revision, the workspace, what the snapshot reconciled -- is on
+		// the batch once.
+		string[] asked = ["Library.Greeter.Greet(string)", "Library.Greeter.PrefixLength", "Library.Greeter.Count"];
+		var batch = await ReadBatches.EachAsync(
+			snapshot,
+			asked,
+			(request, used) => NavigationService.DescribeAsync(
+				snapshot, new SymbolTarget { Symbol = request }, TestContext.Current!.Execution.CancellationToken, used: used),
+			answer => answer.Members?.Count ?? 0,
+			(answer, shared) => answer with { Notices = ReadBatches.Own(answer.Notices, shared) },
+			TestContext.Current!.Execution.CancellationToken);
+
+		batch.Found.ShouldBe(asked.Length);
+
+		AssertWithin(
+			PerBatchEntry,
+			Size(batch) - Size(batch with { Results = [] }) - batch.Results.Sum(entry => Size(entry.Answer!)),
+			asked.Length,
+			"an entry of a read batch, beyond its answer");
+
+		var library = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.Text.StringBuilder" },
+			TestContext.Current!.Execution.CancellationToken);
+
+		var listed = library.Members.ShouldNotBeNull().Count;
+		listed.ShouldBeGreaterThan(0, "StringBuilder should have members to measure");
+
+		AssertWithin(
+			PerMetadataMember,
+			Size(library) - Size(library with { Members = [] }),
+			listed,
+			"a referenced assembly's member, which always carries its signature");
 	}
+
+	/// <summary>
+	/// A list of reads is bounded as a whole, not per entry: the cap it takes is shared, so the symbols
+	/// past it answer with their shape and the answer stays the size one call's would. Measured over
+	/// symbols that overrun the cap between them, previews on.
+	/// </summary>
+	[Test]
+	public async Task A_list_of_heavy_reads_costs_no_more_than_one_answer()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		string[] used = ["System.String", "System.Int32", "System.Object", "System.Console", "System.Linq.Enumerable"];
+		var references = await ReadBatches.EachAsync(
+			snapshot,
+			used,
+			(request, before) => NavigationService.FindReferencesAsync(
+				snapshot, new SymbolTarget { Symbol = request }, MaxResults, cancellationToken, used: before),
+			answer => answer.Files.Sum(file => file.References.Count),
+			(answer, shared) => answer with { Notices = ReadBatches.Own(answer.Notices, shared) },
+			cancellationToken);
+
+		references.Results.Sum(entry => entry.Answer?.Files.Sum(file => file.References.Count) ?? 0).ShouldBeLessThanOrEqualTo(MaxResults);
+		references.Results.Count(entry => entry.Answer?.Shape is not null).ShouldBeGreaterThan(0, "a symbol past the shared cap gives its shape");
+		Size(references).ShouldBeLessThanOrEqualTo(WholeReferenceBatch, $"a batch of {used.Length} heavy reference searches");
+
+		string[] types = ["System.Text.StringBuilder", "System.Collections.Generic.List`1", "System.String"];
+		var described = await ReadBatches.EachAsync(
+			snapshot,
+			types,
+			(request, before) => NavigationService.DescribeAsync(snapshot, new SymbolTarget { Symbol = request }, cancellationToken, used: before),
+			answer => answer.Members?.Count ?? 0,
+			(answer, shared) => answer with { Notices = ReadBatches.Own(answer.Notices, shared) },
+			cancellationToken);
+
+		described.Results.Sum(entry => entry.Answer?.Members?.Count ?? 0).ShouldBeLessThanOrEqualTo(OutlineService.DefaultMaxMembers);
+		Size(described).ShouldBeLessThanOrEqualTo(WholeMemberBatch, $"a batch of {types.Length} library types");
+	}
+
+	/// <summary>
+	/// A reference cap the fixture's symbols overrun between them, standing in for the default against a
+	/// solution large enough to overrun that.
+	/// </summary>
+	private const int MaxResults = 20;
+
+	/// <summary>A whole batch of reference searches sharing the cap above, measured at 2,742.</summary>
+	private const int WholeReferenceBatch = 3000;
+
+	/// <summary>A whole batch of library types' member listings sharing the default member cap, measured at 35,924 -- what one type listed to the cap costs, rather than that once per type.</summary>
+	private const int WholeMemberBatch = 37000;
 
 	/// <summary>
 	/// And the write shape, which is the one an edit loop pays over and over. Its own fixture, since
@@ -106,8 +226,8 @@ public sealed class ResultBudgetTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		// A doc comment and nothing else, which is the edit card 11b measured: the caller composed
-		// every character of it and pays to read it back in the diff.
+		// A doc comment and nothing else, the cheapest edit there is: the caller composed every
+		// character of it, and reading it back in a diff would teach them nothing.
 		var result = await MemberEdits.ReplaceAsync(
 			session,
 			"Library.Greeter.Count",
@@ -115,7 +235,18 @@ public sealed class ResultBudgetTests
 
 		result.Applied.ShouldBeTrue($"the edit should apply; notices were '{string.Join(" | ", result.Notices)}'");
 
-		AssertWithin(PerWriteResult, Size(result), 1, "a write result for a one-line edit");
+		// Attributed and shaped the way the broker does it, for a session standing in the solution's
+		// directory, since that is what the caller reads.
+		var shown = WriteForCaller.Shape(
+			WritePaths.Relative(
+				result with { Workspace = fixture.SolutionPath, WorkspaceKey = RoseMcp.Solutions.WorkspaceKey.For(fixture.SolutionPath) },
+				Path.GetDirectoryName(fixture.SolutionPath)!),
+			includeDiff: false);
+
+		shown.Diff.ShouldBeNull("an applied write leaves the diff off unless asked");
+		shown.ChangedFiles.ShouldHaveSingleItem().FilePath.ShouldNotStartWith(fixture.Path(), Case.Insensitive);
+
+		AssertWithin(PerWriteResult, Size(shown), 1, $"a write result for a one-line edit ({Size(result)} as the worker sent it)");
 	}
 
 	/// <summary>
@@ -125,7 +256,7 @@ public sealed class ResultBudgetTests
 	/// The size passed in is the marginal one -- the result with the items in it, less the same
 	/// result with none -- so the answer's own scaffold is not divided across however many items a
 	/// fixture happens to have. That makes the number a property of the item's shape rather than of
-	/// the fixture, which is what lets a card lower it and mean something.
+	/// the fixture, which is what lets a change lower it and mean something.
 	/// </para>
 	/// </summary>
 	private static void AssertWithin(int budget, int size, int items, string shape)
@@ -138,5 +269,5 @@ public sealed class ResultBudgetTests
 	}
 
 	private static int Size<T>(T result) =>
-		JsonSerializer.Serialize(result, new JsonSerializerOptions(JsonSerializerDefaults.Web)).Length;
+		JsonSerializer.Serialize(result, McpJsonUtilities.DefaultOptions).Length;
 }

@@ -173,9 +173,23 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 					+ "just built, the registration is stale and this session is debugging the wrong build.");
 	}
 
-	/// <summary>Adds a tracepoint to the attached target.</summary>
-	public LiveTracepoint AddTracepoint(string location, string? logMessage, int? logEveryNthHit, string? condition)
-		=> RequireSession().Bindings.AddTracepoint(location, logMessage, logEveryNthHit, condition);
+	/// <summary>
+	/// Adds tracepoints to the attached target, each request's outcome its own entry: one that does
+	/// not parse is refused there and the rest are added regardless. Answers with the cursor from
+	/// before any tracepoint was bound, since a first hit can be recorded before the answer leaves;
+	/// see <see cref="CursorStamp"/>.
+	/// </summary>
+	/// <exception cref="InvalidOperationException">No target is attached.</exception>
+	/// <exception cref="ArgumentException">The list is empty.</exception>
+	public LiveTracepointBatch AddTracepoints(IReadOnlyList<AddTracepointRequest> tracepoints)
+	{
+		var before = EventCursor;
+
+		return RequireSession().Bindings.AddTracepoints(tracepoints) with
+		{
+			Cursor = before,
+		};
+	}
 
 	public LiveTracepointList ListTracepoints()
 	{
@@ -184,17 +198,35 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return new LiveTracepointList { Tracepoints = session?.Bindings.ListTracepoints() ?? [] };
 	}
 
-	public LiveTracepointList RemoveTracepoint(string id)
+	/// <summary>
+	/// Removes tracepoints by id and returns what is left. With no target attached nothing is held,
+	/// so every id is not found rather than the call failing: removing is safe to call speculatively.
+	/// </summary>
+	/// <exception cref="ArgumentException">The list is empty.</exception>
+	public LiveTracepointRemoval RemoveTracepoints(IReadOnlyList<string?> tracepointIds)
 	{
 		var session = Attached();
 
-		session?.Bindings.Remove(id);
-		return new LiveTracepointList { Tracepoints = session?.Bindings.ListTracepoints() ?? [] };
+		return session?.Bindings.RemoveTracepoints(tracepointIds)
+			?? new LiveTracepointRemoval { Results = TargetBreakpoints.NoneHeld("tracepointIds", tracepointIds) };
 	}
 
-	/// <summary>Sets a stopping breakpoint on the attached target.</summary>
-	public LiveBreakpoint SetBreakpoint(string location, int? autoContinueSeconds, string? condition)
-		=> RequireSession().Bindings.AddBreakpoint(location, autoContinueSeconds, condition);
+	/// <summary>
+	/// Sets stopping breakpoints on the attached target, each request's outcome its own entry, as
+	/// <see cref="AddTracepoints"/> does, and answers with the cursor from before any was bound for
+	/// the same reason.
+	/// </summary>
+	/// <exception cref="InvalidOperationException">No target is attached.</exception>
+	/// <exception cref="ArgumentException">The list is empty.</exception>
+	public LiveBreakpointBatch SetBreakpoints(IReadOnlyList<SetBreakpointRequest> breakpoints)
+	{
+		var before = EventCursor;
+
+		return RequireSession().Bindings.AddBreakpoints(breakpoints) with
+		{
+			Cursor = before,
+		};
+	}
 
 	public LiveBreakpointList ListBreakpoints()
 	{
@@ -203,12 +235,17 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return new LiveBreakpointList { Breakpoints = session?.Bindings.ListBreakpoints() ?? [] };
 	}
 
-	public LiveBreakpointList RemoveBreakpoint(string id)
+	/// <summary>
+	/// Removes stopping breakpoints by id and returns what is left, as <see cref="RemoveTracepoints"/>
+	/// does. Removing the one the target is held at does not resume it.
+	/// </summary>
+	/// <exception cref="ArgumentException">The list is empty.</exception>
+	public LiveBreakpointRemoval RemoveBreakpoints(IReadOnlyList<string?> breakpointIds)
 	{
 		var session = Attached();
 
-		session?.Bindings.Remove(id);
-		return new LiveBreakpointList { Breakpoints = session?.Bindings.ListBreakpoints() ?? [] };
+		return session?.Bindings.RemoveBreakpoints(breakpointIds)
+			?? new LiveBreakpointRemoval { Results = TargetBreakpoints.NoneHeld("breakpointIds", breakpointIds) };
 	}
 
 	/// <summary>Resumes a target held at a stopping breakpoint; false when nothing was stopped.</summary>
@@ -328,13 +365,14 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		IReadOnlyCollection<LiveDebugEventKind>? kinds,
 		int limit,
 		int waitSeconds,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		string? exceptionType = null)
 	{
-		if (waitSeconds <= 0) return ReadEvents(after, kinds, limit);
+		if (waitSeconds <= 0) return ReadEvents(after, kinds, limit, exceptionType);
 
 		var bounded = Math.Min(waitSeconds, MaxWaitSeconds);
-		var wait = await _events.WaitForAsync(after, kinds, TimeSpan.FromSeconds(bounded), cancellationToken);
-		var page = ReadEvents(after, kinds, limit);
+		var wait = await _events.WaitForAsync(after, kinds, TimeSpan.FromSeconds(bounded), cancellationToken, exceptionType);
+		var page = ReadEvents(after, kinds, limit, exceptionType);
 
 		// A wait from the start of the stream that never waited was answered out of history, and the
 		// page it produced is indistinguishable from one that waited for something new. Said here
@@ -381,23 +419,28 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 	/// <summary>
 	/// A page of buffered debug events after the given cursor, with the session's state. <paramref
-	/// name="kinds"/> narrows it to the kinds asked for, and <paramref name="limit"/> caps the window.
+	/// name="kinds"/> and <paramref name="exceptionType"/> narrow it, and <paramref name="limit"/> caps the window.
 	/// </summary>
-	public LiveDebugEventPage ReadEvents(long after, IReadOnlyCollection<LiveDebugEventKind>? kinds = null, int limit = 500)
+	public LiveDebugEventPage ReadEvents(
+		long after,
+		IReadOnlyCollection<LiveDebugEventKind>? kinds = null,
+		int limit = 500,
+		string? exceptionType = null)
 	{
-		var (events, nextCursor, oldest, total, skipped) = _events.ReadAfter(after, limit, kinds);
+		var read = _events.ReadAfter(after, limit, kinds, exceptionType);
 
 		lock (_gate)
 		{
 			return new LiveDebugEventPage
 			{
 				State = EffectiveState(),
-				NextCursor = nextCursor,
-				OldestAvailable = oldest,
-				TotalObserved = total,
+				NextCursor = read.NextCursor,
+				OldestAvailable = read.OldestAvailable,
+				TotalObserved = read.TotalObserved,
 				TargetProcessId = _targetProcessId,
-				Events = events,
-				Skipped = skipped,
+				Events = read.Events,
+				Skipped = read.Skipped,
+				Beyond = read.Beyond,
 			};
 		}
 	}

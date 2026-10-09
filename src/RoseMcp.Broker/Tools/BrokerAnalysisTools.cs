@@ -28,10 +28,13 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.MinimumSeverityArgument)] string? minimumSeverity = null,
 		[Description(ToolDescriptions.IncludeAnalyzersArgument)] bool includeAnalyzers = false,
 		[Description(ToolDescriptions.MaxDiagnosticsArgument)] int maxResults = 200,
+		[Description(ToolDescriptions.DiagnosticIdFilterArgument)] string? id = null,
+		[Description(ToolDescriptions.DiagnosticIsGeneratedArgument)] bool? isGenerated = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<DiagnosticsResult>(
-			WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath), paths.Of(project)),
+			WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath), paths.Of(project)),
 			ToolNames.Diagnostics,
 			new()
 			{
@@ -41,6 +44,8 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 				["minimumSeverity"] = minimumSeverity,
 				["includeAnalyzers"] = includeAnalyzers,
 				["maxResults"] = maxResults,
+				["id"] = id,
+				["isGenerated"] = isGenerated,
 			},
 			cancellationToken,
 			progress);
@@ -53,23 +58,28 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.SymbolInfo)]
-	public Task<SymbolInfoResult> SymbolInfoAsync(
+	public Task<ReadBatch<SymbolInfoResult>> SymbolInfoAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.SymbolsArgument)] string[]? symbols = null,
 		[Description(ToolDescriptions.FilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description(ToolDescriptions.IncludeSourceArgument)] bool includeSource = false,
+		[Description(ToolDescriptions.OutlineMembersArgument)] string? members = null,
+		[Description(ToolDescriptions.MaxSymbolMembersArgument), ArgumentAlias("maxResults")] int maxMembers = 200,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<SymbolInfoResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.SymbolInfo, new()
+		ForwardAsync<ReadBatch<SymbolInfoResult>>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.SymbolInfo, new()
 		{
-			["symbol"] = symbol,
+			["symbols"] = symbols,
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
 			["includeSource"] = includeSource,
+			["members"] = members,
+			["maxMembers"] = maxMembers,
 		}, cancellationToken, progress);
 
 	[McpServerTool(
@@ -80,9 +90,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.FindReferences)]
-	public Task<ReferencesResult> FindReferencesAsync(
+	public async Task<ReadBatch<ReferencesResult>> FindReferencesAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.SymbolsArgument)] string[]? symbols = null,
 		[Description(ToolDescriptions.FilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
@@ -91,11 +101,16 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.DefinitionsOnlyArgument)] bool definitionsOnly = false,
 		[Description(ToolDescriptions.ReferenceProjectArgument)] string? project = null,
 		[Description(ToolDescriptions.IncludePreviewsArgument)] bool includePreviews = true,
+		[Description(ToolDescriptions.ContainingMemberArgument)] string? containingMember = null,
+		[Description(ToolDescriptions.IsTestProjectArgument)] bool? isTestProject = null,
+		[Description(ToolDescriptions.IsGeneratedArgument)] bool? isGenerated = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
-		CancellationToken cancellationToken = default) =>
-		ForwardAsync<ReferencesResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.FindReferences, new()
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
+		CancellationToken cancellationToken = default)
+	{
+		var found = await ForwardAsync<ReadBatch<ReferencesResult>>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.FindReferences, new()
 		{
-			["symbol"] = symbol,
+			["symbols"] = symbols,
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
@@ -103,7 +118,13 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["definitionsOnly"] = definitionsOnly,
 			["project"] = project,
 			["includePreviews"] = includePreviews,
+			["containingMember"] = containingMember,
+			["isTestProject"] = isTestProject,
+			["isGenerated"] = isGenerated,
 		}, cancellationToken, progress);
+
+		return paths.KnownOrigin is { } origin ? ResultPaths.RelativeTo(found, origin) : found;
+	}
 
 	[McpServerTool(
 		Name = ToolNames.SearchSymbols,
@@ -117,12 +138,17 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.SearchQueryArgument)] string query,
 		[Description(ToolDescriptions.MaxSearchMatchesArgument)] int maxResults = 50,
+		[Description(ToolDescriptions.SearchKindArgument)] string? kind = null,
+		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<SymbolSearchResult>(WorkspaceHints.From(paths.Of(workspace)), ToolNames.SearchSymbols, new()
+		ForwardAsync<SymbolSearchResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey), ToolNames.SearchSymbols, new()
 		{
 			["query"] = query,
 			["maxResults"] = maxResults,
+			["kind"] = kind,
+			["project"] = project,
 		}, cancellationToken, progress);
 
 	[McpServerTool(
@@ -133,20 +159,25 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.Outline)]
-	public Task<OutlineResult> OutlineAsync(
+	public Task<ReadBatch<OutlineResult>> OutlineAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
+		[Description(ToolDescriptions.OutlineTypesArgument)] string[]? symbols = null,
 		[Description(ToolDescriptions.OutlineFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
+		[Description(ToolDescriptions.OutlineMembersArgument)] string? members = null,
+		[Description(ToolDescriptions.MaxOutlineMembersArgument), ArgumentAlias("maxResults")] int maxMembers = 200,
 		[Description(ToolDescriptions.IncludeInheritedArgument)] bool includeInherited = false,
-		[Description(ToolDescriptions.IncludeDocumentationArgument)] bool includeDocumentation = true,
-		[Description(ToolDescriptions.IncludeSignaturesArgument)] bool includeSignatures = true,
+		[Description(ToolDescriptions.IncludeDocumentationArgument)] bool includeDocumentation = false,
+		[Description(ToolDescriptions.IncludeSignaturesArgument)] bool includeSignatures = false,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<OutlineResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.Outline, new()
+		ForwardAsync<ReadBatch<OutlineResult>>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.Outline, new()
 		{
-			["symbol"] = symbol,
+			["symbols"] = symbols,
 			["filePath"] = filePath,
+			["members"] = members,
+			["maxMembers"] = maxMembers,
 			["includeInherited"] = includeInherited,
 			["includeDocumentation"] = includeDocumentation,
 			["includeSignatures"] = includeSignatures,
@@ -166,8 +197,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.SplitOptionsFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<IslandsResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.FindSplitOptions, new()
+		ForwardAsync<IslandsResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.FindSplitOptions, new()
 		{
 			["symbol"] = symbol,
 			["filePath"] = filePath,
@@ -185,8 +217,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<ProjectGraphResult>(WorkspaceHints.From(paths.Of(workspace)), ToolNames.ProjectGraph, new()
+		ForwardAsync<ProjectGraphResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey), ToolNames.ProjectGraph, new()
 		{
 			["project"] = project,
 		}, cancellationToken, progress);
@@ -207,8 +240,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.ArityArgument)] int? arity = null,
 		[Description(ToolDescriptions.MaxCandidatesArgument)] int maxResults = 20,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<NameResolutionResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.ResolveName, new()
+		ForwardAsync<NameResolutionResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.ResolveName, new()
 		{
 			["name"] = name,
 			["filePath"] = filePath,
@@ -228,8 +262,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<GeneratedDocumentList>(WorkspaceHints.From(paths.Of(workspace)), ToolNames.ListGeneratedDocuments, new()
+		ForwardAsync<GeneratedDocumentList>(WorkspaceHints.From(paths.Of(workspace), workspaceKey), ToolNames.ListGeneratedDocuments, new()
 		{
 			["project"] = project,
 		}, cancellationToken, progress);
@@ -247,8 +282,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.HintNameArgument)] string hintName,
 		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<GeneratedDocumentContent>(WorkspaceHints.From(paths.Of(workspace)), ToolNames.ReadGeneratedDocument, new()
+		ForwardAsync<GeneratedDocumentContent>(WorkspaceHints.From(paths.Of(workspace), workspaceKey), ToolNames.ReadGeneratedDocument, new()
 		{
 			["hintName"] = hintName,
 			["project"] = project,
@@ -272,13 +308,15 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.RenameOverloadsArgument)] bool renameOverloads = false,
 		[Description(ToolDescriptions.RenameInCommentsArgument)] bool renameInComments = false,
 		[Description(ToolDescriptions.RenameInStringsArgument)] bool renameInStrings = false,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<RenameResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.RenameSymbol, new()
+		ForwardAsync<RenameResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.RenameSymbol, new()
 		{
 			["symbol"] = symbol,
 			["filePath"] = filePath,
@@ -290,7 +328,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["renameInComments"] = renameInComments,
 			["renameInStrings"] = renameInStrings,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.FindImplementations,
@@ -308,15 +346,18 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description(ToolDescriptions.MaxImplementationsArgument)] int maxResults = 200,
+		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<ImplementationsResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.FindImplementations, new()
+		ForwardAsync<ImplementationsResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.FindImplementations, new()
 		{
 			["symbol"] = symbol,
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
 			["maxResults"] = maxResults,
+			["project"] = project,
 		}, cancellationToken, progress);
 
 	[McpServerTool(
@@ -332,8 +373,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.SingleFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string filePath,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<CodeFixList>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.ListCodeFixes, new()
+		ForwardAsync<CodeFixList>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.ListCodeFixes, new()
 		{
 			["filePath"] = filePath,
 		}, cancellationToken, progress);
@@ -355,10 +397,12 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.FixScopeArgument)] string scope = "document",
 		[Description(ToolDescriptions.FixTitleArgument)] string? fixTitle = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<CodeFixResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.ApplyCodeFix, new()
+		ForwardAsync<CodeFixResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.ApplyCodeFix, new()
 		{
 			["diagnosticId"] = diagnosticId,
 			["filePath"] = filePath,
@@ -366,7 +410,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["fixTitle"] = fixTitle,
 			["apply"] = apply,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.FormatDocuments,
@@ -381,17 +425,19 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.FormatFilePathsArgument)] string[] filePaths,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.RemoveUnusedUsingsArgument)] bool removeUnusedUsings = false,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<FormatResult>(WorkspaceHints.From(paths.Of(workspace), paths.Each(filePaths)), ToolNames.FormatDocuments, new()
+		ForwardAsync<FormatResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Each(filePaths)), ToolNames.FormatDocuments, new()
 		{
 			["filePaths"] = filePaths,
 			["apply"] = apply,
 			["removeUnusedUsings"] = removeUnusedUsings,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.MoveTypeToFile,
@@ -413,17 +459,19 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.MovedTypeArgument)] string symbol,
 		[Description(ToolDescriptions.TargetPathArgument)] string? targetPath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<MoveTypeResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.MoveTypeToFile, new()
+		ForwardAsync<MoveTypeResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.MoveTypeToFile, new()
 		{
 			["filePath"] = filePath,
 			["symbol"] = symbol,
 			["targetPath"] = targetPath,
 			["apply"] = apply,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.ReplaceMember,
@@ -442,12 +490,14 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.ReplaceMember, new()
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.ReplaceMember, new()
 		{
 			["symbol"] = symbol,
 			["code"] = code,
@@ -457,7 +507,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.ReplaceBody,
@@ -480,12 +530,14 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.ReplaceBody, new()
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.ReplaceBody, new()
 		{
 			["symbol"] = symbol,
 			["code"] = code,
@@ -499,7 +551,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.AddMember,
@@ -520,12 +572,14 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.AddMember, new()
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.AddMember, new()
 		{
 			["symbol"] = symbol,
 			["code"] = code,
@@ -537,7 +591,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.ChangeSignature,
@@ -554,24 +608,28 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.ParametersArgument)] string? parameters = null,
 		[Description(ToolDescriptions.AccessibilityArgument)] string? accessibility = null,
 		[Description(ToolDescriptions.ArgumentsArgument)] string[]? arguments = null,
+		[Description(ToolDescriptions.SignatureUsingsArgument)] string[]? usings = null,
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifySolutionArgument)] bool verify = true,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<SignatureChangeResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.ChangeSignature, new()
+		ForwardAsync<SignatureChangeResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.ChangeSignature, new()
 		{
 			["symbol"] = symbol,
 			["parameters"] = parameters,
 			["accessibility"] = accessibility,
 			["arguments"] = arguments,
+			["usings"] = usings,
 			["filePath"] = filePath,
 			["apply"] = apply,
 			["verify"] = verify,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.ReplacePattern,
@@ -588,11 +646,13 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PatternUsingsArgument)] string[]? usings = null,
 		[Description(ToolDescriptions.PatternFilePathsArgument)] string[]? filePaths = null,
 		[Description(ToolDescriptions.PatternApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<PatternRewriteResult>(WorkspaceHints.From(paths.Of(workspace), paths.Each(filePaths ?? [])), ToolNames.ReplacePattern, new()
+		ForwardAsync<PatternRewriteResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Each(filePaths ?? [])), ToolNames.ReplacePattern, new()
 		{
 			["rules"] = rules,
 			["usings"] = usings,
@@ -600,7 +660,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["apply"] = apply,
 			["verify"] = verify,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.BuildFreshness,
@@ -614,8 +674,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<BuildFreshnessReport>(WorkspaceHints.From(paths.Of(workspace)), ToolNames.BuildFreshness, new()
+		ForwardAsync<BuildFreshnessReport>(WorkspaceHints.From(paths.Of(workspace), workspaceKey), ToolNames.BuildFreshness, new()
 		{
 			["project"] = project,
 		}, cancellationToken, progress);
@@ -635,18 +696,20 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		string filePath,
 		[Description(ToolDescriptions.NamespacesArgument)] string[] namespaces,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<UsingResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.AddUsing, new()
+		ForwardAsync<UsingResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.AddUsing, new()
 		{
 			["filePath"] = filePath,
 			["namespaces"] = namespaces,
 			["apply"] = apply,
 			["verify"] = verify,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.MoveMember,
@@ -665,12 +728,14 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.MoveMember, new()
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.MoveMember, new()
 		{
 			["symbol"] = symbol,
 			["targetType"] = targetType,
@@ -680,7 +745,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.DeleteMember,
@@ -697,12 +762,14 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.DeleteMember, new()
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.DeleteMember, new()
 		{
 			["symbol"] = symbol,
 			["filePath"] = filePath,
@@ -710,7 +777,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.AddFile,
@@ -730,12 +797,14 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.NewFileProjectArgument)] string? project = null,
 		[Description(ToolDescriptions.ResolveUsingsArgument)] bool resolveUsings = true,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<AddFileResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.AddFile, new()
+		ForwardAsync<AddFileResult>(WorkspaceHints.ForNewFile(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.AddFile, new()
 		{
 			["filePath"] = filePath,
 			["code"] = code,
@@ -746,7 +815,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.ReplaceDocComment,
@@ -764,11 +833,13 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.ReplaceDocComment, new()
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.ReplaceDocComment, new()
 		{
 			["symbol"] = symbol,
 			["comment"] = comment,
@@ -776,7 +847,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["apply"] = apply,
 			["verify"] = verify,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.SetAttribute,
@@ -796,12 +867,14 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.SetAttribute, new()
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.SetAttribute, new()
 		{
 			["symbol"] = symbol,
 			["attribute"] = attribute,
@@ -812,14 +885,23 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
-	private Task<T> ForwardAsync<T>(
+	/// <summary>
+	/// Sends a call to the worker that owns its workspace, and shapes a write's result for the caller.
+	/// <para>
+	/// The shaping is here rather than at each write tool for the reason the path rooting is: every
+	/// forwarded call passes through, so a write added later has its diff left off and its lists cut
+	/// without its author doing anything. <paramref name="includeDiff"/> is the one thing a tool says.
+	/// </para>
+	/// </summary>
+	private async Task<T> ForwardAsync<T>(
 		WorkspaceHints hints,
 		string tool,
 		Dictionary<string, object?> arguments,
 		CancellationToken cancellationToken,
 		IProgress<ProgressNotificationValue> progress,
+		bool includeDiff = false,
 		bool retryIfWorkerDied = true)
 		where T : WorkspaceScopedResult
 	{
@@ -828,7 +910,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			.Where(pair => pair.Value is not null)
 			.ToDictionary(pair => pair.Key, pair => Rooted(pair.Key, pair.Value));
 
-		return workspaces.CallAsync<T>(hints, tool, supplied, retryIfWorkerDied, cancellationToken, progress);
+		var result = await workspaces.CallAsync<T>(hints, tool, supplied, retryIfWorkerDied, cancellationToken, progress);
+
+		return result is WorkspaceMutationResult write ? (T)(object)WriteForCaller.Shape(write, includeDiff) : result;
 	}
 
 	/// <summary>

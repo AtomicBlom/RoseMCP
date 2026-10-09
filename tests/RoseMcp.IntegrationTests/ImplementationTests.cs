@@ -1,3 +1,4 @@
+using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -156,5 +157,145 @@ public sealed class ImplementationTests
 
 		result.Relationship.ShouldContain("implementing", Case.Sensitive);
 		result.Matches.Select(match => match.Name).ShouldContain("Circle");
+	}
+
+	/// <summary>
+	/// What in this solution implements a framework interface is the only form that question takes,
+	/// and the referenced assemblies hold far more implementations of it than any solution does. They
+	/// are counted rather than listed, and a declaration a multi-targeted project compiles once per
+	/// framework is listed once.
+	/// </summary>
+	[Test]
+	public async Task Lists_only_this_solutions_implementations_of_an_interface_from_metadata()
+	{
+		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await NavigationService.FindImplementationsAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.IDisposable" },
+			200,
+			TestContext.Current!.Execution.CancellationToken);
+
+		result.Matches.Select(match => match.Name).ShouldBe(["FileStore", "MemoryStore"], ignoreOrder: true);
+		result.TotalCount.ShouldBe(2);
+		result.Truncated.ShouldBeFalse();
+		foreach (var match in result.Matches)
+		{
+			match.Location.ShouldNotBeNull();
+		}
+
+		result.Notices.ShouldContain(notice => notice.Contains("referenced assemblies", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// A project narrows the answer the way it narrows a reference search: by name, by a multi-targeted
+	/// project's name without its framework, and before the cut, so the total and the truncation
+	/// describe the list that was asked for.
+	/// </summary>
+	[Test]
+	public async Task Narrows_to_one_project_before_it_cuts_the_list()
+	{
+		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var target = new SymbolTarget { Symbol = "Core.IStore" };
+
+		var app = await NavigationService.FindImplementationsAsync(
+			snapshot, target, 1, TestContext.Current!.Execution.CancellationToken, project: "App");
+
+		app.Matches.ShouldHaveSingleItem().Name.ShouldBe("FileStore");
+		app.TotalCount.ShouldBe(1);
+		app.Truncated.ShouldBeFalse();
+		app.Notices.ShouldContain(notice => notice.Contains("other than the one named", StringComparison.Ordinal));
+
+		var core = await NavigationService.FindImplementationsAsync(
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: "Core");
+
+		// Core without a framework is both of them, so it lists what either compiles.
+		core.Matches.Select(match => match.Name).ShouldBe(["LegacyStore", "MemoryStore"], ignoreOrder: true);
+
+		var everywhere = await NavigationService.FindImplementationsAsync(
+			snapshot, target, 1, TestContext.Current!.Execution.CancellationToken);
+
+		everywhere.Matches.Count.ShouldBe(1);
+		everywhere.TotalCount.ShouldBe(3);
+		everywhere.Truncated.ShouldBeTrue();
+	}
+
+	/// <summary>
+	/// A project named with its framework lists what that framework's compilation declares, as that
+	/// framework's copy. The search hands back one framework's copy of a type, so naming the other still
+	/// has to find it; and a file both frameworks compile can declare a type for only one of them, behind
+	/// <c>#if</c>, which the file alone would list for both.
+	/// </summary>
+	[Test]
+	public async Task Narrows_a_multi_targeted_project_to_what_one_framework_declares()
+	{
+		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var target = new SymbolTarget { Symbol = "Core.IStore" };
+
+		var older = await NavigationService.FindImplementationsAsync(
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: "Core(net9.0)");
+
+		older.Matches.Select(match => match.Name).ShouldBe(["LegacyStore", "MemoryStore"], ignoreOrder: true);
+		older.Matches.ShouldAllBe(match => match.Project == "Core(net9.0)");
+
+		var newer = await NavigationService.FindImplementationsAsync(
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: "Core(net10.0)");
+
+		newer.Matches.ShouldHaveSingleItem().Name.ShouldBe("MemoryStore");
+		newer.Matches.ShouldAllBe(match => match.Project == "Core(net10.0)");
+		newer.TotalCount.ShouldBe(1);
+	}
+
+	/// <summary>
+	/// A file linked into two projects with different assembly names is compiled by each, so each lists
+	/// what the file declares there, as its own copy -- whichever project's copy the target resolved to.
+	/// </summary>
+	[Test]
+	public async Task Narrows_to_each_project_a_linked_file_is_compiled_by()
+	{
+		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var target = new SymbolTarget { Symbol = "App.IShelf" };
+
+		foreach (var project in new[] { "App", "App.Tests" })
+		{
+			var result = await NavigationService.FindImplementationsAsync(
+				snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: project);
+
+			var match = result.Matches.ShouldHaveSingleItem();
+			match.Name.ShouldBe("WoodenShelf");
+			match.Project.ShouldBe(project);
+			result.TotalCount.ShouldBe(1);
+		}
+	}
+
+	/// <summary>
+	/// A project name the solution does not carry is refused, naming the ones it does. An empty list
+	/// reads exactly like a type nothing implements.
+	/// </summary>
+	[Test]
+	public async Task Refuses_to_narrow_to_a_project_that_is_not_there()
+	{
+		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var error = await Should.ThrowAsync<ArgumentException>(() =>
+			NavigationService.FindImplementationsAsync(
+				snapshot,
+				new SymbolTarget { Symbol = "Core.IStore" },
+				200,
+				TestContext.Current!.Execution.CancellationToken,
+				project: "Kernel")).OfExactType();
+
+		error.Message.ShouldContain("Kernel", Case.Sensitive);
+		error.Message.ShouldContain("App", Case.Sensitive);
 	}
 }

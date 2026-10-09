@@ -391,6 +391,45 @@ public sealed class DeclarationEditTests
 		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
 	}
 
+	/// <summary>
+	/// An attribute whose namespace the file does not import is answered with the import, through the
+	/// one route this tool's caller has. rose_set_attribute takes no usings, so advice to pass them names
+	/// an argument the call would drop.
+	/// </summary>
+	[Test]
+	public async Task Suggests_only_rose_add_using_for_an_attribute_the_file_does_not_import()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var request = new DeclarationEditRequest
+		{
+			Symbol = "Library.Greeter.Count",
+			Attribute = "DebuggerDisplayAttribute(\"{Count}\")",
+			Action = AttributeAction.Add,
+			Apply = false,
+		};
+
+		var result = await session.MutateAsync(
+			(snapshot, token) => DeclarationEditService.SetAttributeAsync(
+				snapshot,
+				new DiagnosticsService(NullLogger<DiagnosticsService>.Instance),
+				request,
+				session.NoteSelfWrite,
+				token),
+			TestContext.Current!.Execution.CancellationToken);
+
+		var unresolved = result.IntroducedDiagnostics.First(diagnostic => diagnostic.Id == "CS0246");
+
+		result.Notices.ShouldContain(
+			notice => notice.StartsWith("DebuggerDisplayAttribute is", StringComparison.Ordinal)
+				&& notice.Contains(
+					$"call rose_add_using with namespaces: [\"System.Diagnostics\"] on {unresolved.FilePath}.",
+					StringComparison.Ordinal));
+
+		result.Notices.ShouldNotContain(notice => notice.Contains("pass usings:", StringComparison.Ordinal));
+	}
+
 	private static Task<MemberEditResult> CommentAsync(WorkspaceSession session, string symbol, string comment)
 	{
 		var diagnostics = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
@@ -466,6 +505,6 @@ public sealed class DeclarationEditTests
 		var said = string.Join(" ", result.Notices);
 
 		said.ShouldNotContain("compiles clean", Case.Sensitive);
-		said.ShouldContain("were there before this edit", Case.Sensitive);
+		result.PreexistingErrorCount.ShouldBeGreaterThan(0, "the error the earlier edit introduced is still there");
 	}
 }

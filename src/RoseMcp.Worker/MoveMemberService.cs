@@ -19,9 +19,11 @@ namespace RoseMcp.Worker;
 /// last one -- which is how a move produces a diff that is half of each.
 /// </para>
 /// <para>
-/// Static members only. Moving an instance member changes what <c>this</c> means inside it, and
-/// every call site needs a receiver that the old code had no reason to have to hand; doing that
-/// safely is a different operation and refusing is better than half of it.
+/// An instance member moves only where nothing refers to it and nothing in it reads the instance it
+/// leaves that the type it goes to cannot answer -- a test method moving between fixtures. Anywhere
+/// else, moving one changes what <c>this</c> means inside it and every call site needs a receiver the
+/// old code had no reason to have to hand; doing that safely is a different operation, and refusing
+/// is better than half of it. <see cref="InstanceMove"/> decides which.
 /// </para>
 /// </summary>
 public static class MoveMemberService
@@ -54,15 +56,31 @@ public static class MoveMemberService
 
 		var references = await SymbolFinder.FindReferencesAsync(source.Symbol, snapshot.Solution, cancellationToken);
 
-		var sites = references
+		var located = references
 			.SelectMany(reference => reference.Locations)
-			.Where(location => !location.IsImplicit && location.Location.IsInSource)
-			.Select(location => location.Location)
+			.Where(location => location.Location.IsInSource)
 			.ToArray();
+
+		IReadOnlyList<Location> sites = [.. located.Where(location => !location.IsImplicit).Select(location => location.Location)];
+
+		var instance = !source.Symbol.IsStatic;
+
+		if (instance)
+		{
+			// Implicit references count here: a foreach, a deconstruction or an await that reaches the
+			// member by pattern is a use as real as a call, and one with no syntax to rewrite.
+			var outside = InstanceMove.Outside([.. located.Select(location => location.Location)], source);
+			await InstanceMove.GuardAsync(snapshot.Solution, source, target, outside, cancellationToken);
+
+			// What is left is the member calling itself, which moves with it.
+			sites = [];
+		}
 
 		progress?.Report("Moving it", 45);
 
 		var (moved, asked) = await ApplyAsync(snapshot.Solution, source, target, request, sites, notices, cancellationToken);
+
+		if (instance) await InstanceMove.ConfirmAsync(snapshot.Solution, moved, source, target, cancellationToken);
 
 		progress?.Report(request.Apply ? "Writing the files" : "Building the diff", 70);
 
@@ -73,29 +91,27 @@ public static class MoveMemberService
 		if (request.Verify && edit.Changed) progress?.Report("Compiling to see what the move did", 80);
 
 		await edit.VerifyAsync(
-			path, EditVerification.ScopeFor(moved, path, source.Symbol, request.VerifyScope), cancellationToken);
+			path, EditVerification.ScopeFor(moved, path, source.Symbol, request.VerifyScope), [], cancellationToken);
 
-		notices.AddRange(Notices(request, sites.Length, target));
+		notices.AddRange(Notices(request, sites.Count, instance, target));
 		notices.AddRange(edit.Report());
 
 		var result = new MemberEditResult
 		{
 			Revision = snapshot.Revision,
 			Symbol = source.Signature,
-			FilePath = TargetPath(target),
 			Line = 0,
-			Members = [source.Symbol.Name],
 			Applied = edit.Applied,
 			Diff = edit.Outcome.Diff,
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
 			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
-			TotalErrorCount = edit.Verification.TotalCount,
+			PreexistingErrorCount = edit.Verification.PreexistingCount,
 			ProjectsChecked = edit.Verification.Projects,
 			DependentsNotChecked = request.Verify && edit.Changed
 				? EditVerification.SkippedDependents(moved, path, source.Symbol, request.VerifyScope)
 				: [],
-			ChangedFiles = edit.Outcome.ChangedFiles,
+			ChangedFiles = edit.Outcome.Leading(TargetPath(target)),
 			Notices = notices,
 		};
 
@@ -103,8 +119,8 @@ public static class MoveMemberService
 	}
 
 	/// <summary>
-	/// The two refusals worth making before anything is written: a member whose move would change
-	/// what it means, and a move to where it already is.
+	/// The refusals worth making before anything is looked up: a move to where the member already is,
+	/// and an instance member of a kind, or going to a type, that cannot take part in one.
 	/// </summary>
 	private static void Guard(DeclarationTarget source, TypeTarget target)
 	{
@@ -115,10 +131,7 @@ public static class MoveMemberService
 
 		if (source.Symbol.IsStatic) return;
 
-		throw new ArgumentException(
-			$"{source.Signature} is an instance member, and moving one changes what 'this' means inside it -- "
-				+ "every call site would need a receiver it has no reason to have to hand. Make it static "
-					+ "first, with rose_replace_member, or move it by hand.");
+		InstanceMove.GuardShape(source, target);
 	}
 
 	/// <summary>
@@ -485,8 +498,16 @@ public static class MoveMemberService
 	/// What a move has to say that no other writing tool does. Everything about the write and the
 	/// compile comes from <see cref="EditPipeline.Report"/>, which runs after this.
 	/// </summary>
-	private static IEnumerable<string> Notices(MoveMemberRequest request, int sites, TypeTarget target)
+	private static IEnumerable<string> Notices(MoveMemberRequest request, int sites, bool instance, TypeTarget target)
 	{
+		if (instance)
+		{
+			yield return $"Moved as an instance member: nothing refers to it, so no call site changed, and no name in "
+				+ $"it means something else in {target.Symbol.Name}.";
+
+			yield break;
+		}
+
 		yield return request.CallSites == CallSiteStyle.Qualify
 			? $"{sites} call site(s) now name {target.Symbol.Name}."
 			: $"{sites} call site(s) left as written; the files calling it import {target.Symbol.Name} statically.";

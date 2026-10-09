@@ -84,7 +84,10 @@ public static class MemberEditService
 
 		progress?.Report("Compiling to see what the edit did", 70);
 
-		await edit.VerifyAsync(path, scope, cancellationToken);
+		// rose_delete_member writes no code and takes no usings, so its advice names rose_add_using alone.
+		IReadOnlyCollection<string> usingsReach = request.Kind == MemberEditKind.Delete ? [] : [path];
+
+		await edit.VerifyAsync(path, scope, usingsReach, cancellationToken);
 
 		// Only where something did not bind, so an edit whose imports were right or unneeded pays
 		// nothing for this and the one that needed it pays the compile it would have paid at the
@@ -101,7 +104,7 @@ public static class MemberEditService
 
 			var importing = asked.And(written.Document, await EditImports.RegionAsync(written.Document, cancellationToken));
 
-			await edit.RewriteAsync(resolved, importing, path, scope, cancellationToken);
+			await edit.RewriteAsync(resolved, importing, path, scope, usingsReach, cancellationToken);
 
 			notices.AddRange(ResolvedImports.Report(imports));
 
@@ -109,29 +112,29 @@ public static class MemberEditService
 			notices.AddRange(imports.Unresolved);
 		}
 
+		var skipped = request.Verify && edit.Changed
+			? EditVerification.SkippedDependents(finished.Solution, path, written.Reaches, request.VerifyScope)
+			: [];
+
 		notices.AddRange(finished.Notices);
 		notices.AddRange(edit.Report());
-		notices.AddRange(Notices(request, edit.Verification, edit.Outcome));
+		notices.AddRange(Notices(request, edit.Verification, skipped));
 
 		var result = new MemberEditResult
 		{
 			Revision = snapshot.Revision,
 			Symbol = written.Symbol,
-			FilePath = written.Document.FilePath!,
 			Line = finished.Line,
-			Members = written.Members,
+			Members = MoreThanTheSymbol(written.Symbol, written.Members),
 			Applied = edit.Applied,
 			Diff = edit.Outcome.Diff,
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
 			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
-			TotalErrorCount = edit.Verification.TotalCount,
+			PreexistingErrorCount = edit.Verification.PreexistingCount,
 			ProjectsChecked = edit.Verification.Projects,
-			DependentsNotChecked = request.Verify && edit.Changed
-				? EditVerification.SkippedDependents(
-					finished.Solution, written.Document.FilePath!, written.Reaches, request.VerifyScope)
-				: [],
-			ChangedFiles = edit.Outcome.ChangedFiles,
+			DependentsNotChecked = skipped,
+			ChangedFiles = edit.Outcome.Leading(path),
 			Notices = notices,
 		};
 
@@ -708,7 +711,7 @@ public static class MemberEditService
 
 		GuardDuplicates(type, parsed);
 
-		var index = PlacementIndex(type, request);
+		var index = await PlacementIndexAsync(document, type, request, notices, cancellationToken);
 
 		var marker = new SyntaxAnnotation();
 		var prepared = new List<MemberDeclarationSyntax>(parsed.Count);
@@ -1009,12 +1012,162 @@ public static class MemberEditService
 		}
 	}
 
-	private static int PlacementIndex(TypeDeclarationSyntax type, MemberEditRequest request)
+	/// <summary>Where the new members go: beside the member after or before names, or at the end of the type.</summary>
+	private static async Task<int> PlacementIndexAsync(
+		Document document,
+		TypeDeclarationSyntax type,
+		MemberEditRequest request,
+		List<string> notices,
+		CancellationToken cancellationToken)
 	{
-		if (request.After is { Length: > 0 } after) return AnchorIndex(type, after) + 1;
-		if (request.Before is { Length: > 0 } before) return AnchorIndex(type, before);
+		if (request.After is { Length: > 0 } after) return await AnchorIndexAsync(document, type, after, notices, cancellationToken) + 1;
+		if (request.Before is { Length: > 0 } before) return await AnchorIndexAsync(document, type, before, notices, cancellationToken);
 
 		return type.Members.Count;
+	}
+
+	/// <summary>
+	/// The member an <c>after</c> or <c>before</c> names. A name alone is the first member carrying it,
+	/// with a notice where there are overloads to choose between. A name with a parameter list,
+	/// <c>Bind(string, bool, RuleText[])</c>, is the one overload taking those parameters, read by the
+	/// grammar a symbol address uses -- so a parameter type is matched by the compiler's answer rather
+	/// than by how the declaration happens to spell it, and the fully qualified
+	/// <c>RoseMcp.Patterns.RuleText[]</c> names the same overload.
+	/// </summary>
+	private static async Task<int> AnchorIndexAsync(
+		Document document,
+		TypeDeclarationSyntax type,
+		string anchor,
+		List<string> notices,
+		CancellationToken cancellationToken)
+	{
+		var model = await document.GetSemanticModelAsync(cancellationToken)
+			?? throw new InvalidOperationException($"{Path.GetFileName(document.FilePath)} has no semantic model to place a member by.");
+
+		var written = anchor.Trim();
+		var address = written.EndsWith(')') ? SymbolAddress.Parse(written) : null;
+		var name = address?.Name ?? written;
+
+		int[] named =
+		[
+			.. Enumerable.Range(0, type.Members.Count)
+				.Where(index => NamesOf(type.Members[index]).Contains(name, StringComparer.Ordinal)),
+		];
+
+		if (address is null && named.Length > 0)
+		{
+			if (named.Length > 1)
+			{
+				notices.Add($"{type.Identifier.Text} declares {named.Length} members called {name}; this went beside the "
+					+ $"first, {AnchorSpelling(model, type.Members[named[0]], cancellationToken)} at line "
+					+ $"{LineOf(type.Members[named[0]])}. Add its parameter list to name another.");
+			}
+
+			return named[0];
+		}
+
+		int[] matching = address is null
+			? []
+			:
+			[
+				.. named.Where(index => DeclaredSymbols(model, type.Members[index], cancellationToken)
+					.Any(address.ParametersMatch)),
+			];
+
+		if (matching.Length == 1) return matching[0];
+
+		if (matching.Length > 1)
+		{
+			throw new ArgumentException(
+				$"'{written}' matches {matching.Length} members of {type.Identifier.Text}, at lines "
+					+ $"{string.Join(", ", matching.Select(index => LineOf(type.Members[index])))}, so which one to "
+					+ "put this next to cannot be told.");
+		}
+
+		var candidates = AnchorCandidates(model, type, cancellationToken);
+
+		throw new ArgumentException(
+			$"{type.Identifier.Text} declares no member {(address is null ? "called " : string.Empty)}'{written}' to put "
+				+ "this next to."
+				+ (candidates.Count == 0
+					? " It declares no members at all, so leave after and before out."
+					: $" It declares: {string.Join(", ", candidates)}."));
+	}
+
+	/// <summary>
+	/// What a type's members are called, as an <c>after</c> or <c>before</c> would name each: a name
+	/// alone where only one member carries it, and with its parameter list where several do, so the
+	/// listing in a refusal is what to pass rather than the name that was ambiguous.
+	/// </summary>
+	private static IReadOnlyList<string> AnchorCandidates(
+		SemanticModel model,
+		TypeDeclarationSyntax type,
+		CancellationToken cancellationToken)
+	{
+		var overloaded = type.Members
+			.SelectMany(NamesOf)
+			.GroupBy(name => name, StringComparer.Ordinal)
+			.Where(group => group.Count() > 1)
+			.Select(group => group.Key)
+			.ToHashSet(StringComparer.Ordinal);
+
+		return
+		[
+			.. type.Members
+				.SelectMany(member => NamesOf(member).Select(name => overloaded.Contains(name)
+					? AnchorSpelling(model, member, cancellationToken)
+					: name))
+				.Distinct(StringComparer.Ordinal),
+		];
+	}
+
+	/// <summary>
+	/// A member as an anchor names one overload of it: its name and its parameter types as the
+	/// declaration's own file would write them, <c>Greet(string, string)</c>.
+	/// </summary>
+	private static string AnchorSpelling(SemanticModel model, MemberDeclarationSyntax member, CancellationToken cancellationToken)
+	{
+		var name = NamesOf(member).FirstOrDefault() ?? member.Kind().ToString();
+
+		var parameters = DeclaredSymbols(model, member, cancellationToken).FirstOrDefault() switch
+		{
+			IMethodSymbol method => method.Parameters,
+			IPropertySymbol { IsIndexer: true } indexer => indexer.Parameters,
+			_ => default,
+		};
+
+		if (parameters.IsDefault) return name;
+
+		var spelled = parameters.Select(parameter => Passed(parameter.RefKind)
+			+ parameter.Type.ToMinimalDisplayString(model, member.SpanStart));
+
+		return $"{name}({string.Join(", ", spelled)})";
+	}
+
+	/// <summary>How a parameter is passed, as the keyword written before its type.</summary>
+	private static string Passed(RefKind kind) => kind switch
+	{
+		RefKind.Ref => "ref ",
+		RefKind.Out => "out ",
+		RefKind.In => "in ",
+		RefKind.RefReadOnlyParameter => "ref readonly ",
+		_ => string.Empty,
+	};
+
+	/// <summary>The symbols a member declaration declares: one, or each variable of a field.</summary>
+	private static IEnumerable<ISymbol> DeclaredSymbols(
+		SemanticModel model,
+		MemberDeclarationSyntax member,
+		CancellationToken cancellationToken)
+	{
+		IEnumerable<SyntaxNode> declarators = member is BaseFieldDeclarationSyntax field
+			? field.Declaration.Variables
+			: [member];
+
+		foreach (var declarator in declarators)
+		{
+			if (model.GetDeclaredSymbol(declarator, cancellationToken) is { } symbol) yield return symbol;
+		}
 	}
 
 	/// <summary>
@@ -1027,22 +1180,6 @@ public static class MemberEditService
 			: type.Members.Count > 0 ? type.Members[^1].FullSpan.End
 			: type.OpenBraceToken.FullSpan.End;
 
-	private static int AnchorIndex(TypeDeclarationSyntax type, string name)
-	{
-		for (var index = 0; index < type.Members.Count; index++)
-		{
-			if (NamesOf(type.Members[index]).Contains(name, StringComparer.Ordinal)) return index;
-		}
-
-		var declared = type.Members.SelectMany(NamesOf).Distinct(StringComparer.Ordinal).ToArray();
-
-		throw new ArgumentException(
-			$"{type.Identifier.Text} declares no member called '{name}' to put this next to."
-				+ (declared.Length == 0
-					? " It declares no members at all, so leave after and before out."
-					: $" It declares: {string.Join(", ", declared)}."));
-	}
-
 	/// <summary>
 	/// What this tool has to say beyond what every writing tool says. Runs after
 	/// <see cref="EditPipeline.Report"/>, which carries the lines about the write and the compile.
@@ -1050,27 +1187,48 @@ public static class MemberEditService
 	private static IEnumerable<string> Notices(
 		MemberEditRequest request,
 		Verification verification,
-		WriteOutcome outcome)
+		IReadOnlyList<string> skipped)
 	{
 		if (!verification.Ran) yield break;
 
-		var compiled = string.Join(", ", verification.Projects);
-
+		// The advice, not the diagnostic again: the entry already says the name does not exist, and what
+		// no other field carries is what to do about it.
 		if (verification.Introduced.Any(entry => Unresolved.Contains(entry.Id, StringComparer.Ordinal))
 			&& verification.Suggestions.Count == 0)
 		{
-			yield return "A name that does not resolve is either something not written yet or a missing import, and "
-				+ "nothing of that name is reachable from here -- so it is the first. rose_resolve_name searches for "
-				+ "one by name; the usings argument on this tool imports what the code needs in the same call.";
+			var importer = request.Kind == MemberEditKind.Delete
+				? "rose_add_using imports it."
+				: "the usings argument on this tool imports it in the same call.";
+
+			yield return "Nothing of that name is reachable here, so it is not written yet rather than unimported. "
+				+ $"rose_resolve_name finds one that exists; {importer}";
 		}
 
-		// Said only where it can happen. A body cannot change a signature, and adding a member
-		// cannot break a caller that was already compiling against the ones that were there.
-		if (request.Kind == MemberEditKind.Replace)
+		// Said only where it is true of this edit: a dependent reached the result unchecked because the
+		// caller narrowed the scope. Guarded on the kind of edit alone, it would contradict the empty
+		// list beside it whenever the scope already covers every dependent, which auto always does.
+		if (skipped.Count > 0)
 		{
-			yield return $"Only {compiled} was compiled. A changed signature breaks call sites in the projects that "
-				+ "reference it, which this did not check -- rose_diagnostics with scope=solution does.";
+			yield return "dependentsNotChecked can see what this changed and were not compiled; verifyScope=dependents, "
+				+ "or rose_diagnostics on them, checks them.";
 		}
+	}
+
+	/// <summary>
+	/// The members written, or null where they are only the member <paramref name="symbol"/> already
+	/// names: a replacement of <c>Greeter.Count</c> writes <c>Count</c>, and saying so again is a field
+	/// spent repeating the one beside it.
+	/// </summary>
+	public static IReadOnlyList<string>? MoreThanTheSymbol(string symbol, IReadOnlyList<string> members)
+	{
+		if (members.Count == 0) return null;
+		if (members.Count > 1) return members;
+
+		var path = symbol.Split('(')[0];
+		var last = path[(path.LastIndexOf('.') + 1)..].Split('<')[0].Trim();
+		var isTheSymbol = string.Equals(members[0], last, StringComparison.Ordinal);
+
+		return isTheSymbol ? null : members;
 	}
 
 	/// <summary>

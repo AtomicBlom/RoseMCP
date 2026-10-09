@@ -101,7 +101,7 @@ public sealed class FormatServiceTests
 		var result = await FormatAsync(session, [path]);
 
 		result.Applied.ShouldBeTrue();
-		result.ChangedFiles.ShouldBe([path]);
+		result.ChangedFiles.Select(file => file.FilePath).ShouldBe([path]);
 
 		var formatted = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
@@ -125,7 +125,6 @@ public sealed class FormatServiceTests
 
 		result.Applied.ShouldBeFalse("a preview writes nothing");
 		result.Diff.ShouldNotBeEmpty();
-		string.Join(" ", result.Notices).ShouldContain("Preview only", Case.Sensitive);
 
 		// Which is what makes this usable as a formatting check: the file is untouched.
 		(await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken)).ShouldBe(Mangled);
@@ -205,7 +204,8 @@ public sealed class FormatServiceTests
 	/// every LF in a file to CRLF produces no hunk at all. Left unsaid, a successful call reports
 	/// changed files beside an empty diff, which is precisely what a call that did nothing looks
 	/// like. The empty diff is asserted here rather than worked around, because it is a property of
-	/// what a diff is and not a defect to be fixed in the renderer.
+	/// what a diff is and not a defect to be fixed in the renderer; the file says it was normalised,
+	/// and that it changed no line.
 	/// </para>
 	/// </summary>
 	[Test]
@@ -221,13 +221,13 @@ public sealed class FormatServiceTests
 		var result = await FormatAsync(session, [path]);
 
 		result.Applied.ShouldBeTrue();
-		result.ChangedFiles.ShouldBe([path]);
 		result.Diff.ShouldBeEmpty();
 
-		var notices = string.Join(" ", result.Notices);
+		var changed = result.ChangedFiles.ShouldHaveSingleItem();
 
-		notices.ShouldContain("line ending(s) to CRLF", Case.Sensitive);
-		notices.ShouldContain("Endings.cs", Case.Sensitive);
+		changed.FilePath.ShouldBe(path);
+		changed.Lines.ShouldBeNull("no line's content changed");
+		changed.Normalised.ShouldNotBeNull().ShouldEndWith("line ending(s) to CRLF", Case.Sensitive);
 
 		var formatted = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
@@ -347,7 +347,7 @@ public sealed class FormatServiceTests
 
 		var result = await FormatAsync(session, [path]);
 
-		result.ChangedFiles.ShouldBe([path]);
+		result.ChangedFiles.Select(file => file.FilePath).ShouldBe([path]);
 
 		var after = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 		after.ShouldContain("Sum(1, 2, 3)", Case.Sensitive);

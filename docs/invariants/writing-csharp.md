@@ -34,14 +34,14 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   it do. It never reads the payload. Every pass takes that one value: `FormattingOptionsAsync` fills
   in the formatter's options wherever Roslyn wasn't told, and the text pass uses the same rules. See
   [the decision](../decisions/a-files-layout-comes-from-what-declares-it-then-from-the-file.md).
-- **A change a diff cannot show is said in words.** A unified diff compares the content of lines,
-  and a terminator is not content -- so rewriting a file's endings produces no hunk at all. That is
-  the change `rose_format` is called for most often, in exactly the repositories where it matters:
-  where IDE0055 is an error, an LF in a CRLF file is a failed build, and fixing it is the whole
-  reason the call was made. Reporting five changed files beside an empty diff reads precisely like a
-  call that did nothing. So `SolutionWriter` counts the lines that moved and every writing tool
-  passes the sentence on, rather than the alternatives: a whole-file hunk nobody can read, or
-  inventing a hunk header that is not a patch.
+- **A change a diff cannot show is said beside the file.** A unified diff compares the content of
+  lines, and a terminator is not content -- so rewriting a file's endings produces no hunk at all.
+  That is the change `rose_format` is called for most often, in exactly the repositories where it
+  matters: where IDE0055 is an error, an LF in a CRLF file is a failed build, and fixing it is the
+  whole reason the call was made. Reporting five changed files with nothing changed in them reads
+  precisely like a call that did nothing. So `SolutionWriter` counts the endings that moved and names
+  them as the file's `normalised`, on the same entry as the lines it changed, rather than the
+  alternatives: a whole-file hunk nobody can read, or inventing a hunk header that is not a patch.
 - **A write names every line it changed that nothing it was asked to do reaches.** Layout the
   formatter has no rule about is layout nothing checks. A body reflowed by an insertion, a value
   pulled up onto its declaration's line, a comment dropped from between two matched statements: each
@@ -62,7 +62,7 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   to is, since a documented member added in front of another begins with the same `/// <summary>`.
   Blank lines beside what was asked go with it for the same reason. It is a sentence rather than a
   refusal, because a line can change harmlessly, such as
-  trailing whitespace trimmed where the file asks for it, and only the caller holding the diff can
+  trailing whitespace trimmed where the file asks for it, and only the caller reading the lines can
   tell that from a reflow. It says nothing about what happens inside the spans: a replacement
   written at the wrong depth is still the replacement the caller asked for.
 - **`rose_format` says what it checked, never that a file is formatted.** It applies Roslyn's
@@ -117,6 +117,19 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   `MoveMemberService` annotates the declaration and the type it goes into before anything is
   rewritten, finds both by annotation afterwards, and treats a mark it cannot find as an error rather
   than returning the solution unchanged.
+- **A moved instance member is bound where it landed before anything is written.** An instance
+  member moves only when nothing refers to it and it reads nothing of its type the target lacks, but
+  a check on the member as written cannot see what its names will mean in the new type: an
+  unqualified call that the target answers with a same-named member of its own, an overload the
+  target adds, a base member the target hides. Each of those compiles, so verification after the
+  write says nothing. So `InstanceMove.ConfirmAsync` binds the moved declaration in the moved
+  solution, compares every name with what it bound to before, and refuses on a difference; a name
+  that binds to nothing is let through, because that is a compile error the verification reports.
+  The other direction is checked before the move, because rebinding every existing call on the
+  target would mean binding every file: a name the target already answers to -- its own member, an
+  inherited one, an applicable extension method -- or one the compiler binds by pattern is refused,
+  since calls that reach something else today could reach the moved member tomorrow and compile.
+  Implicit references count as references, for the same reason.
 - **Written code is indented for where it goes, because the formatter only does half of it.** Roslyn
   reindents statements and moves braces -- rules it has -- so a line wrapped by hand *inside a body*
   comes out right. A wrapped parameter list is layout it has no rule about, so it keeps whatever

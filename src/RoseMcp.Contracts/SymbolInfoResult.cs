@@ -1,10 +1,10 @@
+using System.Text.Json.Serialization;
+
 namespace RoseMcp.Contracts;
 
 /// <summary>What a symbol is, in the terms an agent needs before changing it.</summary>
-public sealed record SymbolInfoResult : WorkspaceScopedResult
+public sealed record SymbolInfoResult
 {
-	public required long Revision { get; init; }
-
 	/// <summary>
 	/// This symbol as an address: pass it back as <c>symbol</c> to any rose_* tool. Null where nothing
 	/// can name it -- a local or a parameter is declared inside a member rather than as one.
@@ -24,8 +24,12 @@ public sealed record SymbolInfoResult : WorkspaceScopedResult
 
 	public string? Namespace { get; init; }
 
-	/// <summary>XML documentation comment, when the symbol has one.</summary>
-	public string? Documentation { get; init; }
+	/// <summary>
+	/// The documentation's summary as prose, every reference rendered as the name it points at, where the
+	/// symbol has one. The XML itself is never given: its markup and fully qualified references are most
+	/// of its length and none of its meaning. Cut at a sentence past a ceiling, which the notices say.
+	/// </summary>
+	public string? Summary { get; init; }
 
 	/// <summary>
 	/// Where the symbol is declared. Empty for symbols that come from metadata rather than source,
@@ -57,13 +61,44 @@ public sealed record SymbolInfoResult : WorkspaceScopedResult
 	public string? ContainingAssembly { get; init; }
 
 	/// <summary>
-	/// The declaration's own source text, when it was asked for. One entry per declaration, so a
-	/// partial comes back in the several pieces it is written in.
+	/// For a type from a referenced assembly, the members code outside that assembly can use: its own
+	/// public and protected ones, each with its signature, in the order the assembly declares them.
+	/// Absent for anything else -- a type declared in source has rose_outline, and a member has no
+	/// members.
+	/// <para>
+	/// Here because a metadata type has no file for rose_outline to read, and the member names are
+	/// exactly what a caller asking about a library type does not know yet. Signatures are always
+	/// given, since a metadata member has no line to tell its overloads apart by.
+	/// </para>
+	/// </summary>
+	public IReadOnlyList<OutlinedMember>? Members { get; init; }
+
+	/// <summary>
+	/// How many members matched, where <see cref="Members"/> is given: more than it lists when the
+	/// listing stopped at its cap, which <see cref="Truncated"/> says.
+	/// </summary>
+	public int? TotalMembers { get; init; }
+
+	/// <summary>True where <see cref="Members"/> stopped at the cap before listing every match. Absent when false.</summary>
+	[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+	public bool Truncated { get; init; }
+
+	/// <summary>
+	/// What the caller should know about how this was answered: what a member listing's filter or cap
+	/// left out, a <c>members</c> or <c>maxMembers</c> that did not apply to this symbol, and what the
+	/// workspace reconciled before reading.
+	/// </summary>
+	public IReadOnlyList<string> Notices { get; init; } = [];
+
+	/// <summary>
+	/// The declaration's own source text, when it was asked for, and absent when it was not. One entry
+	/// per declaration, so a partial comes back in the several pieces it is written in; empty for a symbol
+	/// with no source to give.
 	/// <para>
 	/// Here so that understanding a member does not end in a file read. Reading the file is what puts
 	/// the file in front of the caller, and the next edit then goes through a text tool -- which is
 	/// the moment every other tool here stops being worth reaching for.
 	/// </para>
 	/// </summary>
-	public IReadOnlyList<string> Source { get; init; } = [];
+	public IReadOnlyList<string>? Source { get; init; }
 }

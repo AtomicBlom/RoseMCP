@@ -96,6 +96,8 @@ public sealed class AnalysisTools(
 		[Description(ToolDescriptions.MinimumSeverityArgument)] string? minimumSeverity = null,
 		[Description(ToolDescriptions.IncludeAnalyzersArgument)] bool includeAnalyzers = false,
 		[Description(ToolDescriptions.MaxDiagnosticsArgument)] int maxResults = 200,
+		[Description(ToolDescriptions.DiagnosticIdFilterArgument)] string? id = null,
+		[Description(ToolDescriptions.DiagnosticIsGeneratedArgument)] bool? isGenerated = null,
 		CancellationToken cancellationToken = default)
 	{
 		// Read before the workspace, so a contradictory call is refused without paying for a load.
@@ -108,6 +110,8 @@ public sealed class AnalysisTools(
 			MinimumSeverity = ParseSeverity(minimumSeverity),
 			IncludeAnalyzers = includeAnalyzers,
 			MaxResults = maxResults <= 0 ? 200 : maxResults,
+			Id = string.IsNullOrWhiteSpace(id) ? null : id.Trim(),
+			IsGenerated = isGenerated,
 			WithholdUnrestored = wanted.Scope == DiagnosticScope.Solution,
 		};
 

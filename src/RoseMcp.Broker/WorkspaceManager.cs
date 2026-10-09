@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Xml;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -44,6 +45,14 @@ public sealed class WorkspaceManager(
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly BrokerOptions _options = options.Value;
 
+	/// <summary>Cancelled when the manager goes, which ends the eviction sweep before the gate it takes is disposed.</summary>
+	private readonly CancellationTokenSource _stopping = new();
+
+	/// <summary>The eviction sweep, once a worker has started with eviction on. Started under the gate, so once.</summary>
+	private Task? _sweeping;
+
+	private int _disposed;
+
 	private static readonly Dictionary<string, object?> NoArguments = [];
 
 	/// <summary>
@@ -52,15 +61,37 @@ public sealed class WorkspaceManager(
 	/// </summary>
 	public ActivityLog Activities { get; } = new();
 
-	/// <summary>Open workspaces, for status reporting and the tray UI.</summary>
+	/// <summary>
+	/// Every worker the broker holds, for status reporting and the tray UI: the running ones, and the
+	/// stopped ones whose rows stay so a person can read why they stopped. Being in this list is not
+	/// being open; <see cref="WorkspaceWorker.IsAlive"/> is.
+	/// </summary>
 	public IReadOnlyList<WorkspaceWorker> Workers => [.. _workers.Values];
 
 	/// <summary>
-	/// One row per open workspace, memory and in-flight work included. The same model backs the
-	/// tray window and GET /admin/workspaces, so the UI can never show something the API disagrees
-	/// with.
+	/// One row per worker, running or stopped, memory and in-flight work included. The same model backs
+	/// the tray window and GET /admin/workspaces, so the UI can never show something the API disagrees
+	/// with. A stopped row says so in <see cref="Contracts.WorkspaceSummary.Alive"/>.
 	/// </summary>
 	public IReadOnlyList<Contracts.WorkspaceSummary> Describe() => [.. Workers.Select(worker => worker.Describe())];
+
+	/// <summary>
+	/// Every workspace this broker holds a worker for, as <c>rose_workspace_list</c> answers. Read
+	/// from the registry without the gate and without calling any worker, so a list made while a
+	/// solution is loading answers at once, and listing never counts as using a workspace.
+	/// </summary>
+	public Contracts.WorkspaceList List()
+	{
+		var now = UtcNow;
+
+		return new Contracts.WorkspaceList
+		{
+			Workspaces = [.. Workers
+				.OrderBy(worker => worker.SolutionPath, PathCasing.Comparer)
+				.Select(worker => worker.ListEntry(now))],
+			IdleEvictionAfter = _options.IdleEvictionAfter,
+		};
+	}
 
 	/// <summary>
 	/// The worker for whichever workspace <paramref name="hints"/> resolves to, starting one if
@@ -70,11 +101,24 @@ public sealed class WorkspaceManager(
 		GetOrStartResolvedAsync(WorkspaceFor(hints), cancellationToken);
 
 	/// <summary>
+	/// The worker for whichever workspace <paramref name="hints"/> resolves to, starting one if
+	/// needed, held against eviction until the returned hold is disposed. Taken under the gate the
+	/// eviction sweep decides under, for something that calls the worker directly rather than
+	/// through <see cref="CallAsync{T}"/>. <paramref name="use"/> says whether that counts as use and
+	/// restarts the idle clock.
+	/// </summary>
+	public Task<(WorkspaceWorker Worker, IDisposable Hold)> HoldAsync(
+		WorkspaceHints hints,
+		bool use,
+		CancellationToken cancellationToken) =>
+		HoldResolvedAsync(WorkspaceFor(hints), use, cancellationToken);
+
+	/// <summary>
 	/// The worker for a solution path already decided on.
 	/// <para>
 	/// A dead worker is replaced rather than reported. Workers die for ordinary reasons -- the
-	/// solution was deleted and has come back, a hard reload killed one, memory ran out -- and
-	/// making the caller retry after each of those would be needless ceremony.
+	/// solution was deleted and has come back, a hard reload killed one, memory ran out, the sweep
+	/// evicted it -- and making the caller retry after each of those would be needless ceremony.
 	/// </para>
 	/// </summary>
 	private async Task<WorkspaceWorker> GetOrStartResolvedAsync(
@@ -84,34 +128,69 @@ public sealed class WorkspaceManager(
 		await _gate.WaitAsync(cancellationToken);
 		try
 		{
-			if (_workers.TryGetValue(solutionPath, out var existing))
-			{
-				if (existing.IsAlive) return existing;
-
-				logger.LogInformation(
-					"Replacing the worker for {SolutionPath}; it stopped with {Reason}.",
-					solutionPath,
-					existing.ExitReason);
-
-				await existing.DisposeAsync();
-				_workers.TryRemove(solutionPath, out _);
-				Activities.Forget(solutionPath);
-			}
-
-			if (!File.Exists(solutionPath))
-			{
-				throw new InvalidOperationException($"The solution no longer exists at {solutionPath}.");
-			}
-
-			var worker = await StartAsync(solutionPath, cancellationToken);
-
-			_workers[solutionPath] = worker;
-			return worker;
+			return await GetOrStartUnderGateAsync(solutionPath, cancellationToken);
 		}
 		finally
 		{
 			_gate.Release();
 		}
+	}
+
+	/// <summary>
+	/// The worker for a solution path, held for a call until the hold is disposed. Taken under the
+	/// gate the eviction sweep decides under, so the sweep either stops the worker before this finds
+	/// it -- and this starts a fresh one -- or sees it held and leaves it. There is no moment between
+	/// a caller being handed a worker and calling it in which the sweep can stop it.
+	/// <para>
+	/// <paramref name="use"/> says whether the call counts as use and restarts the idle clock. Only
+	/// tool calls do; a status call holds the worker without keeping it warm.
+	/// </para>
+	/// </summary>
+	private async Task<(WorkspaceWorker Worker, IDisposable Hold)> HoldResolvedAsync(
+		string solutionPath,
+		bool use,
+		CancellationToken cancellationToken)
+	{
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			var worker = await GetOrStartUnderGateAsync(solutionPath, cancellationToken);
+			return (worker, worker.Hold(use));
+		}
+		finally
+		{
+			_gate.Release();
+		}
+	}
+
+	/// <summary>Only call while holding <see cref="_gate"/>.</summary>
+	private async Task<WorkspaceWorker> GetOrStartUnderGateAsync(string solutionPath, CancellationToken cancellationToken)
+	{
+		if (_workers.TryGetValue(solutionPath, out var existing))
+		{
+			if (existing.IsAlive) return existing;
+
+			logger.LogInformation(
+				"Replacing the worker for {SolutionPath}; it stopped with {Reason}.",
+				solutionPath,
+				existing.ExitReason);
+
+			await existing.DisposeAsync();
+			_workers.TryRemove(solutionPath, out _);
+			Activities.Forget(solutionPath);
+		}
+
+		if (!File.Exists(solutionPath))
+		{
+			throw new InvalidOperationException($"The solution no longer exists at {solutionPath}.");
+		}
+
+		var worker = await StartAsync(solutionPath, cancellationToken);
+
+		_workers[solutionPath] = worker;
+		EnsureSweeping();
+
+		return worker;
 	}
 
 	/// <summary>
@@ -164,33 +243,59 @@ public sealed class WorkspaceManager(
 		IProgress<ProgressNotificationValue>? progress = null)
 		where T : Contracts.WorkspaceScopedResult
 	{
-		var worker = await GetOrStartAsync(hints, cancellationToken);
+		var (worker, hold) = await HoldResolvedAsync(WorkspaceFor(hints), use: true, cancellationToken);
 
 		try
 		{
-			return Attribute(await worker.CallAsync<T>(tool, arguments, cancellationToken, progress), worker);
+			try
+			{
+				return Attribute(await worker.CallAsync<T>(tool, arguments, cancellationToken, progress), worker);
+			}
+			catch (WorkerUnavailableException) when (retryIfWorkerDied)
+			{
+				logger.LogInformation("Replacing the worker for {SolutionPath} and retrying {Tool}.", worker.SolutionPath, tool);
+
+				// Let go of the dead one first: a hold on a worker nobody can call keeps nothing alive.
+				hold.Dispose();
+
+				// GetOrStart rather than Restart, because Restart closes whatever is registered for the
+				// path rather than the instance that just died. Two callers on one dead worker and the
+				// second closes the replacement the first is already loading a solution into, mid-load.
+				// GetOrStart replaces only an instance that is not alive, which is exactly this case.
+				var (replacement, replacementHold) = await HoldResolvedAsync(worker.SolutionPath, use: true, cancellationToken);
+
+				using (replacementHold)
+				{
+					return Attribute(
+						await replacement.CallAsync<T>(tool, arguments, cancellationToken, progress), replacement);
+				}
+			}
 		}
-		catch (WorkerUnavailableException) when (retryIfWorkerDied)
+		catch (InvalidOperationException exception) when (
+			exception is not WorkerUnavailableException
+			&& Elsewhere(hints, worker.SolutionPath) is { } elsewhere)
 		{
-			logger.LogInformation("Replacing the worker for {SolutionPath} and retrying {Tool}.", worker.SolutionPath, tool);
-
-			// GetOrStart rather than Restart, because Restart closes whatever is registered for the
-			// path rather than the instance that just died. Two callers on one dead worker and the
-			// second closes the replacement the first is already loading a solution into, mid-load.
-			// GetOrStart replaces only an instance that is not alive, which is exactly this case.
-			var replacement = await GetOrStartResolvedAsync(worker.SolutionPath, cancellationToken);
-
-			return Attribute(
-				await replacement.CallAsync<T>(tool, arguments, cancellationToken, progress), replacement);
+			// The worker's refusal is true about its own solution and says nothing about the one the path
+			// is in. Same type, so nothing further in decides differently for the sentence added to it.
+			throw new InvalidOperationException($"{exception.Message} {elsewhere}", exception);
+		}
+		finally
+		{
+			hold.Dispose();
 		}
 	}
 
 	/// <summary>
-	/// Stamps a result with the workspace that produced it.
+	/// Stamps a result with the workspace that produced it, and names a write's paths as the caller measures them.
 	/// <para>
 	/// Here rather than in the worker because the worker was told which solution to own and never
 	/// chose it -- the choice is the thing worth reporting, and this is where it was made. One place
 	/// also means a tool added later is attributed without anyone remembering to do it.
+	/// </para>
+	/// <para>
+	/// A write's paths are made relative to the calling session's directory in the same step, after the
+	/// sibling-solution notice, which reads them absolute: the step that names the answering workspace is
+	/// the one place every write passes through.
 	/// </para>
 	/// </summary>
 	private T Attribute<T>(T result, WorkspaceWorker worker)
@@ -201,7 +306,9 @@ public sealed class WorkspaceManager(
 		var attributed = scoped with { Workspace = worker.SolutionPath, WorkspaceKey = worker.Key };
 
 		return (T)(object)(attributed is WorkspaceMutationResult mutation
-			? mutation with { Notices = [.. mutation.Notices, .. SharedFileNotices(mutation, worker)] }
+			? WritePaths.Relative(
+				mutation with { Notices = [.. mutation.Notices, .. SharedFileNotices(mutation, worker)] },
+				paths.KnownOrigin)
 			: attributed);
 	}
 
@@ -220,7 +327,8 @@ public sealed class WorkspaceManager(
 		IReadOnlyList<SolutionOverlap> overlaps;
 		try
 		{
-			overlaps = SolutionResolver.SiblingsSharing(worker.SolutionPath, mutation.ChangedFiles);
+			overlaps = SolutionResolver.SiblingsSharing(
+				worker.SolutionPath, [.. mutation.ChangedFiles.Select(file => file.FilePath)]);
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{
@@ -233,7 +341,14 @@ public sealed class WorkspaceManager(
 
 		return [.. overlaps.Select(overlap =>
 		{
-			var open = _workers.ContainsKey(overlap.SolutionPath) ? "open" : "not open";
+			// A stopped row is still registered, so being registered is not being open: an evicted
+			// worker holds nothing, and calling it open would say the sibling has the new text loaded.
+			var open = _workers.TryGetValue(overlap.SolutionPath, out var sibling) switch
+			{
+				true when sibling.IsAlive => "open",
+				true => $"not open (its worker stopped: {sibling.ExitReason})",
+				false => "not open",
+			};
 
 			return $"{Path.GetFileName(overlap.SolutionPath)} also compiles {overlap.SharedFileCount} of the "
 				+ $"file(s) this changed, and is {open}. This ran against "
@@ -264,6 +379,53 @@ public sealed class WorkspaceManager(
 				cancellationToken,
 				progress),
 			worker);
+
+	/// <summary>
+	/// Status for whichever workspace <paramref name="hints"/> resolves to, starting it if nothing
+	/// has been started for it.
+	/// <para>
+	/// Held for the call, so the sweep cannot stop the worker between finding it and asking it, but
+	/// not counted as use: a session polling status to see whether a workspace is healthy is watching
+	/// it, and watching must not keep a workspace nobody is working in warm forever.
+	/// </para>
+	/// <para>
+	/// A workspace whose worker has stopped -- evicted, crashed, stopped by the broker -- is answered
+	/// from its stopped row, and nothing is started. Starting one would reload the solution and wipe
+	/// the record of why it stopped, so a session checking status every so often would keep an
+	/// evicted workspace warm and never be told it had been evicted. The next call that needs the
+	/// workspace starts it, as it always has.
+	/// </para>
+	/// </summary>
+	public async Task<Contracts.WorkspaceStatusReport> StatusAsync(
+		WorkspaceHints hints,
+		CancellationToken cancellationToken,
+		IProgress<ProgressNotificationValue>? progress = null,
+		bool includeProjects = false)
+	{
+		var solutionPath = WorkspaceFor(hints);
+
+		WorkspaceWorker worker;
+		IDisposable hold;
+
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			var stopped = _workers.TryGetValue(solutionPath, out var registered) && !registered.IsAlive;
+			if (stopped) return Attribute(registered!.StoppedStatus(), registered);
+
+			worker = await GetOrStartUnderGateAsync(solutionPath, cancellationToken);
+			hold = worker.Hold(use: false);
+		}
+		finally
+		{
+			_gate.Release();
+		}
+
+		using (hold)
+		{
+			return await StatusOfAsync(worker, cancellationToken, progress, includeProjects);
+		}
+	}
 
 	/// <summary>
 	/// Stops a worker and forgets it. Reopening starts a fresh process.
@@ -347,41 +509,67 @@ public sealed class WorkspaceManager(
 	/// tool that loses to grep before it is ever tried.
 	/// </para>
 	/// <para>
-	/// What is deliberately absent is the set of loaded workspaces. This used to answer a bare call
-	/// from the single open worker, which is not a fact about the question at all but about what some
-	/// other session did earlier: a session in one repository could be answered, plausibly and
-	/// silently, from another. It is only ever named in the failure below, where it helps.
+	/// The caller names a workspace one of two ways: <c>workspace</c>, a path, or <c>workspaceKey</c>,
+	/// the key a result carried. They are alternatives, so a call sending both is refused rather than
+	/// having one of them win: a key and a path that disagree are a mistake nothing here can settle,
+	/// and a pair that agrees says nothing either one does not.
 	/// </para>
 	/// <para>
-	/// Both failures throw McpException rather than ArgumentException, and the difference is the whole
+	/// The set of loaded workspaces is never an answer in itself. A bare call answered from the single
+	/// open worker would be answered from what some other session did earlier rather than from the
+	/// question: a session in one repository could be answered, plausibly and silently, from another.
+	/// The set is consulted only to look up a key the caller sent, which is the caller naming the
+	/// workspace, and is otherwise named only in the failures, where it helps.
+	/// </para>
+	/// <para>
+	/// The failures throw McpException rather than ArgumentException, and the difference is the whole
 	/// point: the SDK turns an unrecognised exception into "An error occurred invoking
 	/// 'rose_diagnostics'." and drops the message, so a caller that could have fixed the call itself
-	/// is told nothing. Both of these know what the caller should do next, and both say so.
+	/// is told nothing. Each of these knows what the caller should do next, and says so.
 	/// </para>
 	/// </summary>
 	public string WorkspaceFor(WorkspaceHints hints)
 	{
+		var isNamedTwice = hints.Workspace is not null && hints.WorkspaceKey is not null;
+		if (isNamedTwice)
+		{
+			throw new McpException(
+				$"Both workspace ({hints.Workspace!.Value}) and workspaceKey ({hints.WorkspaceKey}) were given, and each "
+					+ "names a workspace on its own. Send only one: workspaceKey to name a loaded workspace by the key "
+					+ "a result carried, or workspace to name a solution, project or file by its path.");
+		}
+
 		// The caller named it. A name that resolves to nothing is theirs to hear about, so nothing
 		// here is caught -- falling through to a guess would answer a different question than asked.
-		if (hints.Workspace is { } named) return Resolved(named.Value);
+		if (hints.Workspace is { } named)
+		{
+			RefuseAKeySentAsAPath(named);
+			return Resolved(named.Value);
+		}
+
+		// Named by the key a result carried, and strict for the same reason. Only a workspace this broker
+		// holds a row for can be found that way, since a key cannot be turned back into the path it was
+		// taken from -- a stopped row included, whose path is still known, though not called loaded.
+		if (hints.WorkspaceKey is { } key)
+		{
+			var workers = Workers;
+			var loaded = workers.Where(worker => worker.IsAlive).Select(worker => worker.SolutionPath).ToList();
+			var stopped = workers.Where(worker => !worker.IsAlive).Select(worker => worker.SolutionPath).ToList();
+			var gone = stopped.Where(path => !File.Exists(path)).ToList();
+
+			return ByKey(key, loaded, stopped, gone);
+		}
 
 		// Paths the call carries for its own reasons. The first that decides wins; an ambiguous one is
 		// remembered rather than thrown, because a later hint may still settle it and, failing that,
 		// an ambiguity about a path the caller actually named explains more than one about a directory.
 		AmbiguousSolutionException? ambiguity = null;
 
-		foreach (var path in hints.Paths)
+		foreach (var (_, routed) in hints.Routable())
 		{
-			if (path is null) continue;
-
-			// A hint need not be a path at all: diagnostics' target is a project name under project
-			// scope, and a name that describes nothing where the caller is standing says nothing about
-			// which workspace they meant.
-			if (!File.Exists(path.Value) && !Directory.Exists(path.Value)) continue;
-
 			try
 			{
-				return Resolved(path.Value);
+				return Resolved(routed);
 			}
 			catch (AmbiguousSolutionException exception)
 			{
@@ -413,21 +601,215 @@ public sealed class WorkspaceManager(
 	}
 
 	/// <summary>
+	/// Refuses a workspace key sent as the <c>workspace</c> argument.
+	/// <para>
+	/// The two arguments sit side by side and the key is what a result hands back, so a caller will
+	/// sometimes send it under the wrong name. Taken as a path it is measured from the session's
+	/// directory, names nothing there, and resolution walks up from it to the session's own solution
+	/// -- an answer from a workspace that may not be the one the key named, with nothing in it saying
+	/// the argument was misread. A path that exists is honoured whatever its name looks like; only one
+	/// naming nothing on disk whose last segment has the key's shape is refused, and it is named as the
+	/// key of a workspace this broker knows where it is one -- as loaded only while its worker serves,
+	/// since a stopped row is not loaded and calling it loaded would promise a warm answer where the
+	/// next call pays a full load -- and as loadable again only while its solution file exists.
+	/// </para>
+	/// </summary>
+	private void RefuseAKeySentAsAPath(RootedPath named)
+	{
+		var exists = File.Exists(named.Value) || Directory.Exists(named.Value);
+		var sent = Path.GetFileName(named.Value);
+		var isShapedLikeAKey = !exists && Solutions.WorkspaceKey.HasShape(sent);
+		if (!isShapedLikeAKey) return;
+
+		var owner = _workers.Values.FirstOrDefault(
+			worker => string.Equals(Solutions.WorkspaceKey.For(worker.SolutionPath), sent, StringComparison.OrdinalIgnoreCase));
+
+		// A stopped row outlives its solution file when the worktree went, and following advice to load
+		// it again would only fail on the missing file.
+		var whose = owner switch
+		{
+			null => string.Empty,
+			{ IsAlive: true } => $" It is the key of {owner.SolutionPath}, which is loaded.",
+			_ when !File.Exists(owner.SolutionPath) =>
+				$" It is the key of {owner.SolutionPath}, whose worker has stopped ({owner.ExitReason}) and whose "
+					+ "solution file is gone, so it cannot be loaded again.",
+			_ => $" It is the key of {owner.SolutionPath}, whose worker has stopped ({owner.ExitReason}) and is "
+				+ "not loaded. Sent as workspaceKey it still names that workspace, and a call that needs the worker "
+				+ "starts a fresh one.",
+		};
+
+		throw new McpException(
+			$"workspace was given {sent}, which names nothing on disk and is shaped like a workspace key.{whose} "
+				+ "Send a key as workspaceKey, and workspace as the path of a solution, project or file.");
+	}
+
+	/// <summary>
+	/// The solution carrying <paramref name="key"/>, the way <see cref="Solutions.WorkspaceKey"/>
+	/// derives it, among the workspaces this broker holds a row for.
+	/// <para>
+	/// Only what the broker knows can answer, because a key is a hash and cannot be turned back into
+	/// the path it came from. That is enough for the caller the key exists for: one that read it off a
+	/// result, which a loaded worker produced. A worker stopped since -- evicted, or crashed -- keeps its
+	/// row for a while, and its key still names it: the path is known, and the next call that needs the
+	/// worker starts a fresh one, as it would for the path -- unless the solution file has gone with a
+	/// removed worktree, when status still answers from the row and nothing can load it again. A broker
+	/// that has restarted, or dropped the row, has forgotten the key, which is a failure naming what is
+	/// loaded and the argument that works regardless, not a guess.
+	/// </para>
+	/// <para>
+	/// The hash is four bytes, so two known solutions can share a key, however rarely; that is refused
+	/// with both paths rather than settled by whichever the dictionary yielded first. Matched without
+	/// regard to case, since the hex half is never upper case and a solution name differing only in
+	/// case already differs in its hash.
+	/// </para>
+	/// <para>
+	/// Static and public so the matching can be tested without starting a worker for every solution it
+	/// is asked to tell apart; which solution files exist is passed in for the same reason.
+	/// </para>
+	/// </summary>
+	/// <param name="key">The key the caller sent.</param>
+	/// <param name="loaded">The solution paths of the workers that are serving.</param>
+	/// <param name="stopped">
+	/// The solution paths of stopped rows, which a key still names but a failure must not call loaded.
+	/// </param>
+	/// <param name="gone">
+	/// Those of <paramref name="stopped"/> whose solution file no longer exists, which nothing can load
+	/// again -- so a failure must not promise that a call will.
+	/// </param>
+	/// <exception cref="McpException">No known solution carries the key, or more than one does.</exception>
+	public static string ByKey(
+		string key,
+		IReadOnlyCollection<string> loaded,
+		IReadOnlyCollection<string>? stopped = null,
+		IReadOnlyCollection<string>? gone = null)
+	{
+		stopped ??= [];
+		gone ??= [];
+
+		var wanted = key.Trim();
+		var matching = loaded
+			.Concat(stopped)
+			.Where(path => string.Equals(Solutions.WorkspaceKey.For(path), wanted, StringComparison.OrdinalIgnoreCase))
+			.ToArray();
+
+		if (matching.Length == 1) return matching[0];
+
+		if (matching.Length > 1)
+		{
+			throw new McpException(
+				$"The workspaceKey {wanted} belongs to {matching.Length} workspaces, which happen to hash alike: "
+					+ $"{string.Join(", ", matching)}. Pass workspace with the path of the one you mean instead.");
+		}
+
+		if (loaded.Count == 0 && stopped.Count == 0)
+		{
+			throw new McpException(
+				$"No loaded workspace has the workspaceKey {wanted}, and none is loaded: a key names a workspace only "
+					+ "while the broker that issued it has it loaded, and this one has restarted or closed it since. "
+					+ "Pass workspace with the solution's path instead, which loads it.");
+		}
+
+		static string Named(string path) => $"{Solutions.WorkspaceKey.For(path)} ({path})";
+
+		var reloadable = stopped.Where(path => !gone.Contains(path, PathCasing.Comparer)).ToList();
+		var unloadable = stopped.Where(path => gone.Contains(path, PathCasing.Comparer)).ToList();
+
+		var loadedPart = loaded.Count == 0
+			? "none is loaded"
+			: $"the loaded ones are: {string.Join(", ", loaded.Select(Named))}";
+		var stoppedPart = reloadable.Count == 0
+			? string.Empty
+			: $"; stopped, and loaded again by the next call that needs one: {string.Join(", ", reloadable.Select(Named))}";
+		var gonePart = unloadable.Count == 0
+			? string.Empty
+			: $"; stopped with the solution file gone, so it cannot be loaded again: {string.Join(", ", unloadable.Select(Named))}";
+
+		throw new McpException(
+			$"No workspace this broker holds has the workspaceKey {wanted}. A key names a workspace only while the "
+				+ $"broker holds it, loaded or stopped, and {loadedPart}{stoppedPart}{gonePart}. Pass one of those keys, "
+				+ "or workspace with the solution's path, which loads it if it is not.");
+	}
+
+	/// <summary>
+	/// What to add to a failure answered by <paramref name="answeredBy"/> when the path the call carries
+	/// belongs to a different solution; null where it belongs to that one, or to nothing this can name.
+	/// <para>
+	/// A worker can only describe its own solution, so a path in another checkout comes back as a
+	/// refusal that is true there and misleading here: "not inside any project's directory" about a
+	/// file that sits inside a project of a solution open beside it. The caller reaches that state by
+	/// naming the wrong workspace, or by a path whose own directory could not decide between several
+	/// solutions so the session's directory answered instead, and either way the fix is the
+	/// workspace argument -- which only this side knows to suggest, since only this side chose.
+	/// </para>
+	/// <para>
+	/// Only the first path routing would have used is asked about, and the advice names a solution
+	/// only where that solution compiles the path -- of several sharing a directory, only those that
+	/// do, and nothing where none does -- so following it cannot bounce off the same refusal from the
+	/// other side. Public for the reason <see cref="WorkspaceFor"/> is.
+	/// </para>
+	/// </summary>
+	/// <param name="hints">What the call carried.</param>
+	/// <param name="answeredBy">The solution whose worker answered.</param>
+	public string? Elsewhere(WorkspaceHints hints, string answeredBy)
+	{
+		foreach (var (hint, routed) in hints.Routable())
+		{
+			try
+			{
+				if (SolutionResolver.Compiles(answeredBy, hint.Value)) return null;
+
+				var owner = SolutionResolver.Resolve(routed);
+				var isAnotherSolution = !PathCasing.Comparer.Equals(owner, answeredBy);
+				var ownerCompilesIt = isAnotherSolution && SolutionResolver.Compiles(owner, hint.Value);
+				if (!ownerCompilesIt) return null;
+
+				return $"{hint.Value} is inside a project of {owner}, and {Path.GetFileName(answeredBy)} answered this "
+					+ $"call. Pass the workspace argument (or solution) naming {owner}.";
+			}
+			catch (AmbiguousSolutionException ambiguity)
+			{
+				var compiling = ambiguity.Candidates
+					.Where(candidate => !PathCasing.Comparer.Equals(candidate, answeredBy) && SolutionResolver.Compiles(candidate, hint.Value))
+					.ToArray();
+				if (compiling.Length == 0) return null;
+
+				return $"{hint.Value} is inside no project of {Path.GetFileName(answeredBy)}, which answered this "
+					+ $"call. {compiling.Length} solutions in {ambiguity.Directory} compile it: "
+					+ $"{string.Join(", ", compiling.Select(Path.GetFileName))}. Pass the workspace argument (or solution) "
+					+ $"naming the one you mean, or pin it for good with a \"solution\" entry in "
+					+ $"{Path.Combine(ambiguity.Directory, "rosemcp.json")}.";
+			}
+			catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or XmlException)
+			{
+				// Nothing to load near it, or a solution file that cannot be read: the next path may say
+				// more, and a caveat that cannot be worked out must not replace the failure it explains.
+			}
+		}
+
+		return null;
+	}
+
+	/// <summary>
 	/// Names the loaded workspaces when resolution has failed. They are no basis for choosing, but
-	/// once choosing has failed they are the shortest route to a call that works -- each result
-	/// carries the key needed to name one.
+	/// once choosing has failed they are the shortest route to a call that works, so each is given
+	/// with the key that names it in far fewer characters than its path.
 	/// </summary>
 	private string OpenWorkspacesSuffix()
 	{
-		var open = _workers.Keys;
+		// Only workers that are serving. A stopped row stays registered for a while so a person can
+		// read why it stopped, and calling it open would promise a warm answer where the next call
+		// on it pays a full load.
+		var open = _workers.Values.Where(worker => worker.IsAlive).Select(worker => worker.SolutionPath).ToList();
 
 		if (open.Count == 0)
 		{
 			return ". Pass the workspace argument naming a solution, project, or any file inside one.";
 		}
 
-		return ". Pass the workspace argument naming a solution, project, or any file inside one. "
-			+ $"Already open: {string.Join(", ", open)}.";
+		var named = open.Select(path => $"{Solutions.WorkspaceKey.For(path)} ({path})");
+
+		return ". Pass the workspace argument naming a solution, project, or any file inside one, or "
+			+ $"workspaceKey naming one already open: {string.Join(", ", named)}.";
 	}
 
 	/// <summary>
@@ -456,8 +838,160 @@ public sealed class WorkspaceManager(
 		return choice.SolutionPath;
 	}
 
+	/// <summary>Now, on the clock the workers' idle times are read from.</summary>
+	private DateTime UtcNow => _options.TimeProvider.GetUtcNow().UtcDateTime;
+
+	/// <summary>How an eviction is labelled in the activity log, beside "start worker" and "load solution".</summary>
+	public const string EvictOperation = "evict worker";
+
+	/// <summary>
+	/// Starts the eviction sweep, when eviction is on and it is not already running. Only call while
+	/// holding <see cref="_gate"/>, which is what makes the check and the start one step.
+	/// <para>
+	/// Started by the first worker rather than by the constructor, so a broker that never opens a
+	/// solution -- every unit test that builds the registration, and a tray nobody has used yet -- runs
+	/// no timer at all.
+	/// </para>
+	/// </summary>
+	private void EnsureSweeping()
+	{
+		if (_sweeping is not null || _options.IdleEvictionAfter is not { } idleAfter) return;
+
+		// Read here rather than inside the task, so the loop holds the token it was started with.
+		var stopping = _stopping.Token;
+		_sweeping = Task.Run(() => SweepLoopAsync(idleAfter, stopping));
+	}
+
+	/// <summary>
+	/// Sweeps on a timer for as long as this manager lives, and stops when it is disposed.
+	/// <para>
+	/// One sweep failing does not end the loop: it has changed nothing it did not finish, and a
+	/// broker that silently stopped evicting after one bad tick would collect workers for the rest of
+	/// its life, which is the failure this exists to prevent.
+	/// </para>
+	/// </summary>
+	private async Task SweepLoopAsync(TimeSpan idleAfter, CancellationToken cancellationToken)
+	{
+		using var timer = new PeriodicTimer(_options.EvictionSweepInterval, _options.TimeProvider);
+
+		try
+		{
+			while (await timer.WaitForNextTickAsync(cancellationToken))
+			{
+				try
+				{
+					await SweepAsync(idleAfter, cancellationToken);
+				}
+				catch (Exception exception) when (exception is not OperationCanceledException)
+				{
+					logger.LogWarning(exception, "The eviction sweep failed; the next one is in {Interval}.", _options.EvictionSweepInterval);
+				}
+			}
+		}
+		catch (OperationCanceledException)
+		{
+			// The manager is going away, and its workers with it.
+		}
+	}
+
+	/// <summary>
+	/// One pass over the registry. Deciding needs a file check per worker, so it is done outside the
+	/// gate, and only a worker the decision would act on waits for it -- where it is decided again,
+	/// because a call may have taken the worker in the meantime.
+	/// </summary>
+	private async Task SweepAsync(TimeSpan idleAfter, CancellationToken cancellationToken)
+	{
+		var now = UtcNow;
+
+		foreach (var worker in Workers)
+		{
+			worker.ObserveSolution(File.Exists(worker.SolutionPath), now);
+
+			var verdict = WorkerEviction.Decide(worker.EvictionFacts(), idleAfter, _options.SolutionGoneGrace, now);
+			if (verdict == EvictionVerdict.Keep) continue;
+
+			await EvictAsync(worker, idleAfter, cancellationToken);
+		}
+	}
+
+	/// <summary>
+	/// Acts on one worker the sweep picked, under the gate every call takes its worker under.
+	/// <para>
+	/// Everything is read again here. Holding the gate, nobody can be handed this worker, so a worker
+	/// nobody holds, with nothing running, idle past the limit, is a worker no call is about to use --
+	/// and one somebody took between the first look and this one is seen held and left alone. A worker
+	/// already replaced by a fresh one is not the one in the registry any more, and is left too.
+	/// </para>
+	/// <para>
+	/// An evicted worker stays registered, stopped, rather than being removed. Its row and its
+	/// activity history are what tell a person -- in the tray, in <c>GET /admin/workspaces</c>, and in
+	/// <c>rose_workspace_list</c> -- that it was evicted and why, and the next call replaces it exactly
+	/// as it replaces a crashed one. The row goes once it has been stopped as long as the idle limit.
+	/// </para>
+	/// </summary>
+	private async Task EvictAsync(WorkspaceWorker worker, TimeSpan idleAfter, CancellationToken cancellationToken)
+	{
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			var stillRegistered = _workers.TryGetValue(worker.SolutionPath, out var current) && ReferenceEquals(current, worker);
+			if (!stillRegistered) return;
+
+			var now = UtcNow;
+			var facts = worker.EvictionFacts();
+			var verdict = WorkerEviction.Decide(facts, idleAfter, _options.SolutionGoneGrace, now);
+
+			if (verdict == EvictionVerdict.Forget)
+			{
+				_workers.TryRemove(new KeyValuePair<string, WorkspaceWorker>(worker.SolutionPath, worker));
+				await worker.DisposeAsync();
+				Activities.Forget(worker.SolutionPath);
+
+				logger.LogDebug(
+					"Dropped the row for {SolutionPath}, stopped with {Reason} at {StoppedUtc}.",
+					worker.SolutionPath,
+					worker.ExitReason,
+					worker.StoppedUtc);
+				return;
+			}
+
+			var evicting = verdict is EvictionVerdict.EvictIdle or EvictionVerdict.EvictSolutionGone;
+			if (!evicting) return;
+
+			var reason = WorkerEviction.Explain(verdict, facts, idleAfter, now);
+
+			// Marked before it is disposed, so the reason recorded is this one rather than the
+			// StoppedByBroker that disposing would record.
+			worker.MarkStopped(WorkerExitReason.Evicted, reason);
+			Activities.Note(worker.SolutionPath, EvictOperation, reason);
+
+			await worker.DisposeAsync();
+
+			logger.LogInformation(
+				"Evicted the worker for {SolutionPath} ({WorkspaceKey}), idle for {Idle}: {Reason}",
+				worker.SolutionPath,
+				worker.Key,
+				WorkerEviction.Duration(now - facts.LastUsedUtc),
+				reason);
+		}
+		finally
+		{
+			_gate.Release();
+		}
+	}
+
 	public async ValueTask DisposeAsync()
 	{
+		// Once: a second CancelAsync on a disposed source throws, and a host and its container can both
+		// reach this.
+		if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+
+		// The sweep first, and awaited: it takes the gate disposed below, and acts on the workers
+		// disposed below, so it has to have stopped before either goes.
+		await _stopping.CancelAsync();
+
+		if (_sweeping is { } sweeping) await sweeping;
+
 		foreach (var worker in Workers)
 		{
 			await worker.DisposeAsync();
@@ -466,5 +1000,6 @@ public sealed class WorkspaceManager(
 		_workers.Clear();
 
 		_gate.Dispose();
+		_stopping.Dispose();
 	}
 }

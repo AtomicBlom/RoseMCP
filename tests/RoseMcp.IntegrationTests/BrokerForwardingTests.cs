@@ -3,7 +3,9 @@ using System.Text.Json;
 using ModelContextProtocol;
 
 using RoseMcp.Broker;
+using RoseMcp.Broker.Tools;
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 using static RoseMcp.IntegrationTests.BrokerHarness;
 
@@ -35,7 +37,7 @@ public sealed class BrokerForwardingTests
 
 		var elsewhere = Path.Combine(Path.GetTempPath(), $"absent-{Guid.NewGuid():N}", "Nowhere.cs");
 
-		var error = await Should.ThrowAsync<Exception>(() => manager.CallAsync<SymbolInfoResult>(
+		var error = await Should.ThrowAsync<Exception>(() => manager.CallAsync<ReadBatch<SymbolInfoResult>>(
 			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.SymbolInfo,
 			new Dictionary<string, object?> { ["filePath"] = elsewhere, ["line"] = 1, ["column"] = 1 },
@@ -44,6 +46,33 @@ public sealed class BrokerForwardingTests
 
 		error.Message.ShouldContain(elsewhere, Case.Insensitive);
 		error.Message.ShouldContain(fixture.SolutionPath, Case.Insensitive);
+	}
+
+	/// <summary>
+	/// A refusal from a workspace the path is not in gains the solution it is in. The worker can only
+	/// say the path is in none of its own projects, which is true and sends the caller nowhere; the
+	/// broker chose that worker, so the broker is what says which solution would take the path.
+	/// </summary>
+	[Test]
+	public async Task A_refusal_from_another_workspace_names_the_solution_the_path_is_in()
+	{
+		using var simple = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var members = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+
+		var file = Path.Combine(Path.GetDirectoryName(members.SolutionPath)!, "Library", "Made", "Placed.cs");
+
+		var error = await Should.ThrowAsync<InvalidOperationException>(() => manager.CallAsync<AddFileResult>(
+			WorkspaceHints.ForNewFile(RootedPath.Absolute(simple.SolutionPath), RootedPath.Absolute(file)),
+			ToolNames.AddFile,
+			new Dictionary<string, object?> { ["filePath"] = file, ["code"] = "public sealed class Placed;" },
+			retryIfWorkerDied: false,
+			TestContext.Current!.Execution.CancellationToken)).OfExactType();
+
+		error.Message.ShouldContain("not inside the directory of any project in Simple.sln", Case.Sensitive);
+		error.Message.ShouldContain($"is inside a project of {members.SolutionPath}", Case.Insensitive);
+		error.Message.ShouldContain("workspace argument", Case.Sensitive);
+		File.Exists(file).ShouldBeFalse("a refusal writes nothing");
 	}
 
 	/// <summary>
@@ -126,12 +155,14 @@ public sealed class BrokerForwardingTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var manager = CreateManager();
 
-		var info = await manager.CallAsync<SymbolInfoResult>(
+		var batch = await manager.CallAsync<ReadBatch<SymbolInfoResult>>(
 			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.SymbolInfo,
-			new Dictionary<string, object?> { ["symbol"] = "Library.Greeter.PrefixLength" },
+			new Dictionary<string, object?> { ["symbols"] = new[] { "Library.Greeter.PrefixLength" } },
 			retryIfWorkerDied: true,
 			TestContext.Current!.Execution.CancellationToken);
+
+		var info = batch.Results.ShouldHaveSingleItem().Answer.ShouldNotBeNull();
 
 		info.Name.ShouldBe("PrefixLength");
 
@@ -139,6 +170,143 @@ public sealed class BrokerForwardingTests
 
 		span.LineCount.ShouldBe(2);
 		span.FilePath.ShouldEndWith("Greeter.cs", Case.Insensitive);
+	}
+
+	/// <summary>
+	/// A metadata type's members, narrowed and capped, through the broker's own tool method rather than
+	/// straight to the worker: an argument the broker declares and leaves out of what it forwards is
+	/// bound at its default on the other side, which here would list every member and read as a filter
+	/// ignored.
+	/// </summary>
+	[Test]
+	public async Task Lists_a_metadata_types_members_through_the_broker()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+		var tools = new BrokerAnalysisTools(manager, CreatePaths());
+
+		var batch = await tools.SymbolInfoAsync(
+			new Progress<ProgressNotificationValue>(),
+			symbols: ["System.Text.StringBuilder"],
+			members: "Append",
+			maxMembers: 3,
+			workspace: fixture.SolutionPath,
+			cancellationToken: TestContext.Current!.Execution.CancellationToken);
+
+		var info = batch.Results.ShouldHaveSingleItem().Answer.ShouldNotBeNull();
+		var members = info.Members.ShouldNotBeNull();
+
+		members.Count.ShouldBe(3);
+		members.ShouldAllBe(member => member.Name.Contains("Append", StringComparison.Ordinal));
+		info.Truncated.ShouldBeTrue();
+		info.TotalMembers.ShouldNotBeNull().ShouldBeGreaterThan(3);
+	}
+
+	/// <summary>
+	/// A read plural by intent answers every name it was given, in order, each on its own: a name
+	/// nothing declares is that entry's status and the others are answered anyway, through the broker
+	/// as well as the worker.
+	/// </summary>
+	[Test]
+	public async Task Answers_each_symbol_of_a_list_and_refuses_only_the_one_that_names_nothing()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+		var tools = new BrokerAnalysisTools(manager, CreatePaths());
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		var info = await tools.SymbolInfoAsync(
+			new Progress<ProgressNotificationValue>(),
+			symbols: ["Library.Greeter.PrefixLength", "Library.Greeter.Nowhere", "Library.Greeter.Greet(string)"],
+			workspace: fixture.SolutionPath,
+			cancellationToken: cancellationToken);
+
+		info.Results.Select(entry => entry.Requested)
+			.ShouldBe(["Library.Greeter.PrefixLength", "Library.Greeter.Nowhere", "Library.Greeter.Greet(string)"]);
+		info.Results.Select(entry => entry.Answer?.Name).ShouldBe(["PrefixLength", null, "Greet"]);
+		info.Results[1].Status.ShouldStartWith("refused: ");
+		info.Found.ShouldBe(2);
+		info.Total.ShouldBe(3);
+
+		var outlined = await tools.OutlineAsync(
+			new Progress<ProgressNotificationValue>(),
+			symbols: ["Library.Greeter", "Library.Split"],
+			workspace: fixture.SolutionPath,
+			cancellationToken: cancellationToken);
+
+		outlined.Results.Select(entry => entry.Answer!.Types.ShouldHaveSingleItem().Name).ShouldBe(["Library.Greeter", "Library.Split"]);
+
+		var empty = await Should.ThrowAsync<Exception>(() => tools.FindReferencesAsync(
+			new Progress<ProgressNotificationValue>(),
+			symbols: [],
+			workspace: fixture.SolutionPath,
+			cancellationToken: cancellationToken));
+
+		empty.Message.ShouldContain("symbols is empty", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A reference's file comes back relative to the calling session's directory, and handed straight
+	/// back as a position it names the same file: the caller quotes back what it was given and the call
+	/// resolves, with no workspace key or root sent beside it.
+	/// </summary>
+	[Test]
+	public async Task A_references_relative_path_resolves_when_it_is_sent_back()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+		var origin = Path.GetDirectoryName(fixture.SolutionPath)!;
+		var tools = new BrokerAnalysisTools(manager, CreatePaths());
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		// A relayed session, which says where it stands.
+		using var standing = CallOrigin.Use(origin);
+
+		var batch = await tools.FindReferencesAsync(
+			new Progress<ProgressNotificationValue>(),
+			symbols: ["Library.Greeter.Greet(string)"],
+			workspace: fixture.SolutionPath,
+			cancellationToken: cancellationToken);
+
+		batch.RelativeTo.ShouldBe(origin);
+
+		var file = batch.Results.ShouldHaveSingleItem().Answer.ShouldNotBeNull().Files.First();
+		Path.IsPathRooted(file.FilePath).ShouldBeFalse($"'{file.FilePath}' should be relative to the session's directory");
+
+		var site = file.References.First();
+		var pointed = await tools.SymbolInfoAsync(
+			new Progress<ProgressNotificationValue>(),
+			filePath: file.FilePath,
+			line: site.Line,
+			column: site.Column,
+			cancellationToken: cancellationToken);
+
+		var described = pointed.Results.ShouldHaveSingleItem().Answer.ShouldNotBeNull();
+
+		described.Name.ShouldBe("Greet");
+		described.Kind.ShouldBe("Method");
+	}
+
+	/// <summary>
+	/// An http session with no relay in front of it never says where it stands, and the broker's own
+	/// directory is not where the caller is: a path made relative to it would name nothing when sent back,
+	/// so every path stays absolute.
+	/// </summary>
+	[Test]
+	public async Task A_caller_that_never_says_where_it_stands_gets_absolute_paths()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+		var tools = new BrokerAnalysisTools(manager, CreatePaths(Path.GetDirectoryName(fixture.SolutionPath)!));
+
+		var batch = await tools.FindReferencesAsync(
+			new Progress<ProgressNotificationValue>(),
+			symbols: ["Library.Greeter.Greet(string)"],
+			workspace: fixture.SolutionPath,
+			cancellationToken: TestContext.Current!.Execution.CancellationToken);
+
+		batch.RelativeTo.ShouldBeNull();
+		batch.Results.ShouldHaveSingleItem().Answer.ShouldNotBeNull().Files.ShouldAllBe(file => Path.IsPathFullyQualified(file.FilePath));
 	}
 
 	/// <summary>
@@ -176,6 +344,38 @@ public sealed class BrokerForwardingTests
 
 		text.ShouldContain("public override string Notify(string text, bool urgent)", Case.Sensitive);
 		text.ShouldContain("notifier.Notify(message, false)", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// The imports a new parameter needs, over the wire: an argument the worker does not bind by this
+	/// name is one a caller passes and the tool never sees.
+	/// </summary>
+	[Test]
+	public async Task Imports_what_a_changed_signature_needs_through_the_broker()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+
+		var result = await manager.CallAsync<SignatureChangeResult>(
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
+			ToolNames.ChangeSignature,
+			new Dictionary<string, object?>
+			{
+				["symbol"] = "Library.Greeter.Greet(string)",
+				["parameters"] = "string name, StringBuilder? into = null",
+				["usings"] = new[] { "System.Text" },
+			},
+			retryIfWorkerDied: true,
+			TestContext.Current!.Execution.CancellationToken);
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.Notices.ShouldContain("Imported System.Text into Greeter.cs.");
+
+		var text = await File.ReadAllTextAsync(
+			fixture.Path("Members", "Library", "Greeter.cs"), TestContext.Current!.Execution.CancellationToken);
+
+		text.ShouldStartWith("using System.Text;", Case.Sensitive);
 	}
 
 	/// <summary>Build freshness over the wire, so its one argument cannot drift either.</summary>
@@ -384,6 +584,52 @@ public sealed class BrokerForwardingTests
 	}
 
 	/// <summary>
+	/// A structural rewrite into files another solution also compiles says so too, counting every one of
+	/// them. The rewrite is the one write whose changed files the broker cuts before the caller sees them,
+	/// and the sibling notice is worked out from that same list, so this holds the order: with more shared
+	/// files than the cut keeps, the notice still counts them all.
+	/// </summary>
+	[Test]
+	public async Task A_rewrite_that_another_solution_also_compiles_says_so_past_the_changed_file_cap()
+	{
+		using var fixture = FixtureSolution.Copy("Siblings", "Repo.slnx");
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var callers = WriteForCaller.ChangedFileRows + 1;
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Siblings", "Shared", "Text.cs"),
+			"namespace Shared;\r\n\r\npublic static class Text\r\n{\r\n\tpublic static string Shout(string value) => value.ToUpperInvariant();\r\n}\r\n",
+			cancellationToken);
+
+		for (var index = 0; index < callers; index++)
+		{
+			await File.WriteAllTextAsync(
+				fixture.Path("Siblings", "Shared", $"Caller{index:D2}.cs"),
+				$"namespace Shared;\r\n\r\npublic static class Caller{index:D2}\r\n{{\r\n\tpublic static string Greet(string name) => Text.Shout(name);\r\n}}\r\n",
+				cancellationToken);
+		}
+
+		await using var manager = CreateManager();
+		var tools = new BrokerAnalysisTools(manager, CreatePaths());
+
+		var rewritten = await tools.ReplacePatternAsync(
+			new Progress<ProgressNotificationValue>(),
+			rules: [new PatternRule { Find = "Shared.Text.Shout($v$)", Replace = "$v$.ToUpperInvariant()" }],
+			apply: true,
+			workspace: fixture.SolutionPath,
+			cancellationToken: cancellationToken);
+
+		rewritten.Applied.ShouldBeTrue();
+		rewritten.FilesChanged.ShouldBe(callers);
+		rewritten.ChangedFiles.Count.ShouldBe(WriteForCaller.ChangedFileRows);
+
+		rewritten.Notices.ShouldContain(
+			notice => notice.StartsWith($"Repo.Installer.slnx also compiles {callers} of the file(s) this changed", StringComparison.Ordinal),
+			string.Join(Environment.NewLine, rewritten.Notices));
+		rewritten.Notices.ShouldContain(notice => notice.StartsWith("changedFiles names ", StringComparison.Ordinal));
+	}
+
+	/// <summary>
 	/// The wrong-checkout write, end to end, with the argument shape that produced it: a relative
 	/// filePath that names a real file in every checkout of the repository. It has to land in the one
 	/// the session is calling from, and the other one has to be untouched -- which is the half no
@@ -425,6 +671,119 @@ public sealed class BrokerForwardingTests
 	}
 
 	/// <summary>
+	/// A path a write result returns means one file however it comes back. The session stands in one
+	/// checkout and edits another by naming it: the result names the file absolutely, since it lies
+	/// outside the session's directory, and sent back with the key or without one it edits that file --
+	/// never the one at the same relative place in the checkout the session stands in, which exists.
+	/// <para>
+	/// Through a real server, because what decides it is the broker's own pipeline: the origin the call
+	/// filter sets, and the shaping the manager does after the worker answers.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_path_a_result_returns_names_the_file_it_came_from_however_it_is_sent_back()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var here = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var standing = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		using var server = RoseServerProcess.StartIn(Path.GetDirectoryName(standing.SolutionPath)!);
+		await server.InitializeAsync(cancellationToken);
+
+		var (key, file) = await CommentAsync(
+			server, $"\"workspace\":{JsonSerializer.Serialize(here.SolutionPath)}", "first pass", cancellationToken);
+
+		// A file outside the session's directory is named absolutely.
+		file.ShouldBe(here.Path("Simple", "Core", "Calculator.cs"), StringCompareShould.IgnoreCase);
+
+		await CommentAsync(server, $"\"filePath\":{JsonSerializer.Serialize(file)}", "second pass", cancellationToken);
+		await CommentAsync(
+			server,
+			$"\"workspaceKey\":{JsonSerializer.Serialize(key)},\"filePath\":{JsonSerializer.Serialize(file)}",
+			"third pass",
+			cancellationToken);
+
+		(await File.ReadAllTextAsync(here.Path("Simple", "Core", "Calculator.cs"), cancellationToken)).ShouldContain(
+			"third pass", Case.Sensitive);
+		(await File.ReadAllTextAsync(standing.Path("Simple", "Core", "Calculator.cs"), cancellationToken)).ShouldNotContain(
+			"pass.", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A solution in a subfolder of the session's directory gives paths that start at the session's
+	/// directory, and each comes back to the same file with or without the key. Measured from the key's
+	/// workspace instead, <c>Simple/Core/Calculator.cs</c> would mean <c>Simple/Simple/Core/Calculator.cs</c>.
+	/// </summary>
+	[Test]
+	public async Task A_solution_below_the_session_gives_paths_the_session_resolves()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		using var server = RoseServerProcess.StartIn(fixture.Path());
+		await server.InitializeAsync(cancellationToken);
+
+		var (key, file) = await CommentAsync(
+			server, $"\"workspace\":{JsonSerializer.Serialize(fixture.SolutionPath)}", "first pass", cancellationToken);
+
+		file.ShouldBe(Path.Combine("Simple", "Core", "Calculator.cs"));
+
+		await CommentAsync(server, $"\"filePath\":{JsonSerializer.Serialize(file)}", "second pass", cancellationToken);
+		await CommentAsync(
+			server,
+			$"\"workspaceKey\":{JsonSerializer.Serialize(key)},\"filePath\":{JsonSerializer.Serialize(file)}",
+			"third pass",
+			cancellationToken);
+
+		(await File.ReadAllTextAsync(fixture.Path("Simple", "Core", "Calculator.cs"), cancellationToken)).ShouldContain(
+			"third pass", Case.Sensitive);
+
+		// A read takes the same rule: a path the caller wrote from where it stands means that file with a
+		// key beside it, rather than the same path under the keyed solution's own directory.
+		using var read = await server.CallToolAsync(
+			ToolNames.Diagnostics,
+			$$"""
+			{"workspaceKey":{{JsonSerializer.Serialize(key)}},"filePath":{{JsonSerializer.Serialize(Path.Combine("Simple", "Core", "Calculator.cs"))}}}
+			""",
+			cancellationToken);
+
+		var diagnosed = read.RootElement.GetProperty("result");
+		var refused = diagnosed.TryGetProperty("isError", out var isError) && isError.GetBoolean();
+		refused.ShouldBeFalse(diagnosed.GetRawText());
+		diagnosed.GetProperty("structuredContent").GetProperty("workspaceKey").GetString().ShouldBe(key);
+	}
+
+	/// <summary>
+	/// Rewrites <c>Core.Calculator.Multiply</c>'s documentation through <paramref name="server"/>, naming the
+	/// workspace or file by <paramref name="naming"/>, and returns the key and the first changed file the
+	/// result gave back. A failed call fails the test with what the server said.
+	/// </summary>
+	private static async Task<(string Key, string File)> CommentAsync(
+		RoseServerProcess server,
+		string naming,
+		string comment,
+		CancellationToken cancellationToken)
+	{
+		using var reply = await server.CallToolAsync(
+			ToolNames.ReplaceDocComment,
+			$$"""
+			{{{naming}},"symbol":"Core.Calculator.Multiply","comment":{{JsonSerializer.Serialize($"Multiplies, {comment}.")}}}
+			""",
+			cancellationToken);
+
+		var result = reply.RootElement.GetProperty("result");
+		var failed = result.TryGetProperty("isError", out var isError) && isError.GetBoolean();
+		failed.ShouldBeFalse(result.GetRawText());
+
+		var written = result.GetProperty("structuredContent");
+		written.TryGetProperty("diff", out _).ShouldBeFalse("an applied write leaves its diff off unless asked");
+
+		return (
+			written.GetProperty("workspaceKey").GetString().ShouldNotBeNull(),
+			written.GetProperty("changedFiles")[0].GetProperty("filePath").GetString().ShouldNotBeNull());
+	}
+
+	/// <summary>
 	/// The other half of the same rule: nothing but the broker knows what a relative path is measured
 	/// from, so a worker that resolves one against its own working directory writes to a plausible
 	/// file and reports success. Refusing is what turns a mis-routed call into a sentence.
@@ -435,7 +794,7 @@ public sealed class BrokerForwardingTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
 
-		var error = await Should.ThrowAsync<Exception>(() => manager.CallAsync<SymbolInfoResult>(
+		var error = await Should.ThrowAsync<Exception>(() => manager.CallAsync<ReadBatch<SymbolInfoResult>>(
 			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.SymbolInfo,
 			new Dictionary<string, object?> { ["filePath"] = Path.Combine("Core", "Calculator.cs") },

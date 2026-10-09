@@ -80,6 +80,14 @@ public sealed record WorkspaceStatusReport : WorkspaceScopedResult
 	public IReadOnlyList<AnalyzerLoadFailure> AnalyzerLoadFailures { get; init; } = [];
 
 	/// <summary>
+	/// Every project the worker's own MSBuild could not evaluate at the last load, with what MSBuild
+	/// said. <see cref="DegradedReasons"/> folds the ones that name an SDK into one line and
+	/// <see cref="Notices"/> the ones that do not; this is where each project's message survives that
+	/// fold.
+	/// </summary>
+	public IReadOnlyList<ProjectEvaluationFailure> EvaluationFailures { get; init; } = [];
+
+	/// <summary>
 	/// The MSBuild configuration, platform and any pinned properties this workspace was loaded
 	/// under, as <c>Configuration|Platform (Name=Value)</c>.
 	/// <para>

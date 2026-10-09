@@ -40,6 +40,51 @@ public sealed class ProjectItemStyleTests
 	}
 
 	/// <summary>
+	/// Each of the three ways a project names an SDK, with or without MSBuild's namespace, which is what
+	/// makes its evaluation failing in this process a sign that this process's MSBuild is hurt rather than
+	/// an expected gap.
+	/// </summary>
+	[Test]
+	[Arguments("""<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup /></Project>""")]
+	[Arguments("""<Project><Sdk Name="Microsoft.NET.Sdk" /></Project>""")]
+	[Arguments("""<Project><Import Sdk="Microsoft.NET.Sdk" Project="Sdk.props" /></Project>""")]
+	[Arguments("""<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003"><Sdk Name="Microsoft.NET.Sdk" /></Project>""")]
+	public void Reads_a_project_naming_an_sdk(string project)
+	{
+		ProjectItemStyle.NamesSdk(project).ShouldBeTrue();
+	}
+
+	/// <summary>A legacy project names none, and its failing to evaluate against the SDK is expected.</summary>
+	[Test]
+	public void Reads_a_legacy_project_as_naming_no_sdk()
+	{
+		var project = """
+			<?xml version="1.0" encoding="utf-8"?>
+			<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+			  <Import Project="$(MSBuildExtensionsPath)\Microsoft.Common.props" />
+			  <ItemGroup>
+			    <Compile Include="MainPage.xaml.cs" />
+			  </ItemGroup>
+			</Project>
+			""";
+
+		ProjectItemStyle.NamesSdk(project).ShouldBeFalse();
+	}
+
+	/// <summary>
+	/// Text that cannot be read as a project answers that it names one, so a failure nobody can classify is
+	/// reported as degrading rather than explained away as expected.
+	/// </summary>
+	[Test]
+	[Arguments("")]
+	[Arguments("   ")]
+	[Arguments("<Project")]
+	public void Reads_unparseable_text_as_naming_an_sdk(string project)
+	{
+		ProjectItemStyle.NamesSdk(project).ShouldBeTrue();
+	}
+
+	/// <summary>
 	/// Whether a project that lists its files names this one: a literal Compile item, relative to the
 	/// project, either separator, among several in one attribute. A wildcard or a property is left to
 	/// evaluation and does not count, and a Remove takes the name back.

@@ -56,15 +56,15 @@ effect in the corpus.
 issues are fixed**, AGT-17 with them (#427). All are closed but #360, whose fix is on the tier
 branch and which closes with it. What is left of it is the structural refactor WRK-02
 argues for, card **8b**, which nothing known is broken without, so whether to do it or decline it is
-still to decide. Card 1 opened the gate on **11b** and **11c**.
+still to decide.
 
 Issues filed after the review, up to #362, are triaged into the cards below. The ones no card fits
 are listed after tier 6, so none of them is re-derived from scratch.
 
-Three cards came out of closing others: the layout half of **21**, **11f** (closing 1b lets a
-worktree go while its worker runs on), and card 0e's finding that three of the phrases the comment
-convention lists are not history clauses at all. Card 9 also found a wrong answer the review missed
--- four write tools reporting a project clean while the caller's errors sat in it.
+Three cards came out of closing others: the layout half of **21**, **11f**, and card 0e's finding
+that three of the phrases the comment convention lists are not history clauses at all. Card 9 also
+found a wrong answer the review missed -- four write tools reporting a project clean while the
+caller's errors sat in it.
 
 Each closed finding is struck in its own file: the pull request, the problem, the state.
 
@@ -347,19 +347,20 @@ Highest leverage on adoption. Cheap relative to impact.
 
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
-| 11 | **Result size discipline, reads.** Split the location shape so a listed member does not carry a declaration record; stop repeating the absolute path per hit; make `includeSignatures=false` actually remove the signature; mark generated members and honour `filePath` on code-behind. Two read defects in the same tools, filed since: `rose_outline` drops every `<see cref/>` and `<paramref/>` from a summary, leaving a hole where the name was (#328), and `rose_symbol_info` on a referenced assembly's type returns its summary and none of its members, which `rose_outline` cannot reach at all (#353). | AGT-01, AGT-02, AGT-06, AGT-11, UIP dogfooding | #234 #328 #353 | M |
-| 11b | **Result size discipline, writes.** A write result is ~4,000 characters of which ~85% is the caller's own diff echoed back, a notice that fires on every call, or a fact already stated. Drop the diff to a range plus a normalisation line, condition the constant notices, say each fact once, name the path once. Thirteen writing tools share the base record. **Both halves are unblocked**: card 1 shipped, so returning relative paths no longer makes agents send ones that resolve anywhere, and card 9 shipped, so `EditPipeline.Report()` is the one place a notice is decided. Apply card 9's own rule when trimming: a line stating *which* compile ran is a fact and stays. `rose_replace_pattern` shows where it ends: a full-scope preview reached 57,875 characters and the client refused it, most of it an uncapped list of absolute paths the result already counts (#345). | AGT-21 | #345 | M |
-| 11c | **Accept `workspaceKey` as an anchor wherever `workspace` is accepted.** Its own summary calls it "fit for a caller to quote back" and cites the six-worktree case; every result carries it and nothing reads it. Sixteen characters an agent will actually echo, where a sixty-character absolute path is what it drops. Makes the relative-path round trip unambiguous by construction, and covers the one case card 1 leaves: an http session with no relay never says where it is. Done when `WorkspaceKey` leaves `ProducedFactTests`' exemption list. | AGT-21 | new | S |
-| 11d | **Let a plural intent be one call.** The four debug bookkeeping tools take one location each, so instrumenting a code path is six model turns and six result envelopes; the alternative they are pitched against, adding log statements, is plural in one edit. Take an array, return per-item outcomes copying `LiveXamlApplyResult`, never fail the batch for one item. Read tools follow after card 11. | AGT-22 | new | M |
-| 11e | **Answer an overflow with a grouping, never a bigger artefact.** Every reference already carries its containing member, project, test-ness and generated-ness, and the tool filters on one of the four. On overflow return the shape ("412: 380 in tests, 6 members") plus the narrowing vocabulary, and accept as a filter every facet already returned. A spill file only when the caller names one. Done when its three facets leave `ProducedFactTests`' exemption list. | AGT-23, AGT-06, AGT-05 | #234 | M |
-| 11f | **A worker outlives the worktree it was opened on, an ended live-app session is never dropped, and no session can see what is warm.** Since card 1b a worktree can be removed while its worker lives, and the worker runs on against a solution that is gone -- tolerating it as it tolerates a branch switch -- holding its memory for the life of the broker. Make eviction the manager's job, said in the activity log: retire a worker whose solution has been gone past a grace period, evict idle workers on a timer, and drop an ended live-app session, which is otherwise polled every second for the life of the broker. Add `rose_workspace_list`, so a session can see what is loaded and quote each workspace's key back, which card 11c makes an anchor. #157 has the worker half and BRK-04 the shape. | BRK-04, BRK-20 | #157 | M |
+| ~~11~~ | **#374.** The reads answered with a declaration record per outlined member, raw or whole documentation, an absolute path on every file and a code-behind's generated half, one symbol per call, and a first-few sample past a cap. They answer cheaply by default and take a list of symbols, documentation is prose, a path is relative to the caller, a file outline lists that file, and every capped list says what it left out with a filter for each group. | AGT-01, AGT-02, AGT-06, AGT-11, UIP dogfooding | — | — |
+| ~~11b~~ | **#375.** A write result was mostly the caller's own code read back, the same absolute path several times, and notices that fired on every call. A write names each changed file once, relative to the caller's directory where it lies under it, with where it changed; the diff is opt-in, and a notice says only what is true of the call and no field already says. | AGT-21 | — | — |
+| 11i | **`rose_diagnostics` entries.** Every entry still carries a `helpLink` no agent opens and an absolute path. A write's diagnostics already leave the link off and name the path relative to the caller (`WritePaths`, from `CallerPaths.KnownOrigin`), so this read can take the same step in the same place. | AGT-21 | — | S |
+| ~~11c~~ | **#376.** Every result named its workspace by a short key that no argument accepted. Every tool that takes `workspace` accepts the key too, but the one that starts a load. | AGT-21 | — | — |
+| ~~11d~~ | **#377.** The four debug bookkeeping tools took one location or id each, so instrumenting a path cost a model turn per method. Each takes a list and answers every entry with its own status, and one bad entry never fails the rest. | AGT-22 | — | — |
+| ~~11e~~ | **#378.** An answer past its cap was the first few references and a truncation flag, and three of the four facets on every reference could not be asked about. Past its cap the answer is the shape of the references, every facet is a filter, and a filter that keeps nothing says so. | AGT-23, AGT-05 | — | — |
+| ~~11f~~ | **#157, #379.** A worker outlived the worktree it was opened on and an idle one held its memory for the life of the broker, a session whose debug host had died was polled every second for as long, and no session could see what was warm. A long-lived broker stops idle and orphaned workers, a dead host's session is shown ended and then dropped, each says why where a person looks, and a session can list what is loaded by the key that names it. | BRK-04 | — | — |
 | 11g | **A path that does not exist yet is passed over as a routing hint**, so `rose_add_file` into another checkout is answered by the calling session's workspace every time, although the routing invariant says an absolute path is honoured wherever it points. It fails safely, and the refusal is the defect: it says the path is inside no project, which is false, and suggests an argument that would not help rather than `solution`, which would. Route a path that names nothing by its nearest existing ancestor, the way the tool will place the file. | new | #357 | S |
-| 11h | **Tool results switch mid-session to `\u`-escaped text**, `+` for every `+`, which makes a C# diff unreadable and several times longer. Nothing restarted; the switch coincided with another session's server starting. Two serialization paths with different encoders, and something choosing between them, would explain it. One encoder for every tool's text, and a test that `+ < > " '` come back unescaped. | new | #358 | S |
-| 12 | **An unknown argument is dropped in silence**, then the error reports the value as missing. Collect undeclared arguments and name them. | AGT-08 | #249 | S |
-| 12b | **Three live-app tools answer with a bare sentence**, which is the defect card 0c fixed on `rose_workspace_close` surviving on the surface 0c's guard exempts. Give each a result record, and narrow the exemption so it excuses a live-app result from *workspace* attribution rather than from being a result. | BRK-21 | new | S |
-| 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. The instance that made this urgent is gone (#306), so what is left is the class: a filter over every boundary, and a test that no refusal carries `(Parameter '`. The WinUI load diagnostic ("Cannot resolve Assembly or Windows Metadata file") goes with it: it should say its remedy, which is to build the referenced project first. Two refusals filed since give advice that does not work: `rose_change_signature` tells the caller to pass `usings`, which it does not take (#329), and `rose_move_member` refuses an instance member with no call sites that never uses `this`, on the ground that moving it changes what `this` means (#346). | AGT-04, WRK-07, AGT-05 | #329 #346 | M |
-| 14 | **Diagnostics never say the workspace is degraded**, so a clean answer from a broken workspace reads as a clean bill of health. Stamp it where attribution already happens. #303 is the case where nothing is stamped because nothing noticed: after a reload, `rose_find_references` and `rose_symbol_info` failed on an assembly that would not load while status said Loaded with no degraded reasons. The load failure is its own fix; the card's half is that a tool path which is dead makes the workspace degraded. | AGT-12, USE-01 | #303 | S |
-| 15 | **`rose_find_implementations` cannot be restricted to your own solution**, so a common framework interface returns 116 metadata matches truncated at 40. Also: a property's definition is listed three to four times. | IPC dogfooding, USE dogfooding, AGT-07 | new | S |
+| ~~11h~~ | **#358.** A typed tool's text was escaped by the SDK's default encoder, `+` and `<` included, except on a call carrying an undeclared argument, whose text was rewritten readably. Every host writes tool text with one relaxed encoder. | new | — | — |
+| ~~12~~ | **#249.** An argument sent under a name the tool does not declare was dropped in silence, and the refusal then reported the value as missing. A refusal names the argument and the declared name it most likely meant, and a call that succeeds without it says so in its notices. AGT-08's other suggestion, one word for imports everywhere, is undecided. | AGT-08 | — | — |
+| ~~12b~~ | **#380.** Three debug tools answered with a sentence naming no session, and the guard against that exempted the whole live-app surface. Every tool answers with a record, and the live-app exemption covers workspace attribution only. | BRK-21 | — | — |
+| ~~13~~ | **#431.** Errors named CLR parameters the caller never sent, a framework's exception read like a refusal, and an unbuilt reference's load diagnostic gave no remedy. No refusal carries a parameter name, a leaked exception says whose failure it is, and status names the project to build. | AGT-04, WRK-07 | — | — |
+| ~~14~~ | **#382.** A read from a degraded workspace said nothing of it, so a clean answer from a broken one read as a clean bill of health, and a tool path that had died left status calling the workspace healthy. Every read says in one line that its workspace is degraded and why, and a dead tool path degrades it. | AGT-12 | — | — |
+| ~~15~~ | **#383.** `rose_find_implementations` answered a framework interface with every dependency's implementations and could not be narrowed, and `rose_find_references` listed one declaration several times. The first lists this solution's source only and takes `project`; each declaration and each use is listed once. | IPC dogfooding, USE dogfooding, AGT-07 | — | — |
 
 ### Tier 4 — mechanism: make the rules structural
 
@@ -378,7 +379,7 @@ Commit to the supervising user, or decide not to. Everything here follows from t
 
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
-| 22 | **Render the facts already computed for a window.** Degraded reasons with their remedies, analyzer load failures, per-project health, restore state, information age, session notice. The cheapest wins in the repository. Done when its entries leave `ProducedFactTests`' exemption list. | USE-01, USE-03 | new | M |
+| 22 | **Render the facts already computed for a window.** Degraded reasons with their remedies, analyzer load failures, per-project health, restore state, information age, session notice. The cheapest wins in the repository. Done when its entries leave `ProducedFactTests`' exemption list. The window reads the broker's last status, which only a status call refreshes, so an assembly a tool could not load, or a reload the worker made on its own, shows there only once somebody asks; the reads already say it, from the worker. | USE-01, USE-03 | new | M |
 | 23 | **Show what the agent is doing, in the inspector.** The data is already on the object the window holds; the tray renders it and the inspector does not. | USE-02 | new | S |
 | 24 | **The activity log is the only record of what an agent did to your solution.** It is eight entries, collapsed, tertiary grey, dropped on close. Persist it, give it client attribution, promote it. | USE-04, USE-05 | new | M |
 | 25 | **Make facts copyable.** Nothing in a window whose job is feeding facts to an agent can be copied except one XAML address. | USE-09, USE-14 | new | S |
@@ -445,19 +446,19 @@ sections, the shortlist:
 
 Filed here so they reach the issue tracker. Several are not in any existing issue.
 
-1. Compact `rose_outline` is not compact, and loses to grep on both size and information (AGT-01).
-2. `includeSignatures=false` leaves the declaration text in `preview` (AGT-01).
-3. `rose_outline` on a WinUI code-behind merges the generated partial, marks none of it generated
-   despite the description's promise, and ignores `filePath` (05 dogfooding).
+1. ~~Compact `rose_outline` is not compact, and loses to grep on both size and information (AGT-01).~~ **#374.**
+2. ~~`includeSignatures=false` leaves the declaration text in `preview` (AGT-01).~~ **#374.**
+3. ~~`rose_outline` on a WinUI code-behind merges the generated partial, marks none of it generated
+   despite the description's promise, and ignores `filePath` (05 dogfooding).~~ **#374.**
 4. ~~A metadata symbol is unreachable whenever any source symbol shares its leaf name (AGT-03).~~ **#418.**
 5. ~~A positional record property cannot be addressed by name from any tool (WRK-04).~~ **#418.**
-6. `rose_find_implementations` has no way to ask "in my solution" (IPC dogfooding).
-7. `rose_find_references` lists one definition three to four times at different columns (USE dogfooding).
-8. `definitionsOnly=true` reports `truncated: true` over an empty list (AGT-05).
-9. `rose_resolve_name` without a file path fails with a leaked Roslyn parameter name (AGT-04).
+6. ~~`rose_find_implementations` has no way to ask "in my solution" (IPC dogfooding).~~ **#383.**
+7. ~~`rose_find_references` lists one definition three to four times at different columns (USE dogfooding).~~ **#378.**
+8. ~~`definitionsOnly=true` reports `truncated: true` over an empty list (AGT-05).~~ **#378.**
+9. ~~`rose_resolve_name` without a file path fails with a leaked Roslyn parameter name (AGT-04).~~ **#431.**
 10. `rose_build_freshness` counts `obj/` artefacts as sources, so it can name a generated editorconfig
     as the newest source file (HOT-10).
-11. `rose_symbol_info` returns `"source":[]` when source was not requested, which reads as "no source".
+11. ~~`rose_symbol_info` returns `"source":[]` when source was not requested, which reads as "no source".~~ **#374.**
 12. No tool reads XAML, though the worker knows a great deal about it.
 13. No way to ask Rose what its own tool listing looks like to a client, so surface changes are
     reviewable only as pass/fail.

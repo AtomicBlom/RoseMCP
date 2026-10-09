@@ -248,7 +248,12 @@ public sealed record SymbolAddress
 		return true;
 	}
 
-	private bool ParametersMatch(ISymbol symbol)
+	/// <summary>
+	/// Whether <paramref name="symbol"/> takes the parameters this address lists, or true where it lists
+	/// none. Asked on its own by a caller that has already settled which declarations carry the name,
+	/// such as an <c>after</c> that picks one overload beside which to add a member.
+	/// </summary>
+	public bool ParametersMatch(ISymbol symbol)
 	{
 		if (Parameters is null) return true;
 
@@ -329,9 +334,17 @@ public sealed record SymbolAddress
 	}
 
 	/// <summary>
+	/// A type fully qualified with the framework's names rather than the language's keywords:
+	/// <c>System.String[]</c> where the fully qualified format writes <c>string[]</c>.
+	/// </summary>
+	private static readonly SymbolDisplayFormat FrameworkSpelling =
+		SymbolDisplayFormat.FullyQualifiedFormat.RemoveMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
+
+	/// <summary>
 	/// Whether a parameter type as written names this one. Both the language's spelling and the
-	/// framework's are accepted, qualified or not, because a caller reading a signature back from
-	/// one tool and passing it to another should not have to know which of the two it was given.
+	/// framework's are accepted, qualified or not -- <c>string</c>, <c>String</c> and
+	/// <c>System.String</c> -- because a caller reading a signature back from one tool and passing it
+	/// to another should not have to know which of the two it was given.
 	/// </summary>
 	private static bool TypeMatches(ITypeSymbol type, string requested)
 	{
@@ -341,6 +354,7 @@ public sealed record SymbolAddress
 		[
 			type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
 			type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+			type.ToDisplayString(FrameworkSpelling),
 			type.Name,
 		];
 

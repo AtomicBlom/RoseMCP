@@ -8,6 +8,74 @@ Read before adding a tool, adding a field to a result, or changing an error path
   solution it owns. Convert at the boundary, never at the throw sites: the exception type carries
   meaning further in -- services separate a caller's mistake from an impossible state, the manager
   separates either from a dead worker, and retry decisions turn on that.
+- **No error names a CLR concept the caller did not send.** The caller's vocabulary is the tool's
+  schema, and a framework's parameter name is never in it: Roslyn's `(Parameter 'symbol')` reached
+  callers of a tool with no `symbol` argument, and of one whose `symbol` was the one thing they got
+  right, and every reading of it sent them to fix something that was not broken. So every boundary
+  passes its message through `ToolArgumentShape.WithoutParameterNames`, which says a parameter the
+  schema declares as that argument and drops any other, wherever in the message it sits; it is
+  idempotent, because a worker's refusal is composed in the worker and again in the broker that
+  relays it. The other half is telling a refusal from a leak, since Rose and every framework refuse
+  with the same `ArgumentException` and `InvalidOperationException`: `ToolFailure` reads the
+  deepest frame that is not a throw helper, and only code in a RoseMcp assembly, the MCP SDK's binder,
+  a JSON failure or an I/O failure counts as a refusal and keeps its words. Anything else is framed as
+  the named component's failure inside the named tool, with its message kept and its parameter name
+  gone -- and so is a fault the runtime raises, a null dereference or a bad cast, even inside Rose,
+  since nobody throws one to tell a caller something. By frame rather than by a marker type, because a marker needs every throw site to remember it
+  and calls the one that forgot a fault; the frame is known for every exception with nothing to
+  remember. `ParameterNameBoundaryTests` holds all three boundaries to it.
+- **Every tool answers with a record, and the live-app prefixes excuse only workspace
+  attribution.** A sentence names nothing a caller can check and gives an agent nothing to branch
+  on but its wording: "closed" says which workspace to nobody holding two, and "detached" which
+  session. A workspace's result derives from `WorkspaceScopedResult`, which the broker fills in one
+  place. A live-app result answers about a debugged process, which belongs to no workspace and has
+  no revision, so the `rose_debug_` and `rose_xaml_` prefixes excuse it from that and from nothing
+  else: it is still a record, and a result that ends or resumes a session names the session, the
+  one the caller passed, since a caller may hold several and one that is no longer open has nothing
+  else to read it from. An outcome that is not a failure -- nothing was open, nothing was stopped --
+  is a field, and an outcome that leaves something at risk, a detach that could not take the
+  debugger off its target, is still an error rather than a field that can be read past.
+  `ToolResultShapeTests` holds the record over the whole surface without consulting the prefixes,
+  so the exemption cannot quietly widen into excusing prose.
+- **An argument name the tool does not declare is said, on every call that carries one.** An
+  argument name is part of a tool's vocabulary, so a name the tool does not know is a caller error
+  the tool can see -- exactly as a wrong-shaped value is. The binder drops it rather than refusing it
+  and binds the declared argument at its default, so nothing past the binder can tell it was sent:
+  without this, `rose_outline(type: ...)` is refused for want of a type it was given, and
+  `rose_find_references(symbols: [...], projet: ...)` searches every project and answers a question
+  nobody asked. `ToolArgumentShape` reads the schema once for both halves: a refusal gains a
+  sentence naming the argument and the nearest declared name, at every MCP boundary; a call that
+  succeeds gains a notice saying the same, in its `notices` -- added to a result type that has none,
+  since the listing carries no output schema and one name for one kind of remark is less surprising
+  than two. The notice is the broker's alone, after the alias filter: it is the only process that
+  sees what the caller sent, and a spelling it accepts in place of a declared name is not unknown.
+  Named, never refused, and never answered with a further alias -- clients attach extras of their
+  own, and an alias teaches nobody the real name.
+- **A result's text is written with one encoder, `ToolJson.Encoder`, in every host.** A typed
+  tool's answer reaches a client twice, as structured content and as a text block holding the same
+  JSON, and most clients hand the model the text. The SDK writes that text with the framework's
+  default encoder unless a registration passes options, and the default spells every `+ < > ' "`,
+  backtick and `&` as a six-character escape inside the string, where no client decodes it: a diff
+  becomes unreadable and several times longer. So every `WithTools` and `WithToolsFromAssembly` passes
+  `ToolJson.Readable(McpJsonUtilities.DefaultOptions)`, and anything that rewrites a result's text
+  block afterwards -- the ignored-argument notice is one -- writes it with the same options: the
+  broker keeps one instance for its registrations and its filters. A registration that leaves the
+  options off, or a filter that picks its own, is a second spelling of the same answer that changes
+  from one call to the next with nothing in the call saying why. The broker's and the worker's
+  registrations are each held by a test; the live-app host's is held by review, since its text block
+  is read by nothing but the broker, which reads only structured content, and reaching it directly
+  takes a debugged target.
+- **Advice names an argument only where the tool takes it and it reaches.** A write that leaves a
+  name unresolved suggests the import, and a suggestion is followed literally: telling the caller of
+  a tool without `usings` to pass it sends an argument the tool never sees, and telling
+  `rose_change_signature`'s caller to pass it for a name left at a call site sends them round to the
+  same error, since its `usings` go only where a declaration changes. So `EditPipeline.VerifyAsync`
+  takes the files the tool's own `usings` reaches, with no default for a new tool to inherit, and
+  `MissingImports` names `usings` only for those. Anywhere else it names `rose_add_using` and every
+  file the name failed in, each by its path -- relative to the calling session's directory where it
+  lies under it, as the result names every path, which is where a path sent back is measured from --
+  since that is what `filePath` is matched against and a name answered once for its first file
+  leaves the others failing after the advice is taken.
 - **A name matching two symbols is refused, and the address a result hands back resolves.** These
   are the two halves of addressing code by name, and each fails by producing a well-formed answer
   about something else. A resolver keyed on a candidate's name, containing type and assembly
@@ -49,6 +117,22 @@ Read before adding a tool, adding a field to a result, or changing an error path
   case, by a multi-targeted project's name without its framework, or by the path to its project
   file -- and its refusal lists the names there are. `ProjectNamesTests` fails any other worker type
   that compares a project's name with a string itself.
+- **Every facet a result returns is a filter the tool owes, and an overflow is answered with a
+  smaller question, never a bigger artefact.** A fact computed on every item is a fact a caller wants
+  to select on; one it can read and not ask about leaves two ways to narrow a large answer, reading
+  all of it or text-searching it, and the second throws away the precision the semantic search was
+  paid for. `ProducedFactTests` fails a facet with no argument of its name. Past its cap,
+  `rose_find_references` returns the shape of its references instead of the first few in path order
+  -- counts by project, test project, generated code and member, each group keyed by the value its
+  narrowing argument takes -- because a first-N cut is an arbitrary sample that reads as the whole
+  answer. A filter that keeps nothing says so and describes every reference instead, since an empty
+  list reads as a symbol nobody uses. `truncated` means one thing, that raising the cap lists more,
+  so an answer that lists nothing because it was asked to is not truncated. Nothing spills to a file
+  the caller did not name: a read that writes to disk unasked leaves files nobody owns, and telling the
+  caller to grep them concedes the reason the tool exists. `rose_diagnostics`, `rose_search_symbols` and
+  `rose_debug_events` answer past their caps the same way; a search keeps its closest matches and an
+  event page its events, since neither is a sample, and adds the shape of the rest. See
+  [the decision](../decisions/a-list-past-its-cap-describes-itself.md).
 - **Status may not report a field it cannot fill.** `GetStatusAsync` once passed `restore: null`,
   `loadSeconds: 0` and no load diagnostics, hard-coded, so every status answer on every solution
   carried the same three blanks. That is worse than omitting them: a failed restore reaches
@@ -70,6 +154,56 @@ Read before adding a tool, adding a field to a result, or changing an error path
   activity log's percentages, so a poll can watch a load rather than merely wait for it. Do not
   reintroduce a second tool for this: `rose_workspace_open` was `rose_workspace_status` under another
   name, down to the same two lines of body, and not waiting is what gives it something to be.
+- **A batch answers each entry, and one entry's mistake is that entry's status.** A tool that takes
+  a list of independent requests -- tracepoints, breakpoints, ids to remove, symbols to read -- answers
+  with one entry per request in the order given, each with a `status` that is the outcome or the
+  reason there was none, so a caller can match an answer to what it sent without counting. Refusing
+  the whole call for one bad entry sends the caller back to retry the good ones piece by piece, which
+  is the turn count a batch exists to save; only what makes the call impossible as a whole is an
+  error, and an empty list is one, since an answer with no entries reads as a call that worked. An
+  entry that is waiting rather than wrong -- a breakpoint whose module has not loaded -- is a success
+  that says so, never a refusal -- and one that will never bind, because the loaded module cannot
+  carry it, says that instead, with why, since a caller told to wait waits for nothing. See [the decision](../decisions/a-plural-intent-is-one-call.md).
+- **A fact about the load travels with the load.** Status re-describes the live snapshot on every call,
+  so anything learned once per load -- the restore, the load diagnostics, the projects the worker's own
+  MSBuild could not evaluate -- reaches a later status only through `LoadOutcome`, which a reload
+  replaces. Passed to the load's report and not to `LoadOutcome`, it is said once and then the workspace
+  reads `Loaded` again with nothing changed.
+- **A project naming an SDK that the worker cannot evaluate degrades; a legacy one is a notice.** The
+  design-time build runs in Roslyn's build host, a process of its own, so a worker whose MSBuild has lost
+  its SDK still loads every project and reports nothing else wrong. An SDK project is exactly what the
+  SDK's MSBuild exists to evaluate, so its failing here is this process going wrong. A project naming no
+  SDK fails here by design -- its targets ship only with Visual Studio's MSBuild -- and calling that
+  degraded would mark every UWP solution degraded. The reason calls the worker broken only when every SDK
+  project failed here *and* the design-time build loaded each of them; a broken import or a malformed
+  `Directory.Build.props` fails both, and restart advice for that is wrong.
+- **An assembly the worker's own code cannot load is a fact about the worker, and status keeps it.** A
+  framework or Roslyn assembly that fails to load once fails on every later call that reaches the same
+  code, while the tools that do not reach it answer normally -- so the workspace reads `Loaded` while two
+  tools are dead, and the loader's message names a file and nothing else. The worker's call-tool filter
+  reads it off the exception (`AssemblyLoadFault`), says what it means and that `rose_workspace_reload`
+  starts a fresh worker, and records it on the `WorkspaceHost`, which status reads on every call and a reload does
+  not clear. A missing source file throws the same exception type naming a path, and a code fixer's or
+  generator's own dependency names an assembly the worker was not started with -- decided by the missing
+  assembly against the trusted platform list and the worker's directory, not by the throwing frame, since
+  the JIT reports a missing dependency in its caller's frame, which can be Roslyn's. Neither is this, and
+  telling a caller to restart the worker over them would be wrong advice.
+- **A read from a degraded workspace says so, once, in one line.** A read cannot report what its
+  workspace could not see: a project whose design-time build failed resolves nothing and so reports
+  nothing, and a generator that did not load writes nothing for the compiler to complain about. So
+  `diagnostics: []` from a degraded workspace is not the fact it is from a healthy one, and without a
+  notice the two read the same -- an agent treats the zero as a gate and moves on. The snapshot a read
+  is handed leads its notices with the first reason's opening sentence, cut to a ceiling since one can
+  quote every message MSBuild gave, a count of the others and a pointer to `rose_workspace_status`;
+  every read passes the snapshot's notices on, and a batch says them once rather than on every entry. The reasons in full, each with its fix, are status's: the notice rides
+  on every read, and every reason on every read would be read past. It is decided in the worker, in
+  `WorkspaceHost.ReadAsync`, rather than beside attribution in the broker, because the broker holds only
+  the last status a client asked for, which cannot see a reload the worker made on its own or an
+  assembly a tool failed to load a call ago -- exactly when a clean answer is least to be trusted. What
+  it reads is the newest full description of the current load, the load's own or a status call's since,
+  plus the process's assembly faults, so no read pays for running every project's generators. Status and
+  writes do not carry it: status lists the reasons itself, and a write's verdict is the compile it ran.
+  A read that builds its notices without the snapshot's drops this with them.
 - **What says nothing is counted, not listed.** A status answer for a solution of two hundred
   projects that all loaded was two hundred entries saying so, about 25k tokens before the part that
   mattered; a solution-wide diagnostics pass over two unrestored projects was 44k errors saying only
@@ -90,3 +224,44 @@ Read before adding a tool, adding a field to a result, or changing an error path
   emptying of the word that narrowed the MSBuild-failure count and took `targetFramework` out of the
   project name. It is still said, because what it warns about does not present as a build failure:
   it presents as a test failing for a reason that has nothing to do with the change.
+- **What every item of a list shares is said once, and a narrowing says what it left out.** An
+  outline that repeated its file, project and source line on every member cost ten times what the
+  member names did, and on a large type overran what a client accepts -- so the caller read the file,
+  which is the read the tool exists to replace. Put a field that is constant across a result's items
+  on the result, or on the thing the items belong to, and leave out a flag an item does not have.
+  The other half is the one a cap or a filter breaks: an empty or short list reads as the whole
+  answer, so whatever narrowed it carries a total and a notice. `ResultBudgetTests` holds the per-item
+  cost. See [the decision](../decisions/an-outline-is-cheap-by-default.md).
+  <br>
+  `rose_find_references` lists its references by file for the same reason: the path, the project and
+  whether it is a test project are said once per file rather than on every hit. And the part of each
+  path every file shares, the directory the caller runs in, is said once as `relativeTo`, by the broker,
+  which is the only process that knows it; see
+  [the decision](../decisions/a-path-a-read-returns-is-relative-to-the-caller.md).
+  <br>
+  A write's `changedFiles` is the one list a narrowing must not reach early: `WorkspaceManager` reads
+  all of it to say which sibling solution compiles the same files, so a worker that cut it would hide
+  a sibling whose files fell past the cut. Every write names twenty at most, and the broker cuts the
+  list after the manager has answered -- and names the paths relative to the caller's directory only
+  after that too, since the sibling check reads them absolute.
+- **A write result says what the writer owns, once, and never the caller's input back.** What an
+  edit wrote is nearly always what its caller sent, so an applied write leaves its diff off unless
+  `includeDiff` asks, and says instead where each file changed and what it normalised (`changedFiles`:
+  lines, and line endings rewritten, which no diff can show). A preview keeps the diff, because a
+  preview is the diff; past sixteen thousand characters even that is left out, with a notice naming
+  where it still is -- `git diff` for an applied write, a narrower preview for one that is not. A path is
+  named once: a result about one file names it as the first changed file rather than in a field of its
+  own, relative to the calling session's directory where it lies under it, so it means one file
+  however it is sent back (see [solution-routing.md](solution-routing.md)). And a notice is said
+  only where it is true of this call and is not already a field: whether it was a preview is
+  `applied`, whether anything compiled is `verified`, the errors introduced, resolved and already there
+  are counts, and the dependents a narrowed scope skipped are a list. The one thing a count cannot
+  say is that part of the errors already there are analyzer errors, which `rose_diagnostics` leaves
+  out unless `includeAnalyzers=true`, so a count beside its zero reads as the two tools disagreeing:
+  a write says how many, where there are any. What holds for every call -- that
+  analyzers run where a write lands -- is in the descriptions. A line stating *which* compile ran is a
+  fact about the call and stays. A notice that fires on every call carries no information and teaches
+  the caller to skim the channel the rare ones arrive on; one guarded on the kind of edit rather than on
+  the case that makes it true ends up contradicting the field beside it. `WriteForCaller` and
+  `WritePaths` do the shaping in the broker for every write, so a writing tool added later is shaped
+  without knowing it is, and `WriteResultTests` fails a write result type `WritePaths` does not know.

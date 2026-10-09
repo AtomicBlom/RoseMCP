@@ -124,6 +124,7 @@ public sealed class SolutionLoader(
 			options.SolutionPath,
 			workspace.Diagnostics,
 			restore,
+			inputs.Failures,
 			revision: 1,
 			Math.Round(stopwatch.Elapsed.TotalSeconds, 2),
 			cancellationToken,

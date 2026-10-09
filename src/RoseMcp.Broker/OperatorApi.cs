@@ -283,15 +283,26 @@ public static class OperatorApi
 	/// <para>
 	/// Deliberately <see cref="LiveAppSessionManager.ForOperator"/> and never
 	/// <see cref="LiveAppSessionManager.Find"/>: see the note on this type for why the latter refuses
-	/// every session from here.
+	/// every session from here. A session dropped because its host died is refused saying so, which is
+	/// the one way a session goes that its reader did not cause.
 	/// </para>
 	/// </summary>
 	/// <exception cref="KeyNotFoundException">There is no session with that id.</exception>
-	private static LiveAppSession Require(LiveAppSessionManager sessions, string sessionId) =>
-		sessions.ForOperator(sessionId)
-			?? throw new KeyNotFoundException(
-				$"No debug session '{sessionId}' is open. GET /operator/sessions lists the ones there are. "
-					+ "A session ends when its client disconnects or something detaches it.");
+	private static LiveAppSession Require(LiveAppSessionManager sessions, string sessionId)
+	{
+		if (sessions.ForOperator(sessionId) is { } session) return session;
+
+		if (sessions.DroppedForOperator(sessionId) is { } dropped)
+		{
+			throw new KeyNotFoundException(
+				dropped.Explain(sessions.UtcNow, "Start or attach a new session to debug the target again."));
+		}
+
+		throw new KeyNotFoundException(
+			$"No debug session '{sessionId}' is open. GET /operator/sessions lists the ones there are. "
+				+ "A session ends when its client disconnects, when something detaches it, or when its "
+				+ "live-app host stops answering.");
+	}
 
 	/// <summary>
 	/// Event kinds as a comma-separated query value, which is what a URL can carry. Empty means every

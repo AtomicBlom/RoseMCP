@@ -2,10 +2,12 @@ using System.Text;
 
 using Microsoft.CodeAnalysis;
 
+using RoseMcp.Contracts;
+
 namespace RoseMcp.Worker;
 
 /// <summary>
-/// Writes solution changes to disk and reports them as a unified diff.
+/// Writes solution changes to disk and reports where each file changed, with a unified diff.
 /// <para>
 /// Each file goes back in the encoding it arrived in, which <see cref="SourceEncoding"/> explains.
 /// </para>
@@ -25,9 +27,8 @@ public static class SolutionWriter
 		Action<string>? noteSelfWrite,
 		CancellationToken cancellationToken)
 	{
-		var changed = new List<string>();
+		var changed = new List<ChangedFile>();
 		var diff = new StringBuilder();
-		var retyped = new List<(string Path, int Lines, string To)>();
 
 		// A multi-targeted project loads once per target framework, so one file on disk is a document in
 		// each of them and every edit to it is a change in each. It is still one file and one write; listed
@@ -49,10 +50,10 @@ public static class SolutionWriter
 				if (!seen.Add(path)) continue;
 
 				var source = await added.GetTextAsync(cancellationToken);
-				var text = source.ToString();
+				var created = UnifiedDiff.NewFile(path, source.ToString());
 
-				changed.Add(path);
-				diff.Append(UnifiedDiff.RenderNewFile(path, text));
+				changed.Add(new ChangedFile { FilePath = path, Lines = created.Lines, Created = true });
+				diff.Append(created.Text);
 
 				if (!write) continue;
 
@@ -81,12 +82,20 @@ public static class SolutionWriter
 				if (string.Equals(oldText, newText, StringComparison.Ordinal)) continue;
 
 				seen.Add(path);
-				changed.Add(path);
-				diff.Append(UnifiedDiff.Render(path, oldText, newText));
 
-				// Recorded separately because the diff above cannot carry it: a terminator is not line
+				var compared = UnifiedDiff.Compare(path, oldText, newText);
+				diff.Append(compared.Text);
+
+				// Recorded beside the lines because the diff cannot carry it: a terminator is not line
 				// content, so the change this most often makes shows there as nothing at all.
-				if (LineEndings.Changed(oldText, newText) is { } moved) retyped.Add((path, moved.Lines, moved.To));
+				changed.Add(new ChangedFile
+				{
+					FilePath = path,
+					Lines = compared.Lines,
+					Normalised = LineEndings.Changed(oldText, newText) is { } moved
+						? $"{moved.Lines} line ending(s) to {moved.To}"
+						: null,
+				});
 
 				if (!write) continue;
 
@@ -99,42 +108,7 @@ public static class SolutionWriter
 		{
 			ChangedFiles = changed,
 			Diff = diff.ToString(),
-			Notices = Retyped(retyped),
 		};
-	}
-
-	/// <summary>
-	/// The line-ending changes as sentences, grouped by what they were changed to.
-	/// <para>
-	/// Said because the diff cannot say it. Rewriting a file's terminators changes no line's content,
-	/// so it produces no hunk -- and a result carrying five changed files beside an empty diff reads
-	/// exactly like a call that did nothing, in the one situation where it did the most.
-	/// </para>
-	/// </summary>
-	private static IReadOnlyList<string> Retyped(IReadOnlyList<(string Path, int Lines, string To)> retyped)
-	{
-		if (retyped.Count == 0) return [];
-
-		return
-		[
-			.. retyped
-				.GroupBy(entry => entry.To, StringComparer.Ordinal)
-				.OrderBy(group => group.Key, StringComparer.Ordinal)
-				.Select(group =>
-					$"Rewrote {group.Sum(entry => entry.Lines)} line ending(s) to {group.Key} in {Named(group)}. "
-						+ "A terminator is not line content, so none of that shows in the diff."),
-		];
-	}
-
-	/// <summary>
-	/// The files by name while there are few enough to read, and a count past that. A caller with
-	/// forty reformatted files wants the number; a caller with two wants to know which two.
-	/// </summary>
-	private static string Named(IEnumerable<(string Path, int Lines, string To)> entries)
-	{
-		var names = entries.Select(entry => Path.GetFileName(entry.Path)).ToArray();
-
-		return names.Length <= 3 ? string.Join(", ", names) : $"{names.Length} file(s)";
 	}
 
 	/// <summary>

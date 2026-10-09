@@ -25,9 +25,6 @@ namespace RoseMcp.Worker;
 /// </summary>
 public static class ReplacePatternService
 {
-	/// <summary>The longest diff a result carries; beyond it, a caller narrows the scope to read one.</summary>
-	internal const int DiffCeiling = 16_000;
-
 	/// <summary>Rewrites what <paramref name="request"/>'s rules match across its scope, or previews it.</summary>
 	public static async Task<MutationResult<PatternRewriteResult>> ReplaceAsync(
 		WorkspaceSnapshot snapshot,
@@ -45,6 +42,7 @@ public static class ReplacePatternService
 		var sites = new List<SiteRecord>();
 		var misses = new List<MissRecord>();
 		var boundTo = new Dictionary<int, SortedSet<string>>();
+		var boundGroups = new HashSet<string>(StringComparer.Ordinal);
 		var unbound = new Dictionary<int, string>();
 		var seen = new HashSet<(string Path, int Start)>();
 		var solution = snapshot.Solution;
@@ -71,7 +69,11 @@ public static class ReplacePatternService
 					boundTo[rule.Rule.Number] = addresses = new SortedSet<string>(StringComparer.Ordinal);
 				}
 
-				foreach (var method in rule.Methods) addresses.Add(Address(method));
+				foreach (var method in rule.Methods)
+				{
+					addresses.Add(Address(method));
+					boundGroups.Add(Group(method));
+				}
 			}
 
 			if (bound.Bound.Count == 0) continue;
@@ -93,7 +95,7 @@ public static class ReplacePatternService
 
 				foreach (var miss in scan.Unmatched.Where(miss => seen.Add((path, miss.Node.SpanStart))))
 				{
-					misses.Add(new MissRecord(Address(miss.Method), Locate(miss.Node, path, text, isTest), miss.Binds));
+					misses.Add(new MissRecord(Address(miss.Method), Group(miss.Method), Locate(miss.Node, path, text, isTest), miss.Binds));
 				}
 
 				if (fresh.Count == 0) continue;
@@ -150,15 +152,20 @@ public static class ReplacePatternService
 
 		await edit.WriteAsync(solution, asked, cancellationToken);
 
-		var firstChanged = edit.Outcome.ChangedFiles.FirstOrDefault() ?? string.Empty;
+		var firstChanged = edit.Outcome.Paths.FirstOrDefault() ?? string.Empty;
 
 		progress?.Report("Compiling what changed", 90);
 
-		await edit.VerifyAsync(firstChanged, EditVerification.WithDependents(solution, [.. changedProjects]), cancellationToken);
+		await edit.VerifyAsync(
+			firstChanged,
+			EditVerification.WithDependents(solution, [.. changedProjects]),
+			edit.Outcome.Paths,
+			cancellationToken);
 
 		var summary = PatternReport.Build(
 			catalog.Rules.Count,
 			boundTo.ToDictionary(entry => entry.Key, entry => (IReadOnlyList<string>)[.. entry.Value]),
+			boundGroups,
 			sites,
 			misses,
 			preview: !request.Apply);
@@ -177,14 +184,6 @@ public static class ReplacePatternService
 
 		notices.AddRange(summary.Notices);
 
-		var diff = edit.Outcome.Diff;
-
-		if (diff.Length > DiffCeiling)
-		{
-			notices.Add($"The diff is {diff.Length:N0} characters and was left out. Narrow filePaths to one file or directory to read it.");
-			diff = string.Empty;
-		}
-
 		notices.AddRange(edit.Report());
 
 		var result = new PatternRewriteResult
@@ -200,12 +199,15 @@ public static class ReplacePatternService
 			Unmatched = summary.Unmatched,
 			Files = summary.Files,
 			FileCount = summary.FileCount,
-			Diff = diff,
+			FilesChanged = edit.Outcome.ChangedFiles.Count,
+			Diff = edit.Outcome.Diff,
+			// Every one: the broker reads the whole list to warn about a sibling solution compiling the same
+			// files, and only then caps what the caller is shown.
 			ChangedFiles = edit.Outcome.ChangedFiles,
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
 			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
-			TotalErrorCount = edit.Verification.TotalCount,
+			PreexistingErrorCount = edit.Verification.PreexistingCount,
 			ProjectsChecked = edit.Verification.Projects,
 			Notices = notices,
 		};
@@ -327,6 +329,18 @@ public static class ReplacePatternService
 
 	/// <summary>A method as an address a caller can pass back to another tool.</summary>
 	private static string Address(IMethodSymbol method) => SymbolAddress.Of(method) ?? method.ToDisplayString();
+
+	/// <summary>
+	/// A method's type and name, the same for each of its overloads: an extension call by its static form
+	/// and a generic one by its definition, as a miss is reported.
+	/// </summary>
+	private static string Group(IMethodSymbol method)
+	{
+		var definition = (method.ReducedFrom ?? method).OriginalDefinition;
+		var type = SymbolAddress.Of(definition.ContainingType.OriginalDefinition) ?? definition.ContainingType.ToDisplayString();
+
+		return $"{type}.{definition.Name}";
+	}
 
 	/// <summary>Where a node starts, with its line of source and whether its project is a test project.</summary>
 	private static SourceLocation Locate(SyntaxNode node, string path, SourceText text, bool isTest)

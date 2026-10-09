@@ -1,3 +1,7 @@
+using System.Text.Json;
+
+using ModelContextProtocol;
+
 using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
@@ -36,13 +40,27 @@ public sealed class OutlineTests
 			member => member.Signature == "string Library.Greeter.Greet(string name)");
 
 		type.Members.ShouldContain(member => member.Name == "PrefixLength" && member.Kind == "Property");
-		type.Members.ShouldContain(member => member.Name == "Shout" && member.Accessibility == "Private");
+		type.Members.ShouldContain(member => member.Name == "Shout" && member.Accessibility == "Private" && member.IsStatic);
 
-		// Each member says where it is, so the next call names a file without searching.
+		// The file is said once, on the type, and each member gives the line it is on there.
+		Path.GetFileName(type.FilePath).ShouldBe("Greeter.cs");
+		type.Declarations.ShouldHaveSingleItem().Project.ShouldBe("Library");
+		type.TotalMembers.ShouldBe(type.Members.Count);
+		result.Truncated.ShouldBeFalse();
+
+		// A reference in a summary is the name it points at, which is usually the subject of the
+		// sentence, rather than a hole where that name was.
+		type.Members.Single(member => member.Signature == "string Library.Greeter.Greet(string title, string name)")
+			.Summary.ShouldBe("The greeting for name with a title, its prefix PrefixLength characters long.");
+
 		foreach (var member in type.Members)
 		{
-			member.Location.ShouldNotBeNull();
+			member.Line.ShouldNotBeNull();
+			member.FilePath.ShouldBeNull($"{member.Name} is in its type's own file");
+			member.DeclaringType.ShouldBeNull($"{member.Name} is the type's own");
 		}
+
+		type.Members.Where(member => member.Name == "PrefixLength").ShouldHaveSingleItem().Line.ShouldBe(9);
 	}
 
 	/// <summary>
@@ -74,22 +92,16 @@ public sealed class OutlineTests
 		foreach (var member in type.Members)
 		{
 			member.Signature.ShouldBeNull();
-		}
-		foreach (var member in type.Members)
-		{
 			member.Summary.ShouldBeNull();
+			member.Kind.ShouldNotBeEmpty();
+			member.Line.ShouldNotBeNull();
 		}
 		type.Members.ShouldContain(member => member.Name == "Greet");
-		foreach (var member in type.Members)
-		{
-			member.Kind.ShouldNotBeEmpty();
-		}
-		type.Members.Any(member => member.Location is not null).ShouldBeTrue();
 	}
 
 	/// <summary>
 	/// The two switches are independent, so asking for one does not silently bring the other. Both
-	/// default to on, which is what every existing caller gets.
+	/// default to off at the tool, which <c>OutlineToolTests</c> in the unit suite holds.
 	/// </summary>
 	[Test]
 	[Arguments(true, false)]
@@ -196,6 +208,404 @@ public sealed class OutlineTests
 	}
 
 	/// <summary>
+	/// What every member of a type shares is said once, on the type, and a flag a member does not have
+	/// is left out rather than written as false: on the wire, a member is its name, kind, accessibility
+	/// and line. Measured over the result as the MCP layer serialises it, because that is what a
+	/// caller pays for, and a shape that is lean only in C# is not lean.
+	/// </summary>
+	[Test]
+	public async Task Says_what_every_member_shares_once_on_the_type()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			"Library.Greeter",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		var json = JsonSerializer.SerializeToNode(result, McpJsonUtilities.DefaultOptions)!;
+		var type = json["types"]![0]!;
+
+		Path.GetFileName(type["filePath"]!.GetValue<string>()).ShouldBe("Greeter.cs");
+		type["declarations"]![0]!["project"]!.GetValue<string>().ShouldBe("Library");
+		type["declarations"]![0]!["containingMember"].ShouldBeNull("a type's declaration sits inside the type itself");
+
+		string[] perFile = ["filePath", "project", "isTestProject", "preview", "column", "containingMember", "location"];
+		string[] falseFlags = ["isAbstract", "isStatic", "isGenerated"];
+
+		foreach (var member in type["members"]!.AsArray())
+		{
+			var keys = member!.AsObject().Select(property => property.Key).ToList();
+
+			keys.ShouldContain("line");
+			keys.ShouldNotContain(key => perFile.Contains(key), $"{member["name"]} repeats a field its type already says: {member.ToJsonString()}");
+
+			foreach (var flag in falseFlags)
+			{
+				if (member[flag] is { } value) value.GetValue<bool>().ShouldBeTrue($"{member["name"]} writes {flag} as false");
+			}
+		}
+
+		// Shout is the one static member, so the flag is there for it and absent for the rest.
+		type["members"]!.AsArray().Count(member => member!["isStatic"] is not null).ShouldBe(1);
+	}
+
+	/// <summary>
+	/// The way into a large type: a name filter, matched anywhere in the name and ignoring case, with
+	/// the total saying how many matched.
+	/// </summary>
+	[Test]
+	public async Task Lists_only_the_members_whose_name_matches()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			"Library.Greeter",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken,
+			members: "GREET");
+
+		var type = result.Types.ShouldHaveSingleItem();
+
+		type.Members.Select(member => member.Name).ShouldBe(["Greet", "Greet"]);
+		type.TotalMembers.ShouldBe(2);
+		result.Truncated.ShouldBeFalse();
+		result.Notices.ShouldBeEmpty();
+	}
+
+	/// <summary>
+	/// A filter matching nothing is said, rather than answered with an empty list that reads exactly
+	/// like a type with no members.
+	/// </summary>
+	[Test]
+	public async Task Says_so_when_the_name_filter_matches_nothing()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			"Library.Greeter",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken,
+			members: "Farewell");
+
+		var type = result.Types.ShouldHaveSingleItem();
+
+		type.Members.ShouldBeEmpty();
+		type.TotalMembers.ShouldBe(0);
+		result.Notices.ShouldContain(notice => notice.Contains("No member's name contains 'Farewell'") && notice.Contains("all 6 members"));
+	}
+
+	/// <summary>
+	/// The cap stops the listing and says so, with the total, so a caller knows the answer is partial
+	/// and how much is missing rather than taking the first page for the type.
+	/// </summary>
+	[Test]
+	public async Task Stops_at_the_member_cap_and_says_how_many_there_were()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			"Library.Greeter",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken,
+			maxMembers: 2);
+
+		var type = result.Types.ShouldHaveSingleItem();
+
+		type.Members.Count.ShouldBe(2);
+		type.TotalMembers.ShouldBe(6);
+		result.Truncated.ShouldBeTrue();
+		result.Notices.ShouldContain(notice => notice.Contains("Listed 2 of 6 members") && notice.Contains("maxMembers=2"));
+	}
+
+	/// <summary>
+	/// One cap for the whole answer, so a file of many types cannot overrun it a type at a time; the
+	/// types it ran out before are still listed, with the totals that say what they hold.
+	/// </summary>
+	[Test]
+	public async Task Shares_the_member_cap_across_every_type_in_a_file()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			type: null,
+			fixture.Path("Members", "Library", "Kinds.cs"),
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken,
+			maxMembers: 1);
+
+		result.Types.Select(type => type.Members.Count).ShouldBe([1, 0, 0]);
+		result.Types.Select(type => type.TotalMembers).ShouldBe([1, 2, 0]);
+		result.Truncated.ShouldBeTrue();
+	}
+
+	/// <summary>
+	/// A member declared outside its type's file names that file, and only that member does: the other
+	/// part of a partial gives its own path, and the part being looked at gives a line alone.
+	/// </summary>
+	[Test]
+	public async Task Names_the_file_only_for_a_member_declared_in_another()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			"Library.Split",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		var type = result.Types.ShouldHaveSingleItem();
+
+		type.Declarations.Count.ShouldBe(2);
+		type.DeclaredElsewhere.ShouldBe(0);
+
+		var home = Path.GetFileName(type.FilePath);
+		var away = home == "Split.cs" ? "SplitAgain.cs" : "Split.cs";
+		var listed = type.Members.ToDictionary(member => member.Name);
+
+		listed.Keys.ShouldBe(["First", "Second"], ignoreOrder: true);
+		listed.Values.Where(member => member.FilePath is null).ShouldHaveSingleItem();
+		listed.Values.Where(member => member.FilePath is not null).ShouldHaveSingleItem().FilePath.ShouldEndWith(away);
+	}
+
+	/// <summary>
+	/// A file outline lists what the file declares. A partial's other files are named among its
+	/// declarations and their members counted, so the short list does not read as the whole type, and
+	/// the notice says how to ask for all of it.
+	/// </summary>
+	[Test]
+	public async Task Lists_only_what_a_file_declares_and_counts_the_rest_of_a_partial()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			type: null,
+			fixture.Path("Members", "Library", "Split.cs"),
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		var type = result.Types.ShouldHaveSingleItem();
+
+		type.Members.ShouldHaveSingleItem().Name.ShouldBe("First");
+		type.TotalMembers.ShouldBe(1);
+		type.DeclaredElsewhere.ShouldBe(1);
+		type.Declarations.Count.ShouldBe(2);
+		result.Notices.ShouldContain(notice => notice.Contains("1 member of Library.Split declared in its other files is not listed"));
+	}
+
+	/// <summary>
+	/// What the other files declare is counted among the members the name filter keeps: a filter matching
+	/// only this file's members leaves nothing elsewhere to report, and a notice that there was would send
+	/// the caller after members it did not ask about.
+	/// </summary>
+	[Test]
+	public async Task Counts_only_the_filtered_members_another_file_declares()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			type: null,
+			fixture.Path("Members", "Library", "Split.cs"),
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken,
+			members: "First");
+
+		var type = result.Types.ShouldHaveSingleItem();
+
+		type.Members.ShouldHaveSingleItem().Name.ShouldBe("First");
+		type.DeclaredElsewhere.ShouldBe(0);
+		result.Notices.ShouldNotContain(notice => notice.Contains("declared in its other files", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// The case that makes it matter: a XAML code-behind's type is mostly its generated half, whose
+	/// members are none of what a caller outlining the code-behind is about to edit.
+	/// </summary>
+	[Test]
+	public async Task Leaves_a_code_behinds_generated_half_out_of_its_file_outline()
+	{
+		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			type: null,
+			fixture.Path("XamlStub", "Ui", "Widget.xaml.cs"),
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		var type = result.Types.ShouldHaveSingleItem();
+
+		type.Members.Select(member => member.Name).ShouldBe([".ctor", "Caption"], ignoreOrder: true);
+		type.Members.ShouldAllBe(member => member.FilePath == null && !member.IsGenerated);
+		type.DeclaredElsewhere.ShouldBeGreaterThan(0, "the generated half declares InitializeComponent and the named element");
+
+		var whole = await OutlineService.OutlineAsync(
+			snapshot,
+			"Ui.Widget",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		whole.Types.ShouldHaveSingleItem().Members.ShouldContain(member => member.Name == "InitializeComponent");
+	}
+
+	/// <summary>
+	/// A partial type written as two blocks of one file is one type in the outline. Listed once per
+	/// block, it would spend the member cap twice and its totals would count every member twice.
+	/// </summary>
+	[Test]
+	public async Task Lists_a_type_split_within_one_file_once()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			type: null,
+			fixture.Path("Members", "Library", "Halved.cs"),
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		var type = result.Types.ShouldHaveSingleItem();
+
+		type.Members.Select(member => member.Name).ShouldBe(["FrontHalf", "BackHalf"]);
+		type.TotalMembers.ShouldBe(2);
+		type.Members.ShouldAllBe(member => member.FilePath == null);
+		result.Truncated.ShouldBeFalse();
+	}
+
+	/// <summary>
+	/// An inherited member says which type declared it, which is the one case where the type it is
+	/// listed under is not its own.
+	/// </summary>
+	[Test]
+	public async Task Says_which_base_an_inherited_member_comes_from()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			"Library.LoudNotifier",
+			filePath: null,
+			includeInherited: true,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		var members = result.Types.ShouldHaveSingleItem().Members.Where(member => member.Name == "Notify").ToList();
+
+		members.Count.ShouldBe(2);
+		members[0].DeclaringType.ShouldBeNull("the override is LoudNotifier's own");
+		members[1].DeclaringType.ShouldBe("Library.Notifier");
+	}
+
+	/// <summary>
+	/// A primary constructor is documented by its type's comment, so with documentation on, its entry
+	/// would repeat the type's summary -- the longest paragraph in most answers, paid twice.
+	/// </summary>
+	[Test]
+	public async Task Does_not_repeat_the_types_summary_on_its_primary_constructor()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			"Library.Composed",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: true,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		var type = result.Types.ShouldHaveSingleItem();
+
+		type.Summary.ShouldNotBeNull();
+		type.Members.Where(member => member.Name == ".ctor").ShouldHaveSingleItem().Summary.ShouldBeNull();
+	}
+
+	/// <summary>
+	/// A summary in an outline is its first sentence, as the argument promises: a type documented in two
+	/// paragraphs costs one sentence, and the rest is a rose_symbol_info call away.
+	/// </summary>
+	[Test]
+	public async Task Gives_each_summary_as_its_first_sentence()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			"Library.Literal",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: true,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		result.Types.ShouldHaveSingleItem().Summary.ShouldBe(
+			"A multi-line raw string literal already on disk, indented more deeply than any write path would "
+				+ "place it, so every write to this file moves it and none of them can pass by leaving it alone.");
+	}
+
+	/// <summary>
 	/// What the projects can see, and what a change to one of them reaches. The transitive half is
 	/// the point: the set that breaks is everything depending on the project, not everything naming
 	/// the member.
@@ -248,11 +658,11 @@ public sealed class OutlineTests
 			200,
 			TestContext.Current!.Execution.CancellationToken);
 
-		var reference = references.References.ShouldHaveSingleItem();
+		var reference = references.Listed().ShouldHaveSingleItem();
 
-		reference.ContainingMember.ShouldBe("Call");
-		reference.Project.ShouldBe("Library");
-		reference.IsTestProject.ShouldBeFalse("the reference is in the library rather than a test project");
+		reference.Site.ContainingMember.ShouldBe("Caller.Call");
+		reference.File.Project.ShouldBe("Library");
+		reference.File.IsTestProject.ShouldBeFalse("the reference is in the library rather than a test project");
 	}
 
 	/// <summary>A type's own bases and interfaces, which were reported only for members.</summary>

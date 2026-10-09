@@ -1,6 +1,6 @@
 namespace RoseMcp.Contracts;
 
-/// <summary>Outcome of a rename, including exactly what changed on disk.</summary>
+/// <summary>Outcome of a rename: what it was renamed to, and what it could not safely change.</summary>
 public sealed record RenameResult : WorkspaceMutationResult
 {
 	public required long Revision { get; init; }
@@ -8,14 +8,6 @@ public sealed record RenameResult : WorkspaceMutationResult
 	public required string OldName { get; init; }
 
 	public required string NewName { get; init; }
-
-	/// <summary>False when this was a preview; nothing was written.</summary>
-	public required bool Applied { get; init; }
-
-	public required int FilesChanged { get; init; }
-
-	/// <summary>Unified diff of every changed file, so the caller can see the edit rather than trust it.</summary>
-	public required string Diff { get; init; }
 
 	/// <summary>
 	/// Places Roslyn flagged as conflicting -- the new name would bind to something else, or shadow

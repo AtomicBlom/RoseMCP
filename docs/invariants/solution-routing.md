@@ -29,28 +29,83 @@ Read before changing how a call picks its workspace: `SolutionResolver`, `Worksp
   nearer one stands where it does not, because a solution without the file is no answer about it. A
   subfolder that pins its own solution is nearer, and governs everything under it.
 - **One ordering decides which workspace a call means, in `WorkspaceManager.WorkspaceFor`.** The
-  workspace argument, then paths the call carries, then the calling session's directory, then refuse.
-  It was previously spread across three places that disagreed, and the worst of them was the last
-  resort: with no other signal the broker answered from the single loaded worker, which is a fact
-  about what another session did earlier rather than about the question, so a call in one repository
-  could be answered plausibly and silently from another. Loaded workspaces are named in the failure
-  and never used as an answer. Tools declare their inputs as `WorkspaceHints` and no longer spell the
-  ranking out themselves -- seventeen hand-written `workspace ?? filePath` chains had already drifted
-  to one `workspace ?? filePaths.FirstOrDefault()`, and one of those hints is not even a path
+  workspace argument or the workspace key, then paths the call carries, then the calling session's
+  directory, then refuse. It was previously spread across three places that disagreed, and the worst
+  of them was the last resort: with no other signal the broker answered from the single loaded
+  worker, which is a fact about what another session did earlier rather than about the question, so
+  a call in one repository could be answered plausibly and silently from another. Loaded workspaces
+  are named in the failure, consulted only to look up a key the caller sent, and never used as an
+  answer. Tools declare their inputs as `WorkspaceHints` and no longer spell the ranking out
+  themselves -- seventeen hand-written `workspace ?? filePath` chains had already drifted to one
+  `workspace ?? filePaths.FirstOrDefault()`, and one of those hints is not even a path
   (`rose_diagnostics`' `target` is a project name under project scope), so a hint naming nothing on
   disk where the caller is standing is passed over rather than followed somewhere arbitrary.
-- **A relative path is measured from the calling session's directory, and from nowhere else.** The
-  broker's own directory is no answer: in http mode it is the tray's install directory, and in stdio
-  mode it is whichever checkout the process was started in. Six worktrees of one repository is the
-  ordinary case here and every one of them holds the same relative paths, so `tests/Foo.cs` measured
-  from the wrong checkout names a real file, resolves there by containment, and wins the ranking
-  outright -- and the edit that follows applies, verifies and reports success into a repository whose
-  own sessions are free to commit it, with the caller's `git status` clean throughout. It is the one
-  failure on this surface that the working copy the caller can see does not show. `RootedPath` is
+- **A workspace is named by path or by key, never both, and a key never falls through.** Every tool
+  taking `workspace` takes `workspaceKey` but `rose_workspace_open`, whose job is to start a load and
+  which a key could only name once nothing was left to start. The two are alternatives, so a call
+  sending both is refused rather than having one win: a path and a key that disagree are a mistake
+  nothing can settle. A key is as strict as a path and more limited, since it can only be looked up
+  among the loaded workers -- a hash cannot be turned back into a path -- so one no loaded worker
+  carries, as after a broker restart, is refused naming the keys that are loaded and saying to pass
+  `workspace`; passing it over for the paths would answer from a workspace the caller did not name.
+  Four bytes of hash can collide, so two loaded solutions sharing a key are refused naming both
+  rather than settled by whichever the dictionary yields first. A key sent as `workspace` is refused
+  too, saying to send it as `workspaceKey`: read as a path it names nothing under the session's
+  directory, and resolution walks up from it to the session's own solution, which answers for a
+  workspace the key did not name. Only a `workspace` naming nothing on disk whose last segment has
+  the key's shape is refused, so a real path is honoured whatever it is called.
+- **A path the call will create routes by its nearest existing ancestor, and only such a path.**
+  `rose_add_file`'s `filePath` names nothing on disk by definition and is the one argument saying
+  where the call belongs, so passing it over like any other hint sends every new file in another
+  checkout to the session's own workspace -- whose worker then truthfully says the path is in none of
+  its projects, about a file that sits inside a project of a solution open beside it. The directory
+  the file will be placed under is a fact about the call, so `WorkspaceHints.Creating` is routed by
+  it, in the paths stage after the ordinary hints. Widening that to every hint would follow
+  `rose_diagnostics`' "Db.App" up to the session's directory and call it evidence, so the ancestor
+  walk is reserved for a tool that creates its path. A failure answered by a solution that does not
+  compile the call's path says which solution does, or which of several sharing its directory do,
+  and to pass `workspace`: the worker can only describe its own solution, and only the broker chose
+  it. It names only solutions that compile the path, and says nothing where none does, because
+  advice naming one that does not sends the caller to the same refusal from the other side.
+- **A relative path is measured from the calling session's directory, and from nowhere else -- with
+  a `workspaceKey` or without one.** The broker's own directory is no answer: in http mode it is the
+  tray's install directory, and in stdio mode it is whichever checkout the process was started in.
+  Six worktrees of one repository is the ordinary case here and every one of them holds the same
+  relative paths, so `tests/Foo.cs` measured from the wrong checkout names a real file, resolves
+  there by containment, and wins the ranking outright -- and the edit that follows applies, verifies
+  and reports success into a repository whose own sessions are free to commit it, with the caller's
+  `git status` clean throughout. It is the one failure on this surface that the working copy the
+  caller can see does not show. `RootedPath` is
   what stops it recurring: there is no way to make one without naming the directory a relative path
   is measured from, and `WorkspaceHints` carries nothing else, so the resolution cannot ask the file
   system about a relative path. An absolute path is honoured wherever it points, including into
   another checkout -- inferring a path was the failure and accepting one never was.
+  <br>
+  A key changes which worker answers and not where a relative path is measured from, and a result
+  names its paths relative to that same directory -- the calling session's, where a path lies under
+  it: `rose_find_references` names it once as `relativeTo`, and a write's changed files, diff headers,
+  diagnostics and notices follow it too. A path a result returns has to mean one file however it
+  comes back: with the key, without it, or through the caller's own file tools, which know nothing of
+  keys. A result relative to the answering workspace instead names a different file the moment it is
+  sent back without the key, from a session standing in another worktree of the same repository: the
+  file at the same place there, which exists, and the same silent write into the wrong checkout as
+  above. Measuring a keyed call's relative paths from the key's workspace to repair that breaks the
+  other way, since a path the caller wrote itself means something else as soon as a key comes with it
+  -- `src/App/Foo.cs` from `repo` about a solution in `repo/src` would mean `repo/src/src/App/Foo.cs`.
+  `ResultPaths` (reads) and `WritePaths` (writes, in `WorkspaceManager`) do the naming, both from
+  `CallerPaths.KnownOrigin`. See [the decision](../decisions/a-path-a-read-returns-is-relative-to-the-caller.md).
+  <br>
+  What does not lie under the session's directory stays absolute rather than ascending with `..`: a
+  workspace the caller named in another checkout, a file a project links from elsewhere, another
+  drive, a document a generator produced (its path names nothing on disk; it is read back by its hint
+  name), and the live-app surface, whose module paths, install location and host log belong to no
+  workspace at all. So does every path of an http call that did not say where it comes from
+  (`KnownOrigin` is null): relative to the tray's directory, a path round-trips through Rose and names
+  a different file, or none, in the caller's own file tools. A stdio host's directory is its one
+  client's, so the stdio host alone sets `BrokerOptions.DefaultRootIsTheCaller` and there it counts
+  as known. False is the default because a host that forgets the setting then costs longer paths
+  rather than wrong ones; `RelayTests` holds the http host to it for writes and `BrokerForwardingTests`
+  for `rose_find_references`. The other reads still carry absolute paths.
 - **The hop to a worker or a live-app host is absolute-only, and they refuse a relative path.** A
   worker resolves one against its own working directory, which is its solution's root: the right
   answer for the call it was given and the wrong one for a call it should never have received, since
@@ -65,7 +120,10 @@ Read before changing how a call picks its workspace: `SolutionResolver`, `Worksp
   `WorkspaceManager`, so a tool added later cannot forget. The key is derived from the path rather
   than minted per process -- workers are replaced routinely, and a key that died with one would tell
   a caller its workspace was gone when nothing had changed. Spelled *and* hashed, because six
-  worktrees of one repository is the ordinary case and each holds a solution of the same name.
+  worktrees of one repository is the ordinary case and each holds a solution of the same name. The
+  key is also accepted back as `workspaceKey`, because a fact on every result that no argument takes
+  is one a caller can read and never use: it is the anchor an agent will actually echo, where the
+  absolute path is what it drops. A failure that names the loaded workspaces gives each one's key.
 - **A solution is loaded under properties it declares.** MSBuild's `Debug|AnyCPU` default is not
   universal. Where `TargetFramework` is derived from the configuration name -- a Revit add-in built
   against four host versions derives it from `Debug-2024` through `Debug-2027` -- the wrong

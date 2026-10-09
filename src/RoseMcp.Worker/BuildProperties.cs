@@ -136,46 +136,79 @@ public sealed record BuildProperties
 	/// Why the platform chosen here looks like the wrong one, or null when nothing suggests it is.
 	/// <para>
 	/// The signature is references that did not resolve, named under the output directory of a
-	/// platform nobody asked for. That is the whole of why a wrong platform is worth reporting rather
-	/// than leaving to be noticed: it does not fail. The projects load, MSBuild resolves the
-	/// framework, and what it cannot find are the in-solution outputs under <c>bin\ARM64\</c> on a
-	/// machine where everything has only ever been built x64. Every project still reports having
-	/// loaded successfully, because each resolved plenty of references -- just not each other's -- so
-	/// the workspace reads healthy while every cross-project answer is missing half its inputs.
+	/// platform nobody asked for, while the same outputs exist under another platform the solution
+	/// declares. That is the whole of why a wrong platform is worth reporting rather than leaving to be
+	/// noticed: it does not fail. The projects load, MSBuild resolves the framework, and what it cannot
+	/// find are the in-solution outputs under <c>bin\ARM64\</c> on a machine where everything has only
+	/// ever been built x64. Every project still reports having loaded successfully, because each
+	/// resolved plenty of references -- just not each other's -- so the workspace reads healthy while
+	/// every cross-project answer is missing half its inputs.
 	/// </para>
 	/// <para>
-	/// Measured on a 60-project solution from an ARM64 machine: it declares
-	/// x64 and ARM64 and no AnyCPU, ARM64 was chosen for matching the host, and 363 of the 557 load
-	/// diagnostics named assemblies under <c>\ARM64\</c> that do not exist. Nothing said so.
+	/// The outputs existing elsewhere is the evidence, and without it this says nothing. A fresh clone
+	/// has nothing built under any platform, so every in-solution reference is unresolved under the
+	/// chosen one too -- and there the remedy is to build, not to switch to a platform that has no more
+	/// on disk than this one. Only the platforms that do have the outputs are suggested.
 	/// </para>
 	/// <para>
 	/// Only ever about a platform this server chose. A caller who named one has already decided, and
 	/// telling them their own answer looks wrong is a different and much noisier thing.
 	/// </para>
 	/// </summary>
-	public string? SuspectWrongPlatform(IEnumerable<string> diagnosticMessages)
+	/// <param name="diagnosticMessages">The load diagnostics, as MSBuild worded them.</param>
+	/// <param name="exists">Whether a file is on disk now.</param>
+	public string? SuspectWrongPlatform(IEnumerable<string> diagnosticMessages, Func<string, bool> exists)
 	{
 		if (this is not { PlatformWasChosen: true, Platform: { Length: > 0 } platform }) return null;
 
-		var blamed = diagnosticMessages.Count(message =>
-			message.Contains($@"\{platform}\", StringComparison.OrdinalIgnoreCase)
-			|| message.Contains($"/{platform}/", StringComparison.OrdinalIgnoreCase));
+		var blamed = diagnosticMessages.Where(message => UnderPlatform(message, platform)).ToArray();
+		if (blamed.Length == 0) return null;
 
-		if (blamed == 0) return null;
-
-		var alternatives = Available.Platforms
-			.Where(candidate => !candidate.Equals(platform, StringComparison.OrdinalIgnoreCase))
+		var paths = blamed
+			.SelectMany(message => message.Split('\'').Where((_, index) => index % 2 == 1))
+			.Where(path => UnderPlatform(path, platform))
 			.ToArray();
 
-		var instead = alternatives.Length == 0
-			? "Reload with an explicit platform"
-			: $"Reload with platform={string.Join(" or platform=", alternatives)}";
+		var builtFor = Available.Platforms
+			.Where(candidate => !candidate.Equals(platform, StringComparison.OrdinalIgnoreCase))
+			.Where(candidate => paths.Any(path => exists(Relocated(path, platform, candidate))))
+			.ToArray();
 
-		return $"Platform '{platform}' was chosen here rather than asked for, and {blamed} load diagnostic(s) "
-			+ "name paths under it -- which is what a wrong platform looks like, because nothing has been "
-			+ "built for it and so the in-solution references do not resolve. The projects still load, so "
-			+ $"this does not present as a failure. {instead}, or pin the platform in a rosemcp.json beside "
-			+ "the solution.";
+		if (builtFor.Length == 0) return null;
+
+		return $"Platform '{platform}' was chosen here rather than asked for, and {blamed.Length} load diagnostic(s) "
+			+ $"name paths under it that exist under {string.Join(" and ", builtFor)} instead -- which is what a wrong "
+			+ "platform looks like, because nothing has been built for it and so the in-solution references do not "
+			+ $"resolve. The projects still load, so this does not present as a failure. Reload with "
+			+ $"platform={string.Join(" or platform=", builtFor)}, or pin the platform in a rosemcp.json beside the solution.";
+	}
+
+	/// <summary>Whether a path or message names something under a platform's output directory, by either separator.</summary>
+	private static bool UnderPlatform(string text, string platform) =>
+		text.Contains($@"\{platform}\", StringComparison.OrdinalIgnoreCase)
+		|| text.Contains($"/{platform}/", StringComparison.OrdinalIgnoreCase);
+
+	/// <summary>
+	/// The same output under another platform's directory. AnyCPU has no directory of its own, so a path
+	/// moved to it loses the platform segment rather than gaining one.
+	/// </summary>
+	private static string Relocated(string path, string platform, string other)
+	{
+		var isAnyCpu = other.Replace(" ", string.Empty, StringComparison.Ordinal)
+			.Equals("AnyCPU", StringComparison.OrdinalIgnoreCase);
+
+		foreach (var separator in new[] { '\\', '/' })
+		{
+			var segment = $"{separator}{platform}{separator}";
+			var at = path.IndexOf(segment, StringComparison.OrdinalIgnoreCase);
+			if (at < 0) continue;
+
+			var replacement = isAnyCpu ? separator.ToString() : $"{separator}{other}{separator}";
+
+			return string.Concat(path.AsSpan(0, at), replacement, path.AsSpan(at + segment.Length));
+		}
+
+		return path;
 	}
 
 	/// <summary>

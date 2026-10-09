@@ -113,7 +113,7 @@ public static class AddFileService
 		if (request.Verify) progress?.Report("Compiling to see what the file did", 80);
 
 		await edit.VerifyAsync(
-			path, EditVerification.ScopeFor(solution, path, reaches: null, request.VerifyScope), cancellationToken);
+			path, EditVerification.ScopeFor(solution, path, reaches: null, request.VerifyScope), [path], cancellationToken);
 
 		// In the build when the project globs its directory or names the file itself: a project that
 		// lists its files compiles the ones it lists, whether or not they were on disk when it loaded.
@@ -137,7 +137,6 @@ public static class AddFileService
 		var result = new AddFileResult
 		{
 			Revision = snapshot.Revision,
-			FilePath = path,
 			Project = project.Name,
 			Namespace = space,
 			Types = [.. TypeNames(unit)],
@@ -149,6 +148,8 @@ public static class AddFileService
 			Diff = edit.Outcome.Diff,
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
+			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
+			PreexistingErrorCount = edit.Verification.PreexistingCount,
 			ProjectsChecked = edit.Verification.Projects,
 			ChangedFiles = edit.Outcome.ChangedFiles,
 			Notices = notices,
@@ -220,8 +221,9 @@ public static class AddFileService
 		if (files.Length == 0)
 		{
 			throw new ArgumentException(
-				$"{path} is not inside any project's directory, so nothing would compile it. Put it under a "
-					+ "project, or name one with the project argument.");
+				$"{path} is not inside the directory of any project in {SolutionName(solution)}, so nothing here would "
+					+ "compile it. Put it under one of its projects, name one with the project argument, or, where it "
+					+ "belongs to another solution, name that solution with the workspace argument.");
 		}
 
 		if (files.Length > 1)
@@ -236,6 +238,14 @@ public static class AddFileService
 		// compilations of it are multi-targeting, and the first serves for placing a file.
 		return containing[0];
 	}
+
+	/// <summary>
+	/// The solution's file name, for a refusal that is only true of this solution: a path outside every
+	/// project here may sit inside a project of another solution, and a sentence that says "any project"
+	/// tells a caller who routed to the wrong one that the path itself is the mistake.
+	/// </summary>
+	private static string SolutionName(Solution solution) =>
+		solution.FilePath is { Length: > 0 } file ? Path.GetFileName(file) : "this solution";
 
 	private static bool Contains(string directory, string path) =>
 		Path.GetFullPath(path).StartsWith(
@@ -469,7 +479,7 @@ public static class AddFileService
 		if (project is null) return (after, ResolvedImports.Imports.None);
 
 		var verification = await EditVerification.RunAsync(
-			diagnostics, before, after, [project], path, cancellationToken);
+			diagnostics, before, after, [project], path, [], cancellationToken);
 
 		var imports = await ResolvedImports.ForAsync(
 			new WorkspaceSnapshot { Solution = after, Revision = 0 },

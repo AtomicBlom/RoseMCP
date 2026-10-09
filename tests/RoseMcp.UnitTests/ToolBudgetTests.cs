@@ -46,10 +46,31 @@ public sealed class ToolBudgetTests
 	/// <para>
 	/// Raised from 74,000 while the surface is one server: rose_replace_pattern costs 2,841 on its own,
 	/// and the surface is to be split into per-surface servers with budgets of their own (#339), which
-	/// retires this single ceiling rather than paying for one tool by cutting another's refusals.
+	/// retires this single ceiling rather than paying for one tool by cutting another's refusals. The
+	/// usings argument on rose_change_signature is about 200 of it, since the import a new parameter's
+	/// type needs is otherwise a second call to a second tool. rose_find_references' three facet
+	/// filters are about 450 more, since they are what lets an answer too large to list be followed by
+	/// a smaller question rather than a bigger artefact.
+	/// </para>
+	/// <para>
+	/// The <c>workspaceKey</c> argument is about 4,300 of it: some 140 characters of schema on each of
+	/// the thirty-one tools that take <c>workspace</c>, nearly all of it the property's own shape rather
+	/// than its help, which is already one short sentence. It is spent rather than traded because the
+	/// key is what lets a caller name its workspace in a few characters on every later call, where the
+	/// absolute path it replaces is the argument agents drop.
+	/// </para>
+	/// <para>
+	/// The overflow shapes on rose_diagnostics, rose_search_symbols and rose_debug_events are about 1,000
+	/// more: five narrowing arguments, one per facet a shape groups by, and a sentence on each tool saying
+	/// what an answer past its cap gives. Without them an answer past its cap is a sample of the first few,
+	/// which reads as the whole and cannot be narrowed except by reading all of it.
+	/// </para>
+	/// <para>
+	/// rose_workspace_list costs about 550 more, the price of a session being able to see what is
+	/// loaded without loading it.
 	/// </para>
 	/// </summary>
-	private const int ModelFacing = 76500;
+	private const int ModelFacing = 83200;
 
 	[Test]
 	public void No_description_is_longer_than_its_ceiling()

@@ -25,4 +25,11 @@ public sealed record ImplementationsResult : WorkspaceScopedResult
 	public required int TotalCount { get; init; }
 
 	public required bool Truncated { get; init; }
+
+	/// <summary>
+	/// What was left out of the matches before they were counted -- implementations in referenced
+	/// assemblies, and in projects other than the one named -- so a short list does not read as the
+	/// whole answer.
+	/// </summary>
+	public IReadOnlyList<string> Notices { get; init; } = [];
 }

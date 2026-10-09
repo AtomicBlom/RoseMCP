@@ -37,4 +37,26 @@ public static class WorkspaceKey
 
 		return $"{readable}-{hash}";
 	}
+
+	/// <summary>
+	/// Whether <paramref name="value"/> is shaped like a key <see cref="For"/> makes: a name, a hyphen,
+	/// and eight hex digits. A shape rather than a lookup, so it can tell a key sent where a path was
+	/// expected from a path that merely names nothing on disk, without a loaded workspace to compare
+	/// against. Case is ignored, as it is when a key is matched.
+	/// </summary>
+	/// <param name="value">What the caller sent, trimmed or not.</param>
+	public static bool HasShape(string? value)
+	{
+		if (value is null) return false;
+
+		var text = value.Trim();
+		var hashLength = HashBytes * 2;
+		var hasRoomForAName = text.Length > hashLength + 1;
+		if (!hasRoomForAName) return false;
+
+		var separator = text.Length - hashLength - 1;
+		if (text[separator] != '-') return false;
+
+		return text[(separator + 1)..].All(Uri.IsHexDigit);
+	}
 }

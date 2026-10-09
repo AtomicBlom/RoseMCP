@@ -320,6 +320,7 @@ internal sealed class CorDebugSession : IDisposable
 			}
 
 			var releasedHold = stop.IsHeld;
+			var before = StreamPosition();
 
 			// Resume so the step executes; the StepComplete callback holds the target again.
 			_target.EndStop();
@@ -337,6 +338,7 @@ internal sealed class CorDebugSession : IDisposable
 			return new LiveContinueResult
 			{
 				Continued = true,
+				Cursor = before,
 				Detail = releasedHold
 					? "The stop this stepped out of was being held for an operator, so that hold is released. "
 						+ "The stop the step lands on is a new one, under the safety timer again."
@@ -631,6 +633,7 @@ internal sealed class CorDebugSession : IDisposable
 
 			var releasedHold = cause == ResumeCause.Caller && stop.IsHeld;
 			var id = stop.BindingId;
+			var before = StreamPosition();
 
 			_target.EndStop();
 
@@ -658,6 +661,7 @@ internal sealed class CorDebugSession : IDisposable
 			return new LiveContinueResult
 			{
 				Continued = true,
+				Cursor = before,
 				Detail = releasedHold
 					? "The target was being held for an operator. It has resumed and the hold is released, so "
 						+ "anything reading that stop sees it end."
@@ -665,6 +669,20 @@ internal sealed class CorDebugSession : IDisposable
 			};
 		}
 	}
+
+	/// <summary>
+	/// Where the event stream stands, read with the target still held, which is the cursor a resume or
+	/// a step answers with.
+	/// <para>
+	/// It has to be read here rather than by the stamp every answer gets on its way out. Once the target
+	/// runs, what the resume causes -- the StepComplete a step exists for, the next hit of a breakpoint
+	/// in a loop -- can be recorded before the answer leaves the host, and a cursor read after that is
+	/// past the very event a caller waiting from it is waiting for. Read before the resume, it is before
+	/// anything the resume can cause; an event recorded between this and the resume is merely seen
+	/// twice.
+	/// </para>
+	/// </summary>
+	private long StreamPosition() => _buffer.Newest()?.Sequence ?? 0;
 
 	private void OnEvent(object? sender, CorDebugManagedCallbackEventArgs e)
 	{

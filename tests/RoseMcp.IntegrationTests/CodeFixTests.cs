@@ -54,7 +54,7 @@ public sealed class CodeFixTests
 		// Both members in the file, not just the one the fix started from.
 		fixedText.ShouldContain("static int Value()", Case.Sensitive);
 		fixedText.ShouldContain("static int Other()", Case.Sensitive);
-		result.ChangedFiles.ShouldBe([path]);
+		result.ChangedFiles.Select(file => file.FilePath).ShouldBe([path]);
 	}
 
 	[Test]

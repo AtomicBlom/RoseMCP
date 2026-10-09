@@ -14,14 +14,24 @@ public static class UnifiedDiff
 {
 	private const int ContextLines = 3;
 
-	public static string Render(string path, string before, string after)
+	public static string Render(string path, string before, string after) => Compare(path, before, after).Text;
+
+	/// <summary>
+	/// The diff between two versions of a file, and the lines it changed as the file now reads them.
+	/// <para>
+	/// Both from one comparison, because the comparison is the expensive part and the lines are what a
+	/// result carries by default: an applied write names where it landed rather than echoing what the
+	/// caller sent.
+	/// </para>
+	/// </summary>
+	public static FileDiff Compare(string path, string before, string after)
 	{
 		var oldLines = SplitLines(before);
 		var newLines = SplitLines(after);
 		var operations = Diff(oldLines, newLines);
 
 		var hunks = Group(operations);
-		if (hunks.Count == 0) return string.Empty;
+		if (hunks.Count == 0) return new FileDiff(string.Empty, null);
 
 		var output = new StringBuilder();
 		output.Append("--- ").Append(path).Append('\n');
@@ -48,8 +58,58 @@ public static class UnifiedDiff
 			}
 		}
 
-		return output.ToString();
+		return new FileDiff(output.ToString(), ChangedLines(operations, LineCount(newLines)));
 	}
+
+	/// <summary>
+	/// The lines an edit changed, numbered as the file now reads, spelled as ranges: <c>174-200</c>, or
+	/// <c>3, 174-200</c> for an import and a member. An inserted line is itself; a removed one is
+	/// the line now standing where it was. Past <see cref="RangesNamed"/> ranges the rest are counted,
+	/// since a reformatted file would otherwise list every other line.
+	/// </summary>
+	/// <param name="operations">The comparison, in order.</param>
+	/// <param name="lineCount">How many lines the file now has, so a removal at the end names its last line.</param>
+	private static string? ChangedLines(List<Operation> operations, int lineCount)
+	{
+		var lines = new SortedSet<int>();
+
+		foreach (var operation in operations)
+		{
+			if (operation.Kind == OperationKind.Equal) continue;
+
+			var line = Math.Clamp(operation.NewLine + 1, 1, Math.Max(lineCount, 1));
+			lines.Add(line);
+		}
+
+		return lines.Count == 0 ? null : Spelled(lines);
+	}
+
+	/// <summary>Consecutive line numbers as ranges, the first <see cref="RangesNamed"/> of them by number.</summary>
+	private static string Spelled(IEnumerable<int> lines)
+	{
+		var ranges = new List<(int From, int To)>();
+
+		foreach (var line in lines)
+		{
+			var extends = ranges.Count > 0 && ranges[^1].To + 1 >= line;
+
+			if (extends) ranges[^1] = (ranges[^1].From, Math.Max(ranges[^1].To, line));
+			else ranges.Add((line, line));
+		}
+
+		var named = ranges
+			.Take(RangesNamed)
+			.Select(range => range.From == range.To ? $"{range.From}" : $"{range.From}-{range.To}");
+		var spelled = string.Join(", ", named);
+
+		return ranges.Count > RangesNamed ? $"{spelled} and {ranges.Count - RangesNamed} more" : spelled;
+	}
+
+	/// <summary>
+	/// How many ranges <see cref="ChangedLines"/> names before it counts the rest. An edit lands in one
+	/// or two; a rename or a format reaching further is read with the diff, not the ranges.
+	/// </summary>
+	private const int RangesNamed = 6;
 
 	/// <summary>
 	/// A whole file as an addition. Diffing it against an empty string almost works, but that
@@ -58,9 +118,7 @@ public static class UnifiedDiff
 	public static string RenderNewFile(string path, string text)
 	{
 		var lines = SplitLines(text);
-
-		// A file ending in a newline splits with a trailing empty element, which is not a line.
-		var count = lines.Length > 0 && lines[^1].Length == 0 ? lines.Length - 1 : lines.Length;
+		var count = LineCount(lines);
 		if (count == 0) return string.Empty;
 
 		var output = new StringBuilder();
@@ -76,7 +134,28 @@ public static class UnifiedDiff
 		return output.ToString();
 	}
 
+	/// <summary>A whole file as an addition, with every line of it as the lines changed.</summary>
+	public static FileDiff NewFile(string path, string text)
+	{
+		var count = LineCount(SplitLines(text));
+		var lines = count switch
+		{
+			0 => null,
+			1 => "1",
+			_ => $"1-{count}",
+		};
+
+		return new FileDiff(RenderNewFile(path, text), lines);
+	}
+
 	private static string[] SplitLines(string text) => text.Replace("\r\n", "\n").Split('\n');
+
+	/// <summary>
+	/// How many lines a split holds. A file ending in a newline splits with a trailing empty element,
+	/// which is not a line.
+	/// </summary>
+	private static int LineCount(string[] lines) =>
+		lines.Length > 0 && lines[^1].Length == 0 ? lines.Length - 1 : lines.Length;
 
 	/// <summary>
 	/// Longest common subsequence over lines. Quadratic, which is fine: this only ever runs on files

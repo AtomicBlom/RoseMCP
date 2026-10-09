@@ -32,6 +32,11 @@ public static class ToolErrorReporting
 	/// Forwards the message and nothing else. The worker's copy names the solution it owns, because a
 	/// caller cannot otherwise tell which workspace refused; this host does not need to, since the
 	/// broker knows which session it sent to and one host serves one target.
+	/// <para>
+	/// A refusal this host wrote keeps its words; an exception that escaped the debugging interface or
+	/// the BCL is framed by <see cref="ToolFailure"/> as the fault it is, and neither carries a CLR
+	/// parameter name, since the only names a caller knows are the tool's schema.
+	/// </para>
 	/// </summary>
 	public static IMcpServerBuilder WithToolErrorMessages(this IMcpServerBuilder builder) =>
 		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
@@ -42,7 +47,9 @@ public static class ToolErrorReporting
 			}
 			catch (Exception exception) when (Explainable(exception))
 			{
-				throw new McpException(Named(context, exception), exception);
+				var message = ToolFailure.Message(exception, context.Params?.Name ?? "The tool");
+
+				throw new McpException(Named(context, exception, message), exception);
 			}
 		}));
 
@@ -56,8 +63,10 @@ public static class ToolErrorReporting
 		&& !string.IsNullOrWhiteSpace(exception.Message);
 
 	/// <summary>
-	/// The message to forward: the argument the caller got wrong where the binder refused one, and
-	/// the exception's own words otherwise.
+	/// The message to forward: the argument the caller got wrong where the binder refused one,
+	/// <paramref name="message"/> otherwise, and after either, any argument the call carried under a name
+	/// the tool does not declare. Composed by <see cref="ToolArgumentShape.Refusal"/>, so every
+	/// boundary words it the same way.
 	/// <para>
 	/// The binder's account of a malformed argument names a CLR type the caller never wrote and points
 	/// at the root of the document, which is the one refusal on this surface that says nothing about
@@ -65,12 +74,15 @@ public static class ToolErrorReporting
 	/// already been refused means a schema this cannot read costs nothing.
 	/// </para>
 	/// </summary>
-	private static string Named(RequestContext<CallToolRequestParams> context, Exception exception)
+	private static string Named(RequestContext<CallToolRequestParams> context, Exception exception, string message)
 	{
-		if (exception is not JsonException) return exception.Message;
-		if (context.MatchedPrimitive is not McpServerTool tool) return exception.Message;
+		if (context.MatchedPrimitive is not McpServerTool tool) return ToolArgumentShape.WithoutParameterNames(message);
 
-		return ToolArgumentShape.Mismatch(tool.ProtocolTool.InputSchema, context.Params?.Arguments)
-			?? exception.Message;
+		return ToolArgumentShape.Refusal(
+			message,
+			exception is JsonException,
+			tool.ProtocolTool.Name,
+			tool.ProtocolTool.InputSchema,
+			context.Params?.Arguments);
 	}
 }

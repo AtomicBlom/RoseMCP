@@ -48,7 +48,13 @@ internal static class Program
 		ConfigureLogging(builder.Logging);
 
 		builder.Services
-			.AddRoseMcpBroker(broker => Apply(options, broker))
+			.AddRoseMcpBroker(broker =>
+			{
+				Apply(options, broker);
+
+				// A stdio client launched this process where it stands, so the working directory is the caller's.
+				broker.DefaultRootIsTheCaller = true;
+			})
 			.WithStdioServerTransport();
 
 		await builder.Build().RunAsync();
@@ -134,7 +140,16 @@ internal static class Program
 			operatorToken,
 			services.GetRequiredService<ILogger<OperatorInspector>>()));
 
-		builder.Services.AddRoseMcpBroker(broker => Apply(options, broker)).WithHttpTransport();
+		// Idle workers are evicted over http and not over stdio. A stdio broker's workers end with
+		// its one client; this one outlives every client, as the tray does, and would otherwise keep
+		// each solution any of them opened loaded until it is stopped.
+		builder.Services
+			.AddRoseMcpBroker(broker =>
+			{
+				Apply(options, broker);
+				broker.IdleEvictionAfter = BrokerOptions.LongLivedIdleEviction;
+			})
+			.WithHttpTransport();
 
 		var application = builder.Build();
 

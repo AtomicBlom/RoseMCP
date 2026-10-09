@@ -184,6 +184,14 @@ public static class SolutionResolver
 	}
 
 	/// <summary>
+	/// Whether <paramref name="solutionPath"/>, a solution or a bare project, has a project whose
+	/// directory encloses <paramref name="path"/>: the same containment that decides between solutions
+	/// sharing a directory, for a caller that already has one and needs to know whether it can answer.
+	/// </summary>
+	public static bool Compiles(string solutionPath, string path) =>
+		Contains(Path.GetFullPath(solutionPath), Path.GetFullPath(path));
+
+	/// <summary>
 	/// Chooses between the solutions sharing one directory.
 	/// <para>
 	/// Containment narrows, then a pin breaks whatever tie is left. Containment goes first because it

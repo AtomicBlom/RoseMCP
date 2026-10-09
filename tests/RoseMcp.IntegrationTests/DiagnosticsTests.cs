@@ -89,6 +89,57 @@ public sealed class DiagnosticsTests
 	}
 
 	/// <summary>
+	/// Past the cap the answer is the shape of what was found, not the first few: which diagnostics come
+	/// first is an accident of order. Every group is a value a narrowing argument takes, and passing one
+	/// back lists exactly what the group counted.
+	/// </summary>
+	[Test]
+	public async Task Answers_past_its_cap_with_the_shape_of_what_it_found_and_narrows_by_each_group()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var service = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		var calculator = fixture.Path("Simple", "Core", "Calculator.cs");
+		await File.WriteAllTextAsync(
+			calculator,
+			"namespace Core;" + Environment.NewLine
+				+ "public static class Calculator" + Environment.NewLine
+				+ "{" + Environment.NewLine
+				+ "\tpublic static int Add(int left, int right) => left + nope;" + Environment.NewLine
+				+ "\tpublic static int Sub(int left, int right) => left - nada;" + Environment.NewLine
+				+ "\tpublic static Missing Make() => null;" + Environment.NewLine
+				+ "\tpublic static int Multiply(int left, int right) => left * right;" + Environment.NewLine
+				+ "}",
+			cancellationToken);
+
+		var snapshot = await session.ReadAsync(cancellationToken);
+		var errors = new DiagnosticsRequest { MinimumSeverity = Microsoft.CodeAnalysis.DiagnosticSeverity.Error, MaxResults = 1 };
+
+		var capped = await service.AnalyseAsync(snapshot, errors, cancellationToken);
+
+		capped.Truncated.ShouldBeTrue();
+		capped.Diagnostics.ShouldBeEmpty("past the cap the list gives way to the shape");
+		var shape = capped.Shape.ShouldNotBeNull();
+		shape.Total.ShouldBe(capped.TotalCount);
+		shape.Ids.ShouldContain(group => group.Id == "CS0103" && group.Count == 2 && group.Severity == "Error");
+		shape.Ids.ShouldContain(group => group.Id == "CS0246");
+		shape.Files.ShouldHaveSingleItem().FilePath.ShouldBe(calculator, StringCompareShould.IgnoreCase);
+		capped.Notices.ShouldContain(notice => notice.Contains("shape is given instead of the list", StringComparison.Ordinal));
+
+		var narrowed = await service.AnalyseAsync(snapshot, errors with { MaxResults = 200, Id = "cs0103" }, cancellationToken);
+
+		narrowed.Diagnostics.Count.ShouldBe(2);
+		narrowed.Diagnostics.ShouldAllBe(diagnostic => diagnostic.Id == "CS0103");
+		narrowed.Shape.ShouldBeNull();
+
+		var written = await service.AnalyseAsync(snapshot, errors with { MaxResults = 200, IsGenerated = true }, cancellationToken);
+
+		written.Diagnostics.ShouldBeEmpty("none of these is in generated code");
+	}
+
+	/// <summary>
 	/// The cache is keyed on Roslyn's dependent semantic version. A cache that never hits behaves
 	/// identically from the outside, so the counter is the only way to tell.
 	/// </summary>

@@ -142,10 +142,10 @@ revision 1). Sizes are the raw JSON as it arrived.
 | T3a | `rose_symbol_info symbol=ModelContextProtocol.Server.McpServer.SessionId` | error | -- | **failed**: "Nothing is declared at ... 'SessionId' is declared as RoseMcp.Broker.LiveAppSession.SessionId, [4 more]" |
 | T3b | `rose_symbol_info symbol=System.Collections.Generic.List` | error | -- | **failed**: the suggestions were four unrelated methods named `List` in Rose's own source |
 | T3c | `rose_symbol_info symbol=ModelContextProtocol.Server.McpServerTool` | type + full XML doc | **~9.2 KB** | worked, at the price of the entire raw `<member>` blob |
-| T4a | `rose_resolve_name name=ToolErrorReporting` (no `filePath`) | error | -- | **failed**: `Parameter 'symbol' must be a symbol from this compilation or some referenced assembly. (Parameter 'symbol')` -- #121 reproduced, on a tool that has no `symbol` argument |
+| T4a | `rose_resolve_name name=ToolErrorReporting` (no `filePath`) | error | -- | ~~**failed**: `Parameter 'symbol' must be a symbol from this compilation or some referenced assembly. (Parameter 'symbol')` -- #121 reproduced, on a tool that has no `symbol` argument~~ **#306, #431.** |
 | T4b | `rose_resolve_name name=ToolErrorReporting filePath=src/RoseMcp.Broker/WorkspaceManager.cs` | 1 candidate + "in scope already, so the error is something else" | 700 B | **excellent** |
 | T5 | `rose_find_references symbol=RoseMcp.Contracts.ToolNames.WorkspaceStatus includePreviews=false` | 16 hits, `truncated:false` | 4.1 KB | worked; flat list, absolute path repeated 17 times |
-| T6 | same, `definitionsOnly=true` | `references: []`, `totalCount:16`, **`truncated:true`** | 600 B | misleading -- see AGT-05 |
+| T6 | same, `definitionsOnly=true` | `references: []`, `totalCount:16`, **`truncated:true`** | 600 B | ~~misleading -- see AGT-05~~ **#378.** |
 | T7 | `rose_search_symbols query=ToolErrorReporting` | 3 matches, each with an `address` | 1.6 KB | **excellent**; the address is the next call's argument |
 | T8 | `rose_symbol_info symbol=RoseMcp.Broker.WorkspaceManagr.CallAsync` (typo) | error naming both real `CallAsync` declarations | -- | **excellent**; the fix is in the message |
 | T9 | `rose_outline symbol=... workspace=C:\Windows\System32` | "No solution or project found at or above 'C:\Windows\System32'. Pass the path to a .sln, .slnx, or .csproj." | -- | **excellent** |
@@ -154,71 +154,46 @@ revision 1). Sizes are the raw JSON as it arrived.
 
 ## Findings
 
-### AGT-01 `rose_outline`'s compact mode is not compact, so the tool loses to `Read` on exactly the files it exists for
-- **Severity:** High
-- **Measured, #295**, at 512 bytes per member with both size controls off. The card lowers it.
-- **Effort:** S
-- **Where:** transcript T1a/T1b/T1c; `src/RoseMcp.Worker/OutlineService.cs:192`; `src/RoseMcp.Contracts/ToolDescriptions.cs:143-145`
-- **What:** With `includeSignatures=false` and `includeDocumentation=false` -- the tool's two documented size controls, both off -- a 441-line class with 24 members costs ~10.1 KB. Full mode costs ~22.3 KB. `grep -n "public\|internal"` on the same file costs 748 bytes and answered the question I actually had. The reason is `OutlinedMember.Location`, emitted unconditionally, carrying the 95-character absolute file path, the whole source line as `preview`, `containingMember` (which for a declaration is always the member's own name), `project` and `isTestProject` -- roughly 350 bytes per member of which about 12 are the answer. Worse, `preview` *is* the signature for most members, so `includeSignatures=false` removes a duplicate rather than the content. Two other reviewers hit this independently; on `CorDebugSession` it produced 70,649 characters, blew the client's token cap, and the reviewer read the file instead (issue #234).
-- **Why it matters:** This is the tool whose own description says "Use it instead of reading the file to find out what is in it, which is the read that comes before most edits". An agent that pays 22 KB once and learns nothing it could not have grepped will not pay it twice, and the dogfooding rule says a tool nobody reaches for is a bug of the same severity as one returning wrong answers. It is also self-defeating: the bigger the type, the more the outline is worth and the less usable it is.
-- **Suggested change:** Make the location cost proportional to what was asked for. Emit `line` alone when `includeSignatures=false` (the file is already named once on the enclosing `OutlinedType.declarations`); drop `preview`, `containingMember`, `project` and `isTestProject` from member locations entirely, since all four are constant across the answer or derivable from it. Add the two narrowings #234 asks for -- a `members` name filter and `maxResults`/`offset` with a total -- so a 110-member type can be asked a question rather than dumped. Target: a 24-member compact outline under 1.5 KB.
+### ~~AGT-01 `rose_outline`'s compact mode is not compact, so the tool loses to `Read` on exactly the files it exists for~~
+**#374.** Every outlined member carried a whole declaration record, so a compact outline cost more than
+a grep of the file and a large type overran what a client accepts. A member is its name, kind,
+accessibility and line, and what a type's members share is said once.
 
-### AGT-02 `includeDocumentation` returns the whole summary, where the schema promises "the first line"
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Worker/OutlineService.cs:240-260`; `src/RoseMcp.Contracts/ToolDescriptions.cs:140-141`; `src/RoseMcp.Contracts/OutlineResult.cs:39` and `:75`
-- **What:** Three statements of one contract, all different. The argument help says "the first line of its documentation"; the DTO says "The first sentence of its documentation"; `OutlineService.Summary` returns the entire `<summary>` element, every `<para>` included, flattened to one line. In T1b that made `WorkspaceManager.WorkspaceFor`'s entry ~1,500 characters -- one member costing twice the whole grep -- and the primary constructor's entry repeated the class summary verbatim a second time in the same payload.
-- **Why it matters:** An agent budgets from the schema. It is told documentation costs one line per member, it costs a paragraph, and `includeDocumentation=true` is the **default** -- so the setting most likely to overflow a context window is the one chosen by a caller who was told it was cheap. It is unbounded on a third-party type.
-- **Suggested change:** Return the first sentence, as the DTO says -- cut at the first `. ` outside a tag -- and add a `summaryLength` cap. Then make `IncludeDocumentationArgument`, `OutlinedType.Summary` and `OutlinedMember.Summary` quote one sentence of the same text, and assert in `ToolDescriptionTests` that a member's summary in an outline is shorter than the same member's in `rose_symbol_info`.
+### ~~AGT-02 `includeDocumentation` returns the whole summary, where the schema promises "the first line"~~
+**#374.** An outline's documentation was the whole summary where its help promised one line. It is the
+summary's first sentence, rendered, and the help says so.
 
 ### ~~AGT-03 A metadata symbol is unreachable whenever any source symbol anywhere shares its *leaf* name~~
 **#418.** Whether a read could reach a referenced assembly turned on the last segment of the name. A
 read asks metadata whenever source has nothing at the address, and says when it did.
 
-### AGT-04 A leaked Roslyn exception names an argument the tool does not have
-- **The provenance half is done (#306).** A symbol is mapped into the asking compilation before it is
-  asked about, so this throw no longer happens. What is left is the general guard, which is card 13:
-  no message naming a CLR parameter should reach a caller, whatever produced it.
-- **Severity:** High
-- **Effort:** S, for what remains
-- **Where:** `src/RoseMcp.Worker/NameResolver.cs:197`; transcript T4a; issues #121, #212
-- **What:** `rose_resolve_name name=ToolErrorReporting`, with no `filePath`, returns
-  `Parameter 'symbol' must be a symbol from this compilation or some referenced assembly. (Parameter 'symbol')`.
-  `rose_resolve_name` declares `name`, `filePath`, `arity`, `maxResults` and `workspace`. There is no `symbol`. The throw is `compilation.IsSymbolAccessibleWithin(symbol, compilation.Assembly)` at `NameResolver.cs:197`, asked of a compilation the candidate did not come from -- filed as #121. It is the same sentence #212 reports out of `rose_replace_member`, where it means "a name in your *code* did not resolve" and names the one argument that was correct. With a `filePath` the same call succeeds and gives a genuinely excellent answer (T4b), so the failure is in the shape of the call, not in the question.
-- **Why it matters:** This is the worst error on the surface and it is on the tool whose entire job is unsticking a caller who is already stuck. Every honest reading of it is wrong and expensive -- re-derive the address, reload the workspace, check the project -- and #212 records a retry spent on each. It also breaks the assembly's own stated rule ("Every other refusal on this surface says what was wrong with what the caller sent and what to send instead", `ToolArgumentShape.cs:11-13`) in the one place a caller has no other move.
-- **Suggested change:** Add the general guard at the boundary: **no message naming a CLR parameter may reach a caller**, because the caller's vocabulary is the tool's schema. A filter that rewrites any message containing `(Parameter '` into one naming the tool's own arguments, plus a test over all three `ToolErrorReporting` copies, closes the class rather than this instance.
+### ~~AGT-04 A leaked Roslyn exception names an argument the tool does not have~~
+**#306, #431.** A Roslyn exception reached callers naming a parameter the tool did not have, and read
+as advice about their arguments. No refusal at any boundary carries a CLR parameter name, and an
+exception that escaped a framework says whose failure it is.
 
-### AGT-05 `definitionsOnly=true` reports `truncated: true` over an empty list
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Worker/NavigationService.cs:127-129` and `:139`; transcript T6
-- **What:** With `definitionsOnly=true` the code sets `listed = []` and then `Truncated = listed.Length < ordered.Length`, so every such call reports `truncated: true` with `references: []` and the real `totalCount`. The comment defends it: "Truncated says the list is not all of them, which is as true of asking for none as of asking for two hundred."
-- **Why it matters:** From the caller's chair `truncated` means exactly one thing -- *raise `maxResults` and call again*. Here that call returns the identical result forever. Two reviewers in this round hit it independently and both recorded it as misleading, which is the signal that the field's meaning in the code is not its meaning on the wire.
-- **Suggested change:** `Truncated = !definitionsOnly && listed.Length < ordered.Length`. The suppression is already evident to the caller, who asked for it. If a distinct signal is wanted, add `listSuppressed: true` rather than overloading the retry flag.
+### ~~AGT-05 `definitionsOnly=true` reports `truncated: true` over an empty list~~
+**#378.** Asking for the count alone reported the list as truncated, which no retry could change.
+Truncation means only that raising the cap lists more.
 
-### AGT-06 `rose_find_references` promises grouping and returns a flat list with the absolute path repeated per hit
-- **Severity:** Medium
-- **Effort:** M
-- **Where:** `src/RoseMcp.Contracts/SourceLocation.cs:18-22`; `src/RoseMcp.Contracts/ToolDescriptions.cs:577-578`; transcript T5
-- **What:** The description says "Each hit names the member it sits inside, which turns a flat list into 'used by these six methods'", and `SourceLocation.ContainingMember` says the same. The result is a flat array; the grouping is a thing the *agent* must do. Each of the 16 entries carried the same 95-character absolute path prefix, plus `project` and `isTestProject` -- with previews off, 4.1 KB of which roughly 1.6 KB is the workspace root written out 17 times, under a `workspace` field that already names it once.
-- **Why it matters:** The `01-broker-and-server` reviewer got 53 hits on one symbol and called the answer noisy; at the 200-hit default that is ~20 KB of repeated path. The tool's claim over grep is precision *and* answering in the unit the caller thinks in (methods). It delivers the first and asks the caller to compute the second, at a size where the caller may not have room to.
-- **Suggested change:** Emit paths relative to the `workspace` root already in the result (absolute only when outside it), and lift `project`/`isTestProject` to a per-file header. Then offer the grouping the description sells: `groupBy: "member" | "file" | "none"`, defaulting to `member`, which collapses the common answer to a name and a count per member.
+### ~~AGT-06 `rose_find_references` promises grouping and returns a flat list with the absolute path repeated per hit~~
+**#378, #374.** References were a flat list with the absolute path on every hit. They are listed by
+file, each path relative to the caller's directory, which is named once.
 
-### AGT-07 `rose_find_implementations` has no `project` filter, so the question it advertises is the one it cannot answer
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Broker/Tools/BrokerAnalysisTools.cs:276-283`; `src/RoseMcp.Contracts/ToolDescriptions.cs:588-589`
-- **What:** The description's worked example is `"what here implements IDisposable" is one call`. The tool takes `maxResults` and no `project`, where its sibling `rose_find_references` takes both. The `03-liveapp` reviewer ran exactly the advertised call, got 1,312 matches truncated twice, every one from `ClrDebug`, `WinRT.Runtime`, ASP.NET and Roslyn metadata, could not scope it (passing `workspace` does not narrow), and fell back to grep.
-- **Why it matters:** For a BCL or framework interface -- the case the description chose to advertise -- scoping is not an optimisation, it is the only form of the question. Truncating at 200 without it returns 200 arbitrary matches from dependencies and calls itself an answer.
-- **Suggested change:** Add `project` with the same semantics and the same refusal-on-unknown-name as `rose_find_references` (`NavigationService.cs:143`), and add `sourceOnly` (default true) so metadata implementations are excluded unless asked for. Assert in `ToolParityTests` that the two navigation tools offer the same narrowing arguments.
+### ~~AGT-07 `rose_find_implementations` has no `project` filter, so the question it advertises is the one it cannot answer~~
+**#383.** A framework interface was answered with its implementations across every dependency, and
+the solution's own were cut off behind them. It lists this solution's source only, counts what it
+left out, and narrows by `project` the way `rose_find_references` does.
+**Declined:** an argument to list the dependencies' implementations as well. The surface had no room
+for one under its budget, and no caller has asked that question of this tool.
 
-### AGT-08 A misspelled argument is dropped in silence and the error then reports the value as missing
-- **Severity:** High
-- **Effort:** M
-- **Where:** `src/RoseMcp.Contracts/ToolArgumentShape.cs:51`; issue #249
-- **What:** `ToolArgumentShape.Mismatch` skips any argument the schema does not declare (`if (!properties.TryGetProperty(name, out var declared)) continue;`), and it only runs after the binder has refused -- which an unknown argument never causes, since it binds fine with the declared arguments at their defaults. So `rose_outline(file: "...")` answers "Name a type, as `Namespace.Type`, or give a file path", which is the one thing the caller did. #249 records it costing two round trips and a read of `BrokerAnalysisTools.cs` to learn the spelling.
-- **Why it matters:** An argument name is part of a tool's vocabulary, and this surface has several near-misses an agent will plausibly guess: `file`/`filePath`; `type`/`symbol` (the help for `symbol` on `rose_outline` literally reads "The type, as Namespace.Type"); `name`/`symbol`; and three words for imports -- `usings` on the member writers, `namespaces` on `rose_add_using`, `extraUsings` on `rose_add_file`. A wrong guess produces an error pointing at the wrong bug, and a session that has to read Rose's source to call Rose has already lost to grep.
-- **Suggested change:** #249's fix exactly. Collect the undeclared names instead of skipping them, and run the helper on any refusal naming a missing argument: *"`file` is not an argument of rose_outline -- did you mean `filePath`?"*, matched by edit distance against the declared set. Then close the near-misses: accept `type` as an alias on `rose_outline`, and make one word mean imports everywhere.
+### ~~AGT-08 A misspelled argument is dropped in silence and the error then reports the value as missing~~
+**#249.** An argument sent under a name the tool did not declare was dropped, so a refusal reported
+as missing a value the caller had sent and a call that succeeded answered a different question.
+Both now name the argument and the declared name it most likely meant; the further aliases this
+suggested were declined, because an alias teaches nobody the real name.
+**Still open, awaiting a decision:** making one word mean imports everywhere. `rose_add_using` takes
+`namespaces` where every other writer takes `usings`, and no open card carries the rename.
 
 ### AGT-09 Two conventions for an enum-like argument, and the better one is used on three tools
 - **Severity:** Medium
@@ -234,21 +209,17 @@ server process's own directory, so on a machine holding several checkouts of one
 landed in the wrong one and reported success. It is measured from the calling session's directory,
 the argument help says so, and the hop on from there carries absolute paths only.
 
-### AGT-11 `rose_symbol_info` returns raw, unbounded XML documentation
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Contracts/SymbolInfoResult.cs:27-28`; transcript T3c
-- **What:** `Documentation` is `GetDocumentationCommentXml()` verbatim: the `<member name="T:...">` wrapper, every `<see cref="T:Fully.Qualified.Name"/>`, `<list type="table">` markup, and the SDK's own indentation. Asking what `ModelContextProtocol.Server.McpServerTool` is cost 9.2 KB, of which the answer is about 200 characters and the rest is `cref` attributes. There is no `includeDocumentation=false` and no cap.
-- **Why it matters:** `rose_symbol_info` is where the server instructions route "what a symbol is", and the first thing an agent does with an unfamiliar dependency. A well-documented third-party type is where it is most wanted and costs most. Note the asymmetry: `rose_outline` at least parses the XML (AGT-02 says it over-includes); `rose_symbol_info` does not parse at all.
-- **Suggested change:** Return parsed sections (`summary`, `remarks`, `returns`, `params`) with `cref`s rendered as short names; add `includeDocumentation` (default true) and `maxDocumentationLength` (default ~800) and report `documentationTruncated` when cut. Share the parse with `OutlineService.Summary` so the two cannot disagree about what a summary is.
+### ~~AGT-11 `rose_symbol_info` returns raw, unbounded XML documentation~~
+**#374.** Documentation came back as the raw, unbounded XML of the comment. It is the summary as
+prose, cut at a sentence past a ceiling with a notice saying so.
+**Declined:** parsed `remarks`, `returns` and `params`. A symbol in source has its whole comment one
+switch away in `includeSource`, and for a library symbol they would cost an argument on a surface
+held to a single ceiling with no room under it.
 
-### AGT-12 `rose_diagnostics` never says the workspace is degraded, so a clean answer from a broken workspace reads as a clean bill of health
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Contracts/DiagnosticsResult.cs:23-24`; transcript T10b; `docs/invariants/result-shapes.md`
-- **What:** This workspace is `Degraded` -- two source generators fail to load with a manifest version mismatch, and the WinUI projects cannot resolve `RoseMcp.Contracts.dll` during the design-time build. `rose_diagnostics` over the whole solution returned `diagnostics: []`, `totalCount: 0`, `notices: []`. Nothing in the result says the workspace it came from does not trust itself, although `notices` exists and is exactly where it would go.
-- **Why it matters:** `rose_diagnostics` is what the instructions route "does it compile" to, and what the dogfooding rule says to use instead of a build. An agent treats `0` as a gate and moves on. A project whose design-time build failed resolves no references and a generator that failed to load produces no code, so `0` from a degraded workspace is not the same fact as `0` from a healthy one -- and `result-shapes.md` is explicit that reporting a signal which cannot mean what it says is the failure to avoid. `MemberEditResult` models this correctly with `Verified` and `DependentsNotChecked`; the read path does not.
-- **Suggested change:** When the workspace state is not `Healthy`, put one notice on every `DiagnosticsResult`: which projects are untrustworthy, the one-line fix, ending in "ask rose_workspace_status". Do the same for `OutlineResult.Notices` and `ReferencesResult`. Cheap, since the state is already computed.
+### ~~AGT-12 `rose_diagnostics` never says the workspace is degraded, so a clean answer from a broken workspace reads as a clean bill of health~~
+**#382.** A read from a degraded workspace answered with nothing to say so, so an empty list read as a
+clean bill of health. Every read leads its notices with one line saying the workspace is degraded and
+why, and points at status for the rest.
 
 ### AGT-13 The model-facing budget is 74 KB and is measured only for the operating system the test runs on
 - **Severity:** Medium
@@ -301,270 +272,33 @@ that a file is formatted.
 - **Effort:** S
 - **Where:** `src/RoseMcp.Broker/ToolErrorReporting.cs:67-74`, `src/RoseMcp.Worker/ToolErrorReporting.cs:67-74`, `src/RoseMcp.LiveApp/ToolErrorReporting.cs:68-75`
 - **What:** `Named` is byte-identical in all three; `Explainable` is identical in two and inlined in the third's `when` clause. The live-app copy's doc defends it: "Nine lines in two places beats a dependency on the MCP hosting package from the type library." It is now three places and about 25 lines, and the genuinely host-specific part is two lines (the worker appends its solution path).
-- **Why it matters:** This is the class the repository has already been bitten by -- `ToolDescriptions` exists because two copies of the same text drifted. A rule like AGT-04's has to be added in three files, and the third is the one that gets missed.
-- **Suggested change:** The decision to keep MCP types out of `Contracts` is right; the split is in the wrong place. Move the pure part to `Contracts` as `ToolFailure.Message(JsonElement inputSchema, IEnumerable<KeyValuePair<string, JsonElement>>? arguments, Exception exception, string? suffix)` -- all values, no MCP types, exactly the shape `ToolArgumentShape.Mismatch` already takes -- and leave each host the six-line filter that reads them off its own `RequestContext`. Then the rule has one home and a test.
+- **Why it matters:** This is the class the repository has already been bitten by -- `ToolDescriptions` exists because two copies of the same text drifted. A rule added at the boundary has to be added in three files, and the third is the one that gets missed.
+- **Suggested change:** The decision to keep MCP types out of `Contracts` is right; the split is in the wrong place. `ToolFailure.Message(exception, tool)` in `Contracts` already decides whether an exception is a refusal or a leak, and `ToolArgumentShape.Refusal` composes the message; what is still copied is the glue between them -- `Named`, `Explainable` and the call that joins the two. Fold that into one `Contracts` function over values (the schema, the arguments, the exception, the tool name and a suffix), and leave each host the six-line filter that reads them off its own `RequestContext`. Then the rule has one home and a test.
 
 ### AGT-20 Two agents on one stdio broker share every workspace and every debug session, with nothing to tell them apart
 - **Severity:** Medium
 - **Effort:** M
 - **Where:** `src/RoseMcp.Broker/CallSession.cs:14-18`; `src/RoseMcp.Broker/LiveAppSessionManager.cs:83-87`, `:156-157`; `src/RoseMcp.Contracts/ToolDescriptions.cs:77-78`
-- **What:** Ownership of a live-app session is `CallSession.Id`, the MCP transport's session id, documented as "Null is the honest value for a stdio broker, which has one session for the life of the process, so every call in it owns everything it started". That is true of the *transport* and false of the *agent*: Claude Code runs subagents over one MCP connection, so N subagents share one null owner. `Find` therefore matches, and a subagent can `rose_debug_list` a sibling's session, set breakpoints in its target, evaluate inside it, or `rose_debug_detach` it. The same holds for `rose_workspace_reload` (a full design-time build, ~21 s here, invalidating every warm answer another agent holds) and `rose_workspace_close`. On the read side `revision` is per workspace and global, so two agents editing one solution see each other's revisions with no way to tell whose. `expectedRevision` is the right primitive, but its help -- "Fail rather than apply if the workspace has moved past this revision" -- never says it is what you use when something else might be writing, and the instructions never mention concurrency at all.
+- **What:** Ownership of a live-app session is `CallSession.Id`, the MCP transport's session id, documented as "Null is the honest value for a stdio broker, which has one session for the life of the process, so every call in it owns everything it started". That is true of the *transport* and false of the *agent*: Claude Code runs subagents over one MCP connection, so N subagents share one null owner. `Find` therefore matches, and a subagent can `rose_debug_list` a sibling's session, set breakpoints in its target, evaluate inside it, or `rose_debug_detach` it. The same holds for `rose_workspace_reload` (a full design-time build, ~21 s here, invalidating every warm answer another agent holds) and `rose_workspace_close`. On the read side `revision` is per workspace and global, so two agents editing one solution see each other's revisions with no way to tell whose. `expectedRevision` is the right primitive, but its help -- "Refuse if the workspace has moved past this revision" -- never says it is what you use when something else might be writing, and the instructions never mention concurrency at all.
 - **Why it matters:** Several subagents in one repository is the ordinary way this repository is worked on -- this review is four agents in one worktree -- and the only concurrency story is a transport-level notion of session that the agent layer does not correspond to. The failure is quiet: the sibling's next `rose_debug_continue` fails with a session id that no longer exists, which reads as a bug in the debugger.
 - **Suggested change:** Short term, say it in the writing: make `ExpectedRevisionArgument` name the case ("pass the revision your last read returned; another agent or a human editor may have written since"), and have `rose_debug_list` mark which sessions *this call* started rather than only which it may reach. Medium term, give a call an agent identity independent of the transport -- the `_meta` channel that already carries `CallOrigin` can carry one -- and default the destructive lifecycle tools (`rose_workspace_reload`, `rose_workspace_close`, `rose_debug_detach`) to refusing a target they did not start, with an explicit `force`.
 
-### AGT-21 A write result is roughly 4,000 characters, of which about 85% is the caller's own input, a constant, or a fact already stated
+### ~~AGT-21 A write result is roughly 4,000 characters, of which about 85% is the caller's own input, a constant, or a fact already stated~~
+**#375.** A write result echoed the caller's code back in a diff, named one file several times over, and
+carried notices that fired on every call. It names each changed file once, relative to the caller's
+directory, with the lines it changed and what it normalised, and says in a notice only what is true of
+that call. The same shape is left on the read surface in one place, a `helpLink` and an absolute path
+on every `rose_diagnostics` entry, which card 11i carries.
 
-- **Severity:** High
-- **Measured, #295**, at 1,895 bytes for an edit that introduces no diagnostic -- the floor, rather than the 4,000 this finding measured for one that did.
-- **Effort:** M
-- **Where:** `src/RoseMcp.Contracts/MemberEditResult.cs:38` (`Diff`),
-  `src/RoseMcp.Contracts/WorkspaceMutationResult.cs:17,23` (`ChangedFiles`, `Notices`),
-  `src/RoseMcp.Worker/MemberSyntax.cs:196` (line-ending notice),
-  `src/RoseMcp.Worker/EditVerification.cs:129-130` (analyzer notice),
-  `src/RoseMcp.Worker/DeclarationEditService.cs:201-202` (dependents notice, via
-  `EditVerification.SkippedDependents`), `src/RoseMcp.Contracts/DiagnosticEntry.cs:32` (`HelpLink`)
-- **Cheaper than when filed.** Card 9 shipped, so the notices this finding wants trimmed are decided in
-  `EditPipeline.Report()` rather than in six hand-written iterators. Card 9's own rule applies to the
-  trim: a line saying *which* compile ran is a fact and stays; a line framing the compile is shared and
-  can be conditioned in one place. #316 took the worst case of redundancy 1 with it -- a multi-targeted
-  project listed the file and its whole diff once per framework, and is deduplicated by path now -- and
-  added one more conditional notice to weigh.
-- **What:** Measured on one real `rose_replace_member` response that added a doc comment and one
-  statement, and came back with one error. Roughly 4,000 characters, about 1,000 tokens. It breaks
-  down as:
+### ~~AGT-22 Tools that are plural by intent are singular by signature, and the cost is model turns rather than round trips~~
+**#377.** The four debug bookkeeping tools took one location or id each, so instrumenting a path cost a
+model turn per method. Each takes a list and answers every entry with its own status, and one bad
+entry never fails the rest.
 
-  | Part | Size | Verdict |
-  |---|---|---|
-  | `diff` | ~2,100 | Almost entirely the doc comment the caller had just sent |
-  | Five `notices` | 1,028 | Two unconditional, one restates the diagnostic, one contradicts a field |
-  | Scaffold (16 fields) | 590 | The absolute path appears five times |
-  | One `introducedDiagnostics` entry | ~350 | Includes a `helpLink` no agent fetches |
-
-  Eight distinct redundancies, in increasing order of how structural they are:
-
-  1. **The absolute path five times** -- `filePath`, both diff headers, `changedFiles[0]`, and
-     `introducedDiagnostics[0].filePath`. About 300 characters to say one thing.
-  2. **`members: ["RunProcess"]`** restates the tail of `symbol`, which is in the same object.
-  3. **`totalErrorCount: 1`** is indistinguishable here from `introducedDiagnostics.Length`, and
-     nothing says whether it counts errors that were already there.
-  4. **`helpLink`** on a CS0103. No agent has ever opened one.
-  5. **The diff echoes the caller's own input.** The agent composed that doc comment; reading it
-     back teaches nothing. The only facts the callee owns are *where it landed* and *what was
-     normalised*, and both are one line each.
-  6. **One fact stated three times.** The diagnostic message says the name does not exist; notice 2
-     says "MSBuildEnvironment resolves to nothing in scope, and no import would fix it"; notice 4
-     opens by saying it again before giving the advice. Notice 2 is pure restatement.
-  7. **Two notices are constants.** The line-ending notice fires whenever the supplied code used LF,
-     and its own text concedes that is "what composing C# for a tool argument produces without
-     anyone deciding to" -- so it fires on substantially every write, at 394 characters. The
-     analyzer notice is emitted on *both* branches of the ternary at `EditVerification.cs:129-130`,
-     so it fires always. **A notice that fires on nearly every call carries no information; it is
-     documentation, and belongs in the tool description.**
-  8. **One notice contradicts a field in the same payload.** The dependents notice is guarded on the
-     edit *kind* (`request.Kind == MemberEditKind.Replace`) and not on whether any dependent exists,
-     so it says "Only X was compiled ... which this did not check" while `dependentsNotChecked: []`
-     in the same object says there was nothing to check. The comment above it reads "Said only where
-     it can happen", which is true of the kind and not of the instance.
-- **Why it matters:** This is finding AGT-01's problem on the *write* surface, where it is worse.
-  The agent pays a thousand tokens per edit, and an edit loop is many edits. What it actually needed
-  from this response is four facts: it applied, it landed at line 174, 34 endings were normalised,
-  and one error was introduced with its message and the advice for fixing it. Everything else is
-  either something the agent sent, something that is always true, or the same sentence at a
-  different length. And the two genuinely valuable notices -- the advice about resolving a name, and
-  the warning about unchecked dependents -- are the ones buried at positions four and five behind
-  three that are not.
-- **Suggested change:** Four rules, applied in one place.
-  1. **Never echo the caller's input.** Drop `diff` from the default response; report `at: "174-200"`
-     and `normalised: "34 line endings to CRLF"`. Put the diff behind `includeDiff`, default off, and
-     make the flag genuinely remove it (cf. AGT-01, where `includeSignatures=false` does not).
-  2. **A constant is not a notice.** Emit the line-ending and analyzer notices only when the outcome
-     was not the usual one. Move their standing explanation into `ToolDescriptions`.
-  3. **Say a fact once, at its most actionable.** Where a notice restates a diagnostic, keep the
-     advice and drop the restatement. The advice is the part no other field carries.
-  4. **Name a path once.** One `file` field, relative to the workspace root; diagnostics refer to it
-     by index, and `changedFiles` lists only the *other* files an edit touched.
-
-  Condition the dependents notice on `SkippedDependents` being non-empty, which is the field that
-  already knows.
-
-  Target shape, same information an agent can act on, about 600 characters:
-
-  ```json
-  {
-    "revision": 1, "applied": true, "verified": true,
-    "file": "tests/RoseMcp.IntegrationTests/TestToolchain.cs",
-    "symbol": "TestToolchain.RunProcess(string, string)",
-    "at": "174-200",
-    "normalised": "34 line endings to CRLF",
-    "errors": [{ "id": "CS0103", "line": 183, "col": 29,
-                 "message": "The name 'MSBuildEnvironment' does not exist in the current context" }],
-    "advice": "Nothing of that name is reachable here, so it is not written yet rather than unimported. rose_resolve_name finds one that exists; the usings argument imports it in the same call.",
-    "scope": "compiled RoseMcp.IntegrationTests; it has no dependents"
-  }
-  ```
-- **Blast radius, and the root cause.** `WorkspaceMutationResult` is the base of eight result records
-  (`AddFileResult`, `CodeFixResult`, `FormatResult`, `MemberEditResult`, `MoveTypeResult`,
-  `RenameResult`, `SignatureChangeResult`, `UsingResult`), so `ChangedFiles` and `Notices` are on
-  every one of the thirteen writing tools. The same shapes recur on the read surface: a path per
-  member in `rose_outline` (AGT-01), a path per hit and a definition listed three to four times in
-  `rose_find_references` (AGT-06), unbounded raw XML in `rose_symbol_info` (AGT-11), and a
-  `helpLink` plus an absolute path on every entry of `rose_diagnostics`, which at solution scope is
-  the worst case in the product.
-
-  The root is **WRK-01**. Eight files under `src/RoseMcp.Worker/` declare their own
-  `IEnumerable<string> Notices` iterator, so there is no single place where "is this worth saying,
-  and is it already said" gets decided. That is why two notices are unconditional and one disagrees
-  with a field beside it. Fixing WRK-01 gives notice discipline somewhere to live, which is the
-  same argument `WorkspaceManager.Attribute<T>` already won for attribution.
-
-- **The anchor already exists and is refused as input.** Every result carries `workspace` *and*
-  `workspaceKey` (`WorkspaceManager.cs:192`), and `WorkspaceKey`'s own summary says it is "a short,
-  stable name for one loaded solution, **fit for a caller to quote back**", derived from the path
-  rather than minted per process so it survives a worker restart, and hashed because "six worktrees
-  of one repository is the ordinary case, not a corner one". It is written on every result and
-  **read as input nowhere** -- the same shape as `HostVersion` (IPC-02) and `InfoAge` (USE-03): a
-  fact computed for a consumer that never consumes it.
-
-  This matters for the path question. A relative path is ambiguous only when it arrives with no
-  anchor, and an anchor that costs sixteen characters will actually be carried where a sixty-
-  character absolute path will not. Accept `workspaceKey` wherever `workspace` is accepted, return
-  paths relative to the workspace, and the round trip is unambiguous by construction: the agent
-  quotes back the pair it was handed, and no resolution against a process working directory happens
-  at all.
-- **The gate this card had is open (#305).** Returning relative paths makes an agent send relative
-  paths -- results are where agents get their arguments -- so the size fix could not land before the
-  resolution fix, on pain of turning a latent hazard into a routine one. A relative path is measured
-  from the calling session's directory now, so it can.
-- **Not everything can be workspace-relative, and the rule should say so.** Anchor absolute and
-  stated once; anything under it relative; anything outside it absolute. The live-app surface is
-  genuinely outside: module paths read from the debugged process, `InstallLocation`
-  (`LiveAppInfo.cs:32`, under `WindowsApps` for a packaged app), `HostLogPath` (`:74`, under
-  `LOCALAPPDATA`). A project referenced from outside the solution directory is relative but ascends.
-  Generated documents and metadata symbols have no disk path at all.
-- **The anchor question is smaller than it was, not gone (#305).** A relative path is measured from
-  the calling session's directory, and the silent write into another checkout with it. What is left
-  is the session that never says where it is -- an http client with no relay in front of it -- whose
-  relative path is measured from the broker's own directory and now fails loudly there rather than
-  finding a plausible file. An anchor a caller will actually carry is what closes that case too.
-
-### AGT-22 Tools that are plural by intent are singular by signature, and the cost is model turns rather than round trips
-
-- **Severity:** Medium
-- **Effort:** M
-- **Where:** `src/RoseMcp.LiveApp/Tools/LiveAppTracepointTools.cs`,
-  `src/RoseMcp.LiveApp/Tools/LiveAppBreakpointTools.cs`,
-  `src/RoseMcp.Broker/Tools/LiveAppDebugTools.cs`; contrast
-  `src/RoseMcp.Worker/Tools/RefactoringTools.cs:116` (`string[] filePaths`), `:353`
-  (`string[] namespaces`), and `src/RoseMcp.Contracts/LiveXamlApplyResult.cs` with
-  `LiveXamlEditResult`
-- **What:** `rose_debug_add_tracepoint` takes exactly one location, and so do
-  `rose_debug_set_breakpoint`, `rose_debug_remove_tracepoint` and `rose_debug_remove_breakpoint`.
-  Instrumenting a code path is never one tracepoint: it is entry, exit, the branch you suspect, and
-  the loop you do not trust. Six tracepoints is six calls.
-
-  The tool's own description positions it against the alternative: "Prefer this over adding logging
-  statements and rebuilding". **That alternative is plural in a single edit.** A person adding log
-  statements adds five in one pass and runs once. The tool it is meant to beat collapses the set into
-  one action, and this one does not.
-
-  The same shape appears on the read side, and it has already cost a reviewer. The UI usability
-  review wanted "which members of this type are referenced by nobody" across about twenty
-  properties, found `rose_find_references` to be one symbol per call, and went to grep. That is a
-  documented loss caused by a signature rather than by an answer.
-- **Why it matters:** **In an agentic loop a round trip is not a network hop, it is a model turn.**
-  Six tracepoints is six turns: six chances for the agent to lose the thread, six result envelopes
-  each carrying `revision`, `workspace`, `workspaceKey` and `sessionId` (AGT-21), and six
-  opportunities for a partial failure the agent must now reconcile by hand -- three tracepoints set,
-  one refused, and no statement anywhere of what the session currently holds.
-
-  This is worth saying because it cannot be fixed at the protocol. Even where JSON-RPC offers
-  batching, the model still has to *decide* each call separately, so wire-level batching would save
-  nothing that matters here. Only a plural argument shape collapses N decisions into one, which is
-  why this is an agentic-citizenship finding and not an API-ergonomics one.
-- **Suggested change:** Apply the pattern the repository already has, rather than inventing one.
-
-  1. **Take an array.** Four writing tools already take `string[]` arguments (`filePaths`,
-     `namespaces`, `usings`, `arguments`), so there is neither a technical nor a stylistic objection.
-     Make `location` a list rather than adding a second plural spelling beside a singular one: two
-     spellings of one idea is the inconsistency AGT-09 already raises.
-  2. **Return per-item outcomes, copying `LiveXamlApplyResult` exactly.** It already has the right
-     shape -- an `Applied` count, a `Total`, one `Results` entry per item with a `Status` that is
-     either applied or the reason it was not, `Notes` for what could not be done at all, and
-     `Detail` for the case where the whole operation could not run. A tracepoint batch wants
-     precisely that: bound, not bound because the module is not loaded yet, refused because the
-     condition does not parse.
-  3. **Never fail the batch for one item.** The XAML apply already establishes that and the
-     reasoning is the same: a partial result the caller can read beats an all-or-nothing refusal
-     when the items are independent.
-  4. **Sequence it behind the read-size work.** Batching a read whose per-item payload is already
-     large multiplies the payload as well as saving the turns: ten outlines at fourteen kilobytes is
-     a worse answer, not a better one. So batch the debug family now, where results are small, and
-     the read family (`rose_symbol_info`, `rose_outline`, `rose_find_references`) after card 11.
-
-  The tools worth the change, by whether one intent commonly produces many calls: the four debug
-  bookkeeping tools now; `rose_find_references`, `rose_symbol_info` and `rose_outline` after the size
-  work; `rose_delete_member` and `rose_add_member` as candidates. Genuinely singular and to be left
-  alone: `rose_replace_body`, `rose_rename_symbol`, `rose_add_file`, `rose_move_type_to_file`, and
-  every execution-control verb, where ordering is the meaning.
-
-### AGT-23 Overflow should return a smaller answer to a better question, never the same answer somewhere else
-
-- **Severity:** Medium
-- **Effort:** M
-- **Where:** `src/RoseMcp.Worker/Tools/NavigationTools.cs:80-90` (the filters the tool accepts),
-  `src/RoseMcp.Contracts/SourceLocation.cs:12-31` (the facets every hit carries),
-  `src/RoseMcp.Contracts/ReferencesResult.cs:21-23` (`TotalCount`, `Truncated`)
-- **What:** A hot symbol overflows `maxResults`, and the tool answers with the first 200 hits and
-  `truncated: true`. The tempting fix is to spill the full list to a file and tell the caller to
-  grep it. **That is the wrong remedy, and the right one is already three-quarters built.**
-
-  Every reference returned carries `ContainingMember`, `Project`, `IsTestProject` and
-  `GeneratedHintName`, each with a docstring saying why a caller wants it. `ContainingMember`'s says
-  it is "what turns a flat list of forty references into 'used by these six methods', **which is the
-  question a caller actually had**". `IsTestProject`'s says "a use from a test is a different fact
-  from a use in the product". The tool accepts exactly one of those four as a filter (`project`) and
-  groups by none of them, although `ToolDescriptions` promises grouping by member (AGT-06).
-
-  So the code already knows the caller's real question, already computes the facts that answer it,
-  already writes down why each matters, and then returns a flat list and a truncation flag.
-- **Why it matters:** Three reasons the file-and-grep remedy is worse than it looks.
-
-  1. **It concedes the project's own thesis.** `CLAUDE.md` says that if Rose does not beat grep and
-     find-and-replace it has little reason to exist, and that a tool which loses to grep is a defect.
-     A result that *instructs* the caller to grep is that defect shipped as a feature, and it trains
-     the habit the product exists to break.
-  2. **Grepping a dump is strictly worse than grepping source.** The caller paid a semantic tool to
-     distinguish an override from a comment that happens to contain the name, and then text-matches
-     over the answer, discarding exactly what it paid for.
-  3. **The size is a symptom of an unasked narrowing question, not of an answer needing storage.**
-     Nobody wants 412 references. They want the ones outside tests, or the ones in one project, or
-     the six members that do the calling. Storing all 412 answers the question nobody asked, more
-     durably.
-- **Suggested change:** Three steps, in order, and a fourth only if asked for.
-
-  1. **On overflow, return the shape instead of the list.** Group by the facets already on every
-     hit: "412 references -- 380 in test projects, 22 in `RoseMcp.Broker`, 10 in `RoseMcp.Worker`;
-     340 of them inside 6 members. Narrow with `project=`, `excludeTests=true`, or
-     `containingMember=`." That is about two hundred characters, it is what a person does before
-     reading a list, and it teaches the narrowing vocabulary in the one moment the caller is looking
-     for it.
-  2. **Accept as a filter every facet you return.** `excludeTests`, `excludeGenerated` and
-     `containingMember` beside the `project` filter that already exists. The general rule, which is
-     worth stating once somewhere permanent: **every facet a result returns is a filter the tool
-     owes.** A fact worth computing per item is a fact worth selecting on.
-  3. **Make truncation honest first.** `definitionsOnly=true` currently reports `truncated: true`
-     over an empty list (AGT-05). An overflow story built on a truncation flag that lies is worse
-     than none.
-  4. **A file only on request, never as a fallback.** There is a real bulk case -- feeding a
-     scripted refactor -- and for it an explicit `outputFile` the *caller* names is right, because
-     the caller then owns the path and the cleanup. An automatic spill turns a read tool into one
-     that writes to disk without being asked, and this repository has already learned once what
-     happens to directories nobody owns: `CLAUDE.md` records the sandbox that "accumulates a copy of
-     the provider and a grant to ALL APPLICATION PACKAGES" when it outlives its host.
-
-  The same rule generalises to every list in the product: `rose_diagnostics` at solution scope,
-  `rose_search_symbols`, `rose_debug_events`. Overflow is a prompt to ask a better question, and the
-  tool is the thing that knows what the better questions are.
+### ~~AGT-23 Overflow should return a smaller answer to a better question, never the same answer somewhere else~~
+**#378.** An answer past its cap was the first few references and a truncation flag, and three of
+the four facets on every reference could not be asked about. It is now the shape of the references,
+with every facet a filter and nothing spilled to a file.
 
 
 ## Why tools lose to grep, ranked
@@ -572,16 +306,14 @@ that a file is formatted.
 From the 18-issue corpus, the three other reviewers' dogfooding notes, and my own ~30 calls. Ranked
 by how often it decides a call, not by severity.
 
-1. **The answer is too big to use** (AGT-01, AGT-02, AGT-06, AGT-11, #234). The commonest loss, and
-   the only one where the tool *worked*. `rose_outline` at 22 KB, `rose_find_implementations` at
-   1,312 matches, `rose_symbol_info` at 9 KB of XML. An agent that cannot afford the answer greps,
-   and it does not come back.
+1. ~~**The answer is too big to use** (AGT-01, AGT-02, AGT-06, AGT-11, #234).~~ **#374.** The
+   reads answer cheaply by default and say what a cap left out; the write results are still large
+   (AGT-21).
 2. ~~**The name the caller wrote cannot be addressed** (AGT-03, #210, #233, #239).~~ **#418.** The
    four instances named here resolve by name.
-3. **The error does not say what to do** (AGT-04, AGT-08, #121, #212, #210, #249). A leaked
-   `(Parameter 'symbol')`, a dropped argument name reported as a missing value, advice to make the
-   call that just failed. Each costs one to three round trips, and the agent's next move after two
-   failed round trips is always the tool it already trusts.
+3. ~~**The error does not say what to do** (AGT-04, #121, #212, #210).~~ **#431.** No refusal
+   names a CLR parameter, and an exception that escaped a framework says so rather than reading as
+   advice.
 4. ~~**The write is not trusted** (AGT-17, #195, #197, #217).~~ **#333, #427.** A write names the
    lines it changed that it was not asked to, and `rose_format` no longer calls a file clean beyond
    what it checked.
@@ -598,26 +330,15 @@ answer. Every loss is about cost, reach or explanation.
 
 ## Pit-of-success inversions
 
-**1. ~~Compact has to be measured, not intended.~~** **Half done, #295.** The three shapes tier 3
-shrinks are held to a ceiling, so the cards that shrink them have a number to move. Splitting the
-location record into the two shapes it is used as is the other half, and is card 11's.
+**1. ~~Compact has to be measured, not intended.~~** **#295, #374.** The read and write shapes are
+held to a ceiling per item, and the location record is split into the two shapes it is used as.
 
-**2. No CLR vocabulary reaches a caller.**
-*Rule today:* "convert at the MCP boundary, never at the throw site" (`CLAUDE.md`), which converts
-the *exception* and leaves whatever text Roslyn put in it.
-*Mechanism:* the boundary filter rewrites, rather than forwards, any message containing
-`(Parameter '` or a `Microsoft.CodeAnalysis.` type name -- into the tool's own argument names, or
-into "an internal error in <tool>; this is a bug, please file it" with the detail in the log. One
-test over all three `ToolErrorReporting` copies (which AGT-19 would make one). #121, #198 and #212
-are all this class, and nothing today can notice the fourth.
+**2. ~~No CLR vocabulary reaches a caller.~~** **#431.** Every boundary takes CLR parameter names
+out and says when an exception escaped a framework, and one test holds all three boundaries to it.
+**Declined:** rewriting type names in a message. A leaked exception's are now marked as the
+framework's words, and a refusal Rose wrote is its own words.
 
-**3. An unknown argument is a caller error the tool can see.**
-*Rule today:* nothing; the binder drops it and the tool reports the value as missing.
-*Mechanism:* #249's change. `ToolArgumentShape` already enumerates the supplied names against the
-schema and already skips the undeclared ones at `ToolArgumentShape.cs:51`; collect them instead, and
-run the helper on any refusal that names a missing argument, not only on a binder refusal. The
-schema is to hand at all three boundaries. This is the smallest change on this list with the largest
-effect on a first-time caller.
+**3. ~~An unknown argument is a caller error the tool can see.~~** **#249.**
 
 **4. A fixed set of values is a type, not a string.**
 *Rule today:* remember to route the string through `ArgumentValues` rather than a `switch` with a
@@ -664,9 +385,8 @@ more fact needs to travel through them.
 3. **Does `rose_format` intend to be the check?** Its description says "pass apply=false to check
    formatting without writing", and #218 shows it passing a file `dotnet format` fails. Is the
    contract "what IDE0055 thinks" or "what CI will think"? They are different tools.
-4. **Is there a reason `rose_find_implementations` has no `project`?** It looks like an omission
-   rather than a decision, but `rose_find_references` grew one and this did not, so it may have been
-   considered.
+4. ~~**Is there a reason `rose_find_implementations` has no `project`?**~~ **Answered, #383:** it
+   was an omission, and it takes one.
 5. **Should the writing tools be usable without the model having read the file?** Today
    `rose_replace_body`'s `find` and `rose_replace_member`'s whole-declaration payload both assume the
    caller knows what is currently there. An agent that has not read the file cannot use either, and
@@ -680,20 +400,20 @@ already loaded (revision 1) and reported `Degraded` for the reasons the brief's 
 
 | Tool | For | Outcome |
 |---|---|---|
-| `rose_outline` `WorkspaceManager`, compact | "What does this class contain", cheaply | **Lost.** 10.1 KB against 748 bytes of grep for the same question (AGT-01). The grep answered; the outline answered and cost thirteen times as much. |
-| `rose_outline` `WorkspaceManager`, full | The same, with signatures and docs | Worked, 22.3 KB. Genuinely more informative than grep -- base types, `isGenerated`, accessibility -- but I would not spend that twice in a session, and the documentation half was supposed to be one line per member (AGT-02). |
+| `rose_outline` `WorkspaceManager`, compact | "What does this class contain", cheaply | ~~**Lost** to a grep of the same question, at many times its size (AGT-01).~~ **#374.** A member is its name, kind, accessibility and line. |
+| `rose_outline` `WorkspaceManager`, full | The same, with signatures and docs | Worked. Genuinely more informative than grep -- base types, `isGenerated`, accessibility -- ~~but not worth its size twice in a session (AGT-02).~~ **#374.** Documentation is a sentence per member. |
 | `rose_symbol_info` `Microsoft.CodeAnalysis.Workspace.CurrentSolution` | Reproduce the metadata failure another reviewer hit | **Worked**, which is the interesting part: it disproved "metadata is broken" and led to the real rule (AGT-03). |
 | `rose_symbol_info` `ModelContextProtocol.Server.McpServer.SessionId` | The reviewer's actual case | **Failed**, with five unrelated source symbols offered as candidates. |
 | `rose_symbol_info` `System.Collections.Generic.List` | Wrong arity on a metadata type | **Failed**, offering four methods named `List` in Rose's own source. No mention of arity, none of metadata. |
-| `rose_symbol_info` `ModelContextProtocol.Server.McpServerTool` | What the SDK says about tool errors | Worked, and was the authority for the `isError`-versus-thrown question in this review -- but 9.2 KB of raw XML (AGT-11). Rose answered a question about its own dependency that I had no other way to ask, which is a real win despite the size. |
+| `rose_symbol_info` `ModelContextProtocol.Server.McpServerTool` | What the SDK says about tool errors | Worked, and was the authority for the `isError`-versus-thrown question in this review -- ~~but as raw XML (AGT-11).~~ **#374.** The summary is prose. Rose answered a question about its own dependency that I had no other way to ask, which is a real win despite the size. |
 | `rose_symbol_info` `RoseMcp.Broker.WorkspaceManagr.CallAsync` (typo) | Grade the near-miss error | **Excellent.** The fix was in the message. |
-| `rose_find_references` `ToolNames.WorkspaceStatus` | 16 call sites by containing member | Worked. Beat grep on precision: grep for `WorkspaceStatus` also matches `WorkspaceStatusReport`, `WorkspaceStatusReporter` and the tool name in strings. Lost on shape: a flat list with the absolute path 17 times (AGT-06). |
-| `rose_find_references` same, `definitionsOnly=true` | Just the count | Worked, but `truncated: true` over an empty list (AGT-05). |
+| `rose_find_references` `ToolNames.WorkspaceStatus` | 16 call sites by containing member | Worked. Beat grep on precision: grep for `WorkspaceStatus` also matches `WorkspaceStatusReport`, `WorkspaceStatusReporter` and the tool name in strings. ~~Lost on shape (AGT-06).~~ **#378, #374.** Listed by file, each path relative to the caller. |
+| `rose_find_references` same, `definitionsOnly=true` | Just the count | Worked, ~~but `truncated: true` over an empty list (AGT-05).~~ **#378.** |
 | `rose_search_symbols` `ToolErrorReporting` | Find the three copies | **Excellent, and beat grep outright.** Three addresses ready to paste into the next call; `find -name` would have given me paths and no addresses. |
-| `rose_resolve_name` `ToolErrorReporting` (no filePath) | Ambiguous short name | **Failed** with a leaked Roslyn parameter name (AGT-04). |
+| `rose_resolve_name` `ToolErrorReporting` (no filePath) | Ambiguous short name | ~~**Failed** with a leaked Roslyn parameter name (AGT-04).~~ **#306, #431.** |
 | `rose_resolve_name` `ToolErrorReporting` + filePath | The same question, scoped | **Excellent.** "in scope already, so the error is something else: a misspelling, an accessibility problem, or the wrong number of type arguments" is the best single sentence on the surface. |
 | `rose_resolve_name` `Encoding` (no filePath) | Control, to isolate the failure above | Worked. So the failure is the argument shape, not the tool. |
-| `rose_diagnostics` one file, then the solution | "Does it compile" | **Worked, and is the strongest thing in the product.** Whole solution, 18 projects, a few seconds, against a `dotnet build` of 30-60 s. Every agentic session pays that difference dozens of times. Marked down only for saying nothing about the workspace being degraded (AGT-12). |
+| `rose_diagnostics` one file, then the solution | "Does it compile" | **Worked, and is the strongest thing in the product.** Whole solution, 18 projects, a few seconds, against a `dotnet build` of 30-60 s. Every agentic session pays that difference dozens of times. |
 | `rose_outline workspace=C:\Windows\System32` | Grade a bad-path error | **Excellent**, names the problem and the three extensions that would fix it. |
 
 Reached for grep instead, and why: the descriptions and tests are *prose*, so every question about

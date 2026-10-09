@@ -184,7 +184,7 @@ public static class DeclarationEditService
 		if (request.Verify && edit.Changed) progress?.Report("Compiling to see what the edit did", 75);
 
 		await edit.VerifyAsync(
-			path, EditVerification.ScopeFor(finished, path, reaches, request.VerifyScope), cancellationToken);
+			path, EditVerification.ScopeFor(finished, path, reaches, request.VerifyScope), [], cancellationToken);
 
 		notices.AddRange(edit.Report());
 
@@ -192,20 +192,18 @@ public static class DeclarationEditService
 		{
 			Revision = snapshot.Revision,
 			Symbol = target.Signature,
-			FilePath = path,
 			Line = LineOf(target),
-			Members = [target.Declaration is BaseTypeDeclarationSyntax type ? type.Identifier.Text : target.Signature],
 			Applied = edit.Applied,
 			Diff = edit.Outcome.Diff,
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
 			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
-			TotalErrorCount = edit.Verification.TotalCount,
+			PreexistingErrorCount = edit.Verification.PreexistingCount,
 			ProjectsChecked = edit.Verification.Projects,
 			DependentsNotChecked = request.Verify && edit.Changed
 				? EditVerification.SkippedDependents(finished, path, reaches, request.VerifyScope)
 				: [],
-			ChangedFiles = edit.Outcome.ChangedFiles,
+			ChangedFiles = edit.Outcome.Leading(path),
 			Notices = notices,
 		};
 

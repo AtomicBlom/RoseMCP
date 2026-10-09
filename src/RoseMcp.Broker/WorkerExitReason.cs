@@ -13,4 +13,10 @@ public enum WorkerExitReason
 
 	/// <summary>The broker stopped it, usually for a hard reload.</summary>
 	StoppedByBroker,
+
+	/// <summary>
+	/// The broker stopped it to free its memory: unused past the idle limit, or its solution file gone
+	/// past the grace period. The next call on the workspace starts a fresh one.
+	/// </summary>
+	Evicted,
 }

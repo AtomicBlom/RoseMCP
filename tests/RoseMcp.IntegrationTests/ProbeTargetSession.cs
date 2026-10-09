@@ -34,10 +34,17 @@ internal static class ProbeTargetSession
 	/// A factory to record what the session logged, for an assertion that can only be made about
 	/// which path the work took rather than about the answer it produced.
 	/// </param>
-	internal static LiveAppSessionManager CreateManager(ILoggerFactory? logs = null) => new(
-		Options.Create(new BrokerOptions()),
-		logs ?? NullLoggerFactory.Instance,
-		NullLogger<LiveAppSessionManager>.Instance);
+	/// <param name="configure">Changes to the default options, for a test about one of them.</param>
+	internal static LiveAppSessionManager CreateManager(ILoggerFactory? logs = null, Action<BrokerOptions>? configure = null)
+	{
+		var options = new BrokerOptions();
+		configure?.Invoke(options);
+
+		return new LiveAppSessionManager(
+			Options.Create(options),
+			logs ?? NullLoggerFactory.Instance,
+			logs?.CreateLogger<LiveAppSessionManager>() ?? NullLogger<LiveAppSessionManager>.Instance);
+	}
 
 	/// <summary>
 	/// A dedicated child process to attach to, rather than this test runner: attaching a debugger to
@@ -160,7 +167,9 @@ internal static class ProbeTargetSession
 				Exception? exception,
 				Func<TState, Exception?, string> formatter)
 			{
-				var line = formatter(state, exception);
+				// Timed, so a test that fails on a wait can say when the work it waited for happened.
+				var line = $"{DateTime.UtcNow:HH:mm:ss.fff}Z {logLevel}: {formatter(state, exception)}"
+					+ (exception is null ? string.Empty : $" ({exception.GetType().Name}: {exception.Message})");
 
 				lock (lines) lines.Add(line);
 			}

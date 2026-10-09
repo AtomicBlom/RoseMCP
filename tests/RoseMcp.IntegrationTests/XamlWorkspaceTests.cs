@@ -200,7 +200,7 @@ public sealed class XamlWorkspaceTests
 			TestContext.Current!.Execution.CancellationToken);
 
 		references.Symbol.ShouldContain("Greeter.Greet", Case.Sensitive);
-		references.References.ShouldContain(reference => reference.Line == 21);
+		references.Listed().ShouldContain(reference => reference.Site.Line == 21);
 	}
 
 	/// <summary>The other tool that reaches the same index, by the same route.</summary>

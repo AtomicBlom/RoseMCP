@@ -176,8 +176,8 @@ offset it was bound at.
   already sees every module as it loads, but keeps only the path -- the `CorDebugModule` is dropped, so
   the walk has to be retaken.
 - **Why it matters:** A full stop of somebody's application per breakpoint set, for a list the session
-  could have kept. It is also the cost that makes card 11d (a plural `rose_debug_*` call) worth more
-  than it looks: six locations today is six stops.
+  could have kept. A batch of locations is bound in one pass and so costs one stop, but every call
+  still costs one, however many modules the session has already seen load.
 - **Suggested change:** Keep the `CorDebugModule` objects alongside the paths in `TargetSymbols`, filled
   from `Remember` on load and from the one walk the attach already takes, so `AddBinding` binds against
   what is known without stopping the target. Hot reload wants the same map for a different reason: EnC
@@ -664,10 +664,8 @@ Every reach for a `rose_*` tool in this review, what for, and how it went.
 - `rose_symbol_info symbol=RoseMcp.LiveApp.Debugging.CorDebugSession.OnEvent` -- to get the declaration
   span without reading. Worked (`1497-1562`, 66 lines).
 - `rose_find_implementations symbol=System.IDisposable` -- to list what in the host owns a resource.
-  **Lost to grep.** 1,312 matches, truncated at 60 and again at 200, every one from `ClrDebug`,
-  `WinRT.Runtime`, ASP.NET and Roslyn metadata; passing `workspace` as the LiveApp project path did not
-  scope it. `rose_find_references` has a `project` argument; `rose_find_implementations` does not, and
-  for a BCL interface that is the only useful shape of the question. Dogfooding finding.
+  ~~Lost to grep.~~ **#383.** Every match was a dependency's and nothing narrowed it. It lists this
+  solution's source only and takes `project`.
 - Not reached for, and should have been: `rose_symbol_info ... includeSource=true` on the individual
   `CorDebugSession` methods would have replaced two of my three `Read` chunks once the outline had failed;
   I fell back to `Read` by habit after the outline overflowed. `rose_search_symbols` was never needed

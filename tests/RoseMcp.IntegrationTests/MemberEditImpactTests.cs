@@ -34,7 +34,7 @@ public sealed class MemberEditImpactTests
 
 		good.Verified.ShouldBeTrue();
 		good.IntroducedDiagnostics.ShouldBeEmpty();
-		good.TotalErrorCount.ShouldBe(0);
+		good.PreexistingErrorCount.ShouldBe(0);
 		good.ProjectsChecked.ShouldContain("Library");
 
 		var bad = await ReplaceAsync(
@@ -46,7 +46,7 @@ public sealed class MemberEditImpactTests
 
 		introduced.Id.ShouldBe("CS1061");
 		introduced.FilePath.ShouldEndWith("Greeter.cs", Case.Insensitive);
-		bad.TotalErrorCount.ShouldBe(1);
+		bad.PreexistingErrorCount.ShouldBe(0, "the one error there is the one this edit introduced");
 	}
 
 	/// <summary>
@@ -72,10 +72,11 @@ public sealed class MemberEditImpactTests
 		introduced.Id.ShouldBe("CS1501");
 		introduced.FilePath.ShouldEndWith("Caller.cs", Case.Insensitive);
 
-		// And the answer says how far it looked, since a project that only references this one was
-		// not compiled and could be broken too.
-		result.Notices.ShouldContain(
-			notice => notice.Contains("scope=solution", StringComparison.Ordinal));
+		// And the answer says how far it looked: the scope took in every dependent, so none went
+		// unchecked, and no sentence claims otherwise beside the empty list.
+		result.ProjectsChecked.ShouldNotBeEmpty();
+		result.DependentsNotChecked.ShouldBeEmpty();
+		result.Notices.ShouldNotContain(notice => notice.Contains("dependents", StringComparison.OrdinalIgnoreCase));
 	}
 
 	[Test]
@@ -96,16 +97,16 @@ public sealed class MemberEditImpactTests
 
 		result.Applied.ShouldBeFalse("a preview writes nothing");
 		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
-		string.Join(" ", result.Notices).ShouldContain("Preview only", Case.Sensitive);
 
 		// The diff and the breakage are the point of asking: both describe a change that did not happen.
-		result.Diff.ShouldContain("bool loud", Case.Sensitive);
+		result.Diff.ShouldNotBeNull().ShouldContain("bool loud", Case.Sensitive);
 		result.IntroducedDiagnostics.ShouldContain(diagnostic => diagnostic.Id == "CS1501");
 	}
 
 	/// <summary>
 	/// An unverified edit has to say so. An empty introduced list means nothing at all when nothing
-	/// was compiled, and reads exactly like a clean result.
+	/// was compiled, and reads exactly like a clean result -- so <c>verified</c> says it, once, and no
+	/// sentence repeats the argument the caller passed.
 	/// </summary>
 	[Test]
 	public async Task Says_when_it_did_not_compile_anything()
@@ -124,17 +125,15 @@ public sealed class MemberEditImpactTests
 		result.Applied.ShouldBeTrue();
 		result.Verified.ShouldBeFalse("verify=false compiles nothing, and says so");
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		string.Join(" ", result.Notices).ShouldContain("Nothing was compiled", Case.Sensitive);
+		result.Notices.ShouldNotContain(notice => notice.Contains("compiled", StringComparison.Ordinal), "verified is the fact, and verify=false is what the caller sent");
 	}
 
 	/// <summary>
-	/// The count of errors that were already there names the argument needed to see them. A write tool
-	/// runs the analyzers where it wrote, so its count includes diagnostics rose_diagnostics leaves out
-	/// by default -- and the bare advice sent a caller to a tool that answered 0 about 297 errors,
-	/// which reads as the two tools disagreeing rather than as a default they had not been told about.
+	/// The errors that were already there are a count of their own, separate from what this edit
+	/// introduced, and said once: as a field rather than again in a sentence beside it.
 	/// </summary>
 	[Test]
-	public async Task Names_the_argument_that_shows_the_errors_it_counted()
+	public async Task Counts_the_errors_that_were_already_there()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
@@ -155,9 +154,11 @@ public sealed class MemberEditImpactTests
 		result.Applied.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
 
-		result.Notices.ShouldContain(
-			notice => notice.Contains("were there before this edit", StringComparison.Ordinal)
-				&& notice.Contains("includeAnalyzers=true", StringComparison.Ordinal));
+		result.PreexistingErrorCount.ShouldBeGreaterThan(0, "the earlier edit left an error behind");
+		result.Notices.ShouldNotContain(notice => notice.Contains("analyzer error", StringComparison.Ordinal),
+			"the error already there is the compiler's, which rose_diagnostics reports by default");
+		result.Notices.ShouldNotContain(notice => notice.Contains("compiles clean", StringComparison.Ordinal));
+		result.Notices.ShouldNotContain(notice => notice.Contains("error(s)", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -232,8 +233,20 @@ public sealed class MemberEditImpactTests
 
 		result.IntroducedDiagnostics.ShouldContain(entry => entry.Id == "IDE0005");
 
-		// And the result says where they ran, so a caller can tell a clean answer from an unasked one.
-		result.Notices.ShouldContain(notice => notice.Contains("Analyzers ran in Library", StringComparison.Ordinal));
+		// The next edit in the same project finds that error already there. The count includes it, and
+		// rose_diagnostics leaves analyzers out by default, so the result says so -- otherwise its count
+		// beside that tool's zero reads as the two disagreeing.
+		var next = await ReplaceAsync(
+			session,
+			"Library.Prose.Label",
+			"public static string Label()\n{\n\treturn \"counted\";\n}");
+
+		next.IntroducedDiagnostics.ShouldBeEmpty();
+		next.PreexistingErrorCount.ShouldBeGreaterThan(0);
+		next.Notices.ShouldContain(
+			notice => notice.Contains("analyzer error", StringComparison.Ordinal)
+				&& notice.Contains("includeAnalyzers=true", StringComparison.Ordinal),
+			string.Join(" | ", next.Notices));
 	}
 
 	/// <summary>
@@ -258,6 +271,32 @@ public sealed class MemberEditImpactTests
 		result.ProjectsChecked.ShouldNotContain("App");
 		result.IntroducedDiagnostics.ShouldBeEmpty();
 		result.DependentsNotChecked.ShouldContain("App");
+		result.Notices.ShouldContain(notice => notice.StartsWith("dependentsNotChecked can see what this changed", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// The warning about unchecked dependents is said only where there are some. A replacement whose
+	/// scope already took in every dependent, which auto always does, has none, and a sentence saying
+	/// they went unchecked would contradict the empty list beside it.
+	/// </summary>
+	[Test]
+	public async Task Says_nothing_about_dependents_when_none_went_unchecked()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Replace,
+			Symbol = "Core.Calculator.Multiply",
+			Code = "public static int Multiply(int left, int right) => right * left;",
+		});
+
+		result.Applied.ShouldBeTrue();
+		result.ProjectsChecked.ShouldContain("App");
+		result.DependentsNotChecked.ShouldBeEmpty();
+		result.Notices.ShouldNotContain(notice => notice.Contains("dependents", StringComparison.OrdinalIgnoreCase));
+		result.Notices.ShouldNotContain(notice => notice.StartsWith("Only ", StringComparison.Ordinal));
 	}
 
 	/// <summary>

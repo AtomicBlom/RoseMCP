@@ -13,6 +13,12 @@ namespace RoseMcp.Broker;
 /// <see cref="BrokerOptions.DefaultWorkspaceRoot"/>, which is that process's own working directory
 /// and so is the same fact arrived at differently.
 /// </para>
+/// <para>
+/// A <c>workspaceKey</c> changes which worker answers and not where a relative path is measured from.
+/// A result names its files relative to this same directory (<see cref="ResultPaths"/> for a read,
+/// <see cref="WritePaths"/> for a write), so a path it returned means one file however it comes back
+/// -- with the key, without it, or through the caller's own file tools.
+/// </para>
 /// </summary>
 public sealed class CallerPaths(IOptions<BrokerOptions> options)
 {
@@ -20,6 +26,15 @@ public sealed class CallerPaths(IOptions<BrokerOptions> options)
 
 	/// <summary>The directory this call's relative paths are measured from.</summary>
 	public string Origin => CallOrigin.Directory ?? _options.DefaultWorkspaceRoot;
+
+	/// <summary>
+	/// The directory the caller is known to stand in, or null where it is not known: a relayed session
+	/// says, a stdio broker's own directory is its client's, and an http session with no relay in front
+	/// of it says nothing. Every result is made relative only to this -- a read's references
+	/// (<see cref="ResultPaths"/>) and a write's files (<see cref="WritePaths"/>) alike -- since a path
+	/// relative to a directory the caller is not in is a path that names nothing when it is sent back.
+	/// </summary>
+	public string? KnownOrigin => CallOrigin.Directory ?? (_options.DefaultRootIsTheCaller ? _options.DefaultWorkspaceRoot : null);
 
 	/// <summary>One path argument, absolute.</summary>
 	public RootedPath? Of(string? raw) => RootedPath.From(raw, Origin);

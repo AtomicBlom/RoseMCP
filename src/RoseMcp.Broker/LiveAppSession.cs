@@ -23,7 +23,10 @@ public sealed class LiveAppSession : IAsyncDisposable
 	private readonly ActivityLog _activities;
 	private readonly ILogger _logger;
 	private LiveAppInfo? _info;
-	private bool _alive = true;
+
+	// Volatile because a poll writes it and the manager's loop reads it on another thread to decide
+	// whether the session is dropped.
+	private volatile bool _alive = true;
 
 	// When the self-report above was read. Everything in a summary except the activity lists comes
 	// from it, so a reader acting on those fields needs to know which moment they describe -- a host
@@ -68,6 +71,29 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public DateTime StartedUtc { get; }
 
 	public int? HostProcessId => _info?.HostProcessId;
+
+	/// <summary>
+	/// Whether the host is still there to answer: false once the client's session with it has completed
+	/// -- the host's process ended or its pipe closed -- once a call has failed on a closed transport,
+	/// and once the session has been disposed. Never true again after that, which is what lets the
+	/// manager act on it without asking twice. A host that is alive and reports its target as exited is
+	/// still alive here -- its event log can still be read.
+	/// <para>
+	/// The client's completion is read rather than inferred from how a call failed, because the failure
+	/// depends on timing: a call in flight when the host dies fails with an I/O error, but one sent after
+	/// the client has already seen the pipe close is refused with an <see cref="InvalidOperationException"/>
+	/// saying the transport is not connected. Under load the second is the usual case, and a predicate
+	/// over exception types takes it for a slow host and keeps the dead session forever.
+	/// </para>
+	/// </summary>
+	public bool IsAlive => _alive && !_client.Completion.IsCompleted;
+
+	/// <summary>
+	/// When <see cref="LiveAppSessionManager"/> first found the host gone, on its own clock, or null
+	/// while the host answers. Set by the manager's poll and read only there; the session is dropped
+	/// once this is older than <see cref="BrokerOptions.EndedSessionGrace"/>.
+	/// </summary>
+	public DateTime? EndedSeenUtc { get; internal set; }
 
 	/// <summary>
 	/// Why the detach did not happen, once this session has been disposed of, and null when it did.
@@ -129,7 +155,8 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// <summary>
 	/// Re-reads the host's self-report. Cheap; the host loads nothing to answer it.
 	/// <para>
-	/// Only a transport failure marks the session dead. A poll that timed out or was cancelled says
+	/// Only a closed transport marks the session dead -- a failure saying so, or the client's session
+	/// having completed, whatever the failure looked like (see <see cref="IsAlive"/>). A poll that timed out or was cancelled says
 	/// the host was slow, not that it is gone, and treating the two alike would report a busy host as
 	/// ended -- which is worse than a stale answer, because the summary already says how stale it is.
 	/// </para>
@@ -141,7 +168,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 			_info = await SendAsync<LiveAppInfo>(ToolNames.LiveAppInfo, cancellationToken);
 			_infoUtc = DateTime.UtcNow;
 		}
-		catch (Exception exception) when (IsTransportFailure(exception))
+		catch (Exception exception) when (IsTransportFailure(exception) || _client.Completion.IsCompleted)
 		{
 			_alive = false;
 			_logger.LogDebug(exception, "Could not read live-app info for {Target}.", Target.Description);
@@ -178,7 +205,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public LiveAppSessionSummary Describe()
 	{
 		var info = _info;
-		var state = !_alive
+		var state = !IsAlive
 			? LiveAppSessionState.Ended
 			: info?.State ?? LiveAppSessionState.Starting;
 
@@ -287,8 +314,16 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// <summary>
 	/// Reads a page, or the one event <paramref name="sequence"/> names when it is given -- whole,
 	/// with every field it carries, which is the way back from a page the client truncated.
+	/// <paramref name="exceptionType"/> narrows a page to exceptions of one type.
 	/// </summary>
-	public Task<LiveDebugEventPage> ReadEventsAsync(long after, string[]? kinds, int limit, int waitSeconds, long? sequence, CancellationToken cancellationToken)
+	public Task<LiveDebugEventPage> ReadEventsAsync(
+		long after,
+		string[]? kinds,
+		int limit,
+		int waitSeconds,
+		long? sequence,
+		CancellationToken cancellationToken,
+		string? exceptionType = null)
 		=> SendAsync<LiveDebugEventPage>(
 			ToolNames.LiveAppEvents,
 			new Dictionary<string, object?>
@@ -298,45 +333,112 @@ public sealed class LiveAppSession : IAsyncDisposable
 				["limit"] = limit,
 				["waitSeconds"] = waitSeconds,
 				["sequence"] = sequence,
+				["exceptionType"] = exceptionType,
 			},
 			cancellationToken);
 
-	public Task<LiveTracepoint> AddTracepointAsync(string location, string? logMessage, int? logEveryNthHit, string? condition, CancellationToken cancellationToken)
-		=> SendAsync<LiveTracepoint>(
+	/// <summary>
+	/// Adds tracepoints, each request's outcome its own entry: one the host refuses is refused there
+	/// and the rest are added regardless.
+	/// </summary>
+	public Task<LiveTracepointBatch> AddTracepointsAsync(IReadOnlyList<AddTracepointRequest> tracepoints, CancellationToken cancellationToken)
+		=> SendAsync<LiveTracepointBatch>(
 			ToolNames.LiveAppAddTracepoint,
-			new Dictionary<string, object?> { ["location"] = location, ["logMessage"] = logMessage, ["logEveryNthHit"] = logEveryNthHit, ["condition"] = condition },
+			new Dictionary<string, object?> { ["tracepoints"] = tracepoints },
 			cancellationToken);
 
 	public Task<LiveTracepointList> ListTracepointsAsync(CancellationToken cancellationToken)
 		=> SendAsync<LiveTracepointList>(ToolNames.LiveAppListTracepoints, cancellationToken);
 
-	public Task<LiveTracepointList> RemoveTracepointAsync(string id, CancellationToken cancellationToken)
-		=> SendAsync<LiveTracepointList>(
+	/// <summary>Removes tracepoints by id, each id's outcome its own entry, and returns the set left.</summary>
+	public Task<LiveTracepointRemoval> RemoveTracepointsAsync(IReadOnlyList<string> ids, CancellationToken cancellationToken)
+		=> SendAsync<LiveTracepointRemoval>(
 			ToolNames.LiveAppRemoveTracepoint,
-			new Dictionary<string, object?> { ["tracepointId"] = id },
+			new Dictionary<string, object?> { ["tracepointIds"] = ids },
 			cancellationToken);
 
-	public Task<LiveBreakpoint> SetBreakpointAsync(string location, int? autoContinueSeconds, string? condition, CancellationToken cancellationToken)
-		=> SendAsync<LiveBreakpoint>(
+	/// <summary>Sets stopping breakpoints, each request's outcome its own entry, as <see cref="AddTracepointsAsync"/> does.</summary>
+	public Task<LiveBreakpointBatch> SetBreakpointsAsync(IReadOnlyList<SetBreakpointRequest> breakpoints, CancellationToken cancellationToken)
+		=> SendAsync<LiveBreakpointBatch>(
 			ToolNames.LiveAppSetBreakpoint,
-			new Dictionary<string, object?> { ["location"] = location, ["autoContinueSeconds"] = autoContinueSeconds, ["condition"] = condition },
+			new Dictionary<string, object?> { ["breakpoints"] = breakpoints },
 			cancellationToken);
 
 	public Task<LiveBreakpointList> ListBreakpointsAsync(CancellationToken cancellationToken)
 		=> SendAsync<LiveBreakpointList>(ToolNames.LiveAppListBreakpoints, cancellationToken);
 
-	public Task<LiveBreakpointList> RemoveBreakpointAsync(string id, CancellationToken cancellationToken)
-		=> SendAsync<LiveBreakpointList>(
+	/// <summary>Removes stopping breakpoints by id, each id's outcome its own entry, and returns the set left.</summary>
+	public Task<LiveBreakpointRemoval> RemoveBreakpointsAsync(IReadOnlyList<string> ids, CancellationToken cancellationToken)
+		=> SendAsync<LiveBreakpointRemoval>(
 			ToolNames.LiveAppRemoveBreakpoint,
-			new Dictionary<string, object?> { ["breakpointId"] = id },
+			new Dictionary<string, object?> { ["breakpointIds"] = ids },
 			cancellationToken);
+
+	/// <summary>
+	/// Adds one tracepoint, for a caller that acts on one at a time -- a person in the inspector
+	/// choosing a method. A one-entry batch underneath, so there is one way a tracepoint is added; a
+	/// refusal is thrown rather than returned, since a caller asking for one has no other entry to
+	/// keep, and the answer carries the cursor of the call that added it.
+	/// </summary>
+	/// <exception cref="InvalidOperationException">The host refused it, or the session could not add one at all.</exception>
+	public async Task<LiveTracepoint> AddTracepointAsync(string location, string? logMessage, int? logEveryNthHit, string? condition, CancellationToken cancellationToken)
+	{
+		var request = new AddTracepointRequest { Location = location, LogMessage = logMessage, LogEveryNthHit = logEveryNthHit, Condition = condition };
+		var batch = await AddTracepointsAsync([request], cancellationToken);
+		var outcome = Single(batch.Results, ToolNames.LiveAppAddTracepoint);
+
+		return outcome.Tracepoint is { } added
+			? added with { Cursor = batch.Cursor }
+			: throw new InvalidOperationException(outcome.Status);
+	}
+
+	/// <summary>Sets one stopping breakpoint, as <see cref="AddTracepointAsync"/> adds one tracepoint.</summary>
+	/// <exception cref="InvalidOperationException">The host refused it, or the session could not set one at all.</exception>
+	public async Task<LiveBreakpoint> SetBreakpointAsync(string location, int? autoContinueSeconds, string? condition, CancellationToken cancellationToken)
+	{
+		var request = new SetBreakpointRequest { Location = location, AutoContinueSeconds = autoContinueSeconds, Condition = condition };
+		var batch = await SetBreakpointsAsync([request], cancellationToken);
+		var outcome = Single(batch.Results, ToolNames.LiveAppSetBreakpoint);
+
+		return outcome.Breakpoint is { } set
+			? set with { Cursor = batch.Cursor }
+			: throw new InvalidOperationException(outcome.Status);
+	}
+
+	/// <summary>
+	/// Removes one tracepoint and returns the set left. An id that is already gone is not an error,
+	/// for a caller removing what it is looking at in a list another caller may already have changed.
+	/// </summary>
+	public async Task<LiveTracepointList> RemoveTracepointAsync(string id, CancellationToken cancellationToken)
+	{
+		var removal = await RemoveTracepointsAsync([id], cancellationToken);
+
+		return new LiveTracepointList { Tracepoints = removal.Tracepoints, Cursor = removal.Cursor };
+	}
+
+	/// <summary>Removes one stopping breakpoint and returns the set left, as <see cref="RemoveTracepointAsync"/> does.</summary>
+	public async Task<LiveBreakpointList> RemoveBreakpointAsync(string id, CancellationToken cancellationToken)
+	{
+		var removal = await RemoveBreakpointsAsync([id], cancellationToken);
+
+		return new LiveBreakpointList { Breakpoints = removal.Breakpoints, Cursor = removal.Cursor };
+	}
+
+	/// <summary>The one entry a one-request batch answers with, or a refusal saying the host answered otherwise.</summary>
+	/// <exception cref="InvalidOperationException">The answer did not hold exactly one entry.</exception>
+	private static T Single<T>(IReadOnlyList<T> results, string tool) =>
+		results.Count == 1
+			? results[0]
+			: throw new InvalidOperationException($"{tool} answered one request with {results.Count} entries.");
 
 	/// <summary>
 	/// Resumes a held target and reports the whole outcome, not only whether anything was held.
 	/// <para>
-	/// The bool overloads below drop <see cref="LiveContinueResult.Detail"/>, which is the one thing a
-	/// person reading a stack needs to be told: their hold has just been released by somebody else's
-	/// resume. An agent asking to continue does not care, so both shapes exist.
+	/// The bool overloads below drop <see cref="LiveContinueResult.Detail"/> and the cursor. Detail is the
+	/// one thing a person reading a stack needs to be told -- their hold has just been released by somebody
+	/// else's resume -- and the cursor is what an agent waits past for what the resume caused, so every
+	/// tool answers from this shape; the bool overloads serve a caller that asks only whether anything was
+	/// held.
 	/// </para>
 	/// </summary>
 	public Task<LiveContinueResult> ResumeAsync(CancellationToken cancellationToken)
@@ -611,9 +713,14 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// </summary>
 	private static string? DescribeTarget(IReadOnlyDictionary<string, object?> arguments)
 	{
-		foreach (var name in (string[])["location", "element", "expression", "path", "breakpointId", "tracepointId", "mode"])
+		foreach (var name in (string[])["location", "element", "expression", "path", "mode"])
 		{
 			if (arguments.TryGetValue(name, out var value) && value?.ToString() is { Length: > 0 } named) return named;
+		}
+
+		foreach (var name in (string[])["tracepoints", "breakpoints", "tracepointIds", "breakpointIds"])
+		{
+			if (arguments.TryGetValue(name, out var value) && Several(value) is { } named) return named;
 		}
 
 		if (arguments.TryGetValue("filePath", out var file) && file?.ToString() is { Length: > 0 } path)
@@ -638,6 +745,29 @@ public sealed class LiveAppSession : IAsyncDisposable
 		}
 
 		return null;
+	}
+
+	/// <summary>
+	/// A list argument in a few words: its one item when there is one, which is how a call from the
+	/// inspector reads, and otherwise its first and how many more, so a batch of six is not a row
+	/// claiming to be about one method.
+	/// </summary>
+	private static string? Several(object? value)
+	{
+		IReadOnlyList<string> items = value switch
+		{
+			IEnumerable<AddTracepointRequest?> tracepoints => [.. tracepoints.Select(request => request?.Location).OfType<string>()],
+			IEnumerable<SetBreakpointRequest?> breakpoints => [.. breakpoints.Select(request => request?.Location).OfType<string>()],
+			IEnumerable<string?> ids => [.. ids.OfType<string>()],
+			_ => [],
+		};
+
+		return items.Count switch
+		{
+			0 => null,
+			1 => items[0],
+			_ => $"{items[0]} and {items.Count - 1} more",
+		};
 	}
 
 	private async Task<T> SendAsync<T>(
@@ -693,34 +823,47 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 	public async ValueTask DisposeAsync()
 	{
+		var hostGone = !IsAlive;
 		_alive = false;
 
-		try
+		if (hostGone)
 		{
-			// Detach while the host is still alive, so the target is left running. An ICorDebug
-			// debuggee whose debugger just dies is taken down with it, so this must precede closing
-			// the host rather than relying on the host's own shutdown winning the race.
-			var info = await SendAsync<LiveAppInfo>(ToolNames.LiveAppDetach, CancellationToken.None);
-
-			// A host that could not detach reports Faulted rather than Ended, and that has to survive
-			// disposal: a caller told the session closed and not told the debugger is still on their
-			// process has been given the same silence this whole change exists to remove.
-			if (info.State == LiveAppSessionState.Faulted)
+			// A poll already found the transport closed, so there is nobody to ask, and the debugger
+			// went with the host. The request could only fail, on the one call here that waits with no
+			// token -- and a warning about a detach failing is noise when the host's death is the news.
+			DetachFailure = "The live-app host had already stopped answering, so no detach could be asked for.";
+			_logger.LogDebug("The live-app host for {Target} was gone before its session closed.", Target.Description);
+		}
+		else
+		{
+			try
 			{
-				DetachFailure = info.Detail ?? "The host could not detach from the target.";
-				_logger.LogWarning(
-					"The live-app host for {Target} could not detach: {Detail}", Target.Description, DetachFailure);
+				// Detach while the host is still alive, so the target is left running. An ICorDebug
+				// debuggee whose debugger just dies is taken down with it, so this must precede closing
+				// the host rather than relying on the host's own shutdown winning the race.
+				var info = await SendAsync<LiveAppInfo>(ToolNames.LiveAppDetach, CancellationToken.None);
+
+				// A host that could not detach reports Faulted rather than Ended, and that has to survive
+				// disposal: a caller told the session closed and not told the debugger is still on their
+				// process has been given the same silence this whole change exists to remove.
+				if (info.State == LiveAppSessionState.Faulted)
+				{
+					DetachFailure = info.Detail ?? "The host could not detach from the target.";
+					_logger.LogWarning(
+						"The live-app host for {Target} could not detach: {Detail}", Target.Description, DetachFailure);
+				}
+			}
+			catch (Exception exception)
+			{
+				DetachFailure = exception.Message;
+				_logger.LogWarning(exception, "Detaching the live-app host for {Target} failed.", Target.Description);
 			}
 		}
-		catch (Exception exception)
-		{
-			DetachFailure = exception.Message;
-			_logger.LogWarning(exception, "Detaching the live-app host for {Target} failed.", Target.Description);
-		}
 
 		try
 		{
-			// Disposing the client closes the host's stdin, which tells it to exit.
+			// Disposing the client closes the host's stdin, which tells it to exit -- and releases the
+			// pipes of one that has already gone.
 			await _client.DisposeAsync();
 		}
 		catch (Exception exception)

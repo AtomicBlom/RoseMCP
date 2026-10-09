@@ -19,23 +19,19 @@ public sealed record MemberEditResult : WorkspaceMutationResult
 	/// </summary>
 	public required string Symbol { get; init; }
 
-	/// <summary>The file the code was written into.</summary>
-	public required string FilePath { get; init; }
-
 	/// <summary>
-	/// One-based line where the written declaration now starts, so a following call can point at it
-	/// without reading the file back.
+	/// One-based line where the written declaration now starts, in the first of
+	/// <see cref="WorkspaceMutationResult.ChangedFiles"/>, so a following call can point at it without
+	/// reading the file back. Zero where the tool does not place a declaration it can name the line of.
 	/// </summary>
 	public required int Line { get; init; }
 
-	/// <summary>Names of the members written, in the order they appear.</summary>
-	public required IReadOnlyList<string> Members { get; init; }
-
-	/// <summary>False when this was a preview; nothing was written.</summary>
-	public required bool Applied { get; init; }
-
-	/// <summary>Unified diff of the change, so the caller can see the edit rather than trust it.</summary>
-	public required string Diff { get; init; }
+	/// <summary>
+	/// Names of the members written, in the order they appear, where they are more than
+	/// <see cref="Symbol"/> already says: what an addition put into a type, or the declarations one
+	/// replacement became. Absent when it would only repeat the symbol's own name.
+	/// </summary>
+	public IReadOnlyList<string>? Members { get; init; }
 
 	/// <summary>
 	/// Whether the projects holding this file were compiled after the edit.
@@ -58,10 +54,11 @@ public sealed record MemberEditResult : WorkspaceMutationResult
 	public int ResolvedDiagnosticCount { get; init; }
 
 	/// <summary>
-	/// Every error the checked projects report now, this edit's and everyone else's. A project that
-	/// was already failing does not become this call's fault, and cannot be reported as though it did.
+	/// Errors the checked projects report that were there before this edit and still are. A project
+	/// that was already failing does not become this call's fault, and cannot be reported as though it
+	/// did. Counts analyzer errors where the edit wrote, which rose_diagnostics leaves out by default.
 	/// </summary>
-	public int TotalErrorCount { get; init; }
+	public int PreexistingErrorCount { get; init; }
 
 	/// <summary>
 	/// The projects that were compiled. Named so the caller knows the scope of the answer rather

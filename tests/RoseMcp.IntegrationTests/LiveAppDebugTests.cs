@@ -418,6 +418,78 @@ public sealed class LiveAppDebugTests
 	}
 
 	/// <summary>
+	/// A step and a continue each answer with a cursor from before what they caused, so waiting from
+	/// it finds the effect. The answer leaves the host after the target is running again, and the
+	/// StepComplete a step exists for -- or the notice a continue records before it returns -- can be in
+	/// the stream by then; a cursor read on the way out would sit past it, and a caller waiting from it
+	/// would time out on a step that landed.
+	/// <para>
+	/// The continue half is the deterministic one: its notice is recorded before the answer is built, so
+	/// a cursor read any later than the resume is at or past it every time.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_step_and_a_continue_answer_with_a_cursor_from_before_what_they_caused()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "probe target",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
+
+			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Beat", autoContinueSeconds: null, condition: null, cancellationToken);
+			breakpoint.Bound.ShouldBeTrue($"breakpoint should bind; detail: {breakpoint.Detail}");
+
+			var stop = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken,
+				startCursor: breakpoint.Cursor);
+			stop.ShouldNotBeNull("the hit should be found waiting from the cursor the breakpoint answered with");
+
+			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
+
+			var stepped = await session.StepDetailedAsync("over", cancellationToken);
+			stepped.Continued.ShouldBeTrue();
+			stepped.Cursor.ShouldBeGreaterThanOrEqualTo(stop!.Sequence);
+
+			var stepComplete = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.StepComplete,
+				cancellationToken,
+				startCursor: stepped.Cursor);
+			stepComplete.ShouldNotBeNull($"no StepComplete after the step's cursor {stepped.Cursor}");
+
+			var resumed = await session.ResumeAsync(cancellationToken);
+			resumed.Continued.ShouldBeTrue();
+			resumed.Cursor.ShouldBeGreaterThanOrEqualTo(stepComplete!.Sequence);
+
+			var notice = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.SessionNotice && entry.Message.StartsWith("Continued from", StringComparison.Ordinal),
+				cancellationToken,
+				startCursor: resumed.Cursor);
+			notice.ShouldNotBeNull($"the continue's own notice should be past its cursor {resumed.Cursor}");
+
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
 	/// A target that dies while the debugger holds it stops being stopped. The stop went with the
 	/// process, and a session still reporting one sends a reader to resume something that is not
 	/// there.
@@ -674,6 +746,208 @@ public sealed class LiveAppDebugTests
 
 			var tracepoints = await session.ListTracepointsAsync(cancellationToken);
 			tracepoints.Tracepoints.ShouldBeEmpty();
+
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// One call instruments a path, and an entry that cannot be added is refused in its own entry
+	/// while the rest are added. A batch that failed whole for one bad location would send the caller
+	/// back to retry the good ones piece by piece, which is the turn count the batch exists to save.
+	/// An entry waiting for a module that has not loaded is added, not refused: it binds when the
+	/// module arrives, and its status says it has not yet.
+	/// </summary>
+	[Test]
+	public async Task A_batch_of_tracepoints_adds_what_parses_and_refuses_the_rest_one_by_one()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+
+			var batch = await session.AddTracepointsAsync(
+				[
+					new AddTracepointRequest { Location = "DebugProbeTarget.Program.Beat", LogMessage = "beat" },
+					new AddTracepointRequest { Location = "not a location" },
+					new AddTracepointRequest { Location = "DebugProbeTarget.Program.Beat", LogMessage = "count={iteration" },
+					new AddTracepointRequest { Location = "Elsewhere.Pulse.Tick", LogEveryNthHit = 0 },
+					new AddTracepointRequest { Location = "Elsewhere.Pulse.Tick" },
+					new AddTracepointRequest { Location = "Elsewhere.Pulse.Tick", LogMessage = "again" },
+					new AddTracepointRequest { Location = "NotYetLoaded!Somewhere.Later.Run" },
+					new AddTracepointRequest { Location = "DebugProbeTarget.Program.NoSuchMethod" },
+				],
+				cancellationToken);
+
+			batch.Total.ShouldBe(8);
+			batch.Added.ShouldBe(5);
+			batch.Cursor.ShouldBeGreaterThan(0, "a batch is an action, so it hands back the cursor");
+			batch.Results.Select(outcome => outcome.Location).ShouldBe(
+			[
+				"DebugProbeTarget.Program.Beat",
+				"not a location",
+				"DebugProbeTarget.Program.Beat",
+				"Elsewhere.Pulse.Tick",
+				"Elsewhere.Pulse.Tick",
+				"Elsewhere.Pulse.Tick",
+				"NotYetLoaded!Somewhere.Later.Run",
+				"DebugProbeTarget.Program.NoSuchMethod",
+			]);
+
+			batch.Results[0].Status.ShouldBe("added");
+			batch.Results[0].Tracepoint.ShouldNotBeNull().Bound.ShouldBeTrue();
+
+			// Each refusal says what was wrong with that entry, in the caller's terms rather than the
+			// parser's: the framework's "(Parameter 'spec')" names an argument nobody sent.
+			batch.Results[1].Status.ShouldStartWith("refused: ", Case.Sensitive);
+			batch.Results[1].Status.ShouldNotContain("(Parameter", Case.Sensitive);
+			batch.Results[1].Tracepoint.ShouldBeNull();
+			batch.Results[2].Status.ShouldContain("never closed", Case.Sensitive);
+			batch.Results[2].Tracepoint.ShouldBeNull();
+			batch.Results[3].Status.ShouldContain("logEveryNthHit", Case.Sensitive);
+
+			batch.Results[4].Status.ShouldBe("added");
+			batch.Results[5].Status.ShouldBe("added");
+			batch.Notes.ShouldHaveSingleItem().ShouldContain("Elsewhere.Pulse.Tick was asked for 2 times", Case.Sensitive);
+
+			// Waiting and never are told apart, each with its reason: one module has not loaded and will
+			// bind when it does, and the other is loaded and has no such method, so waiting cures nothing.
+			batch.Results[6].Status.ShouldStartWith("added, not bound yet: ", Case.Sensitive);
+			batch.Results[6].Status.ShouldContain("NotYetLoaded", Case.Sensitive);
+			var waiting = batch.Results[6].Tracepoint.ShouldNotBeNull();
+			waiting.Bound.ShouldBeFalse();
+			waiting.Detail.ShouldNotBeNull().ShouldContain("NotYetLoaded", Case.Sensitive);
+
+			batch.Results[7].Status.ShouldBe("added, will not bind: no method DebugProbeTarget.Program.NoSuchMethod in DebugProbeTarget.dll");
+			batch.Results[7].Tracepoint.ShouldNotBeNull().Bound.ShouldBeFalse();
+
+			var held = await session.ListTracepointsAsync(cancellationToken);
+			held.Tracepoints.Count.ShouldBe(5);
+
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("the target runs on through a batch of tracepoints");
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A removal answers each id in its own entry and never fails for one: an id already gone is not
+	/// found, and an id of the other kind is refused rather than removed. The second is the one with
+	/// consequences -- both removals share one table, so a breakpoint's id handed to the tracepoint
+	/// removal would take the breakpoint away and answer with a tracepoint list that cannot show it.
+	/// The breakpoints are set against a module that never loads, so nothing stops while this runs.
+	/// </summary>
+	[Test]
+	public async Task A_batch_removal_answers_each_id_and_refuses_one_of_the_other_kind()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+
+			var tracepoints = await session.AddTracepointsAsync(
+				[
+					new AddTracepointRequest { Location = "DebugProbeTarget.Program.Beat" },
+					new AddTracepointRequest { Location = "Elsewhere.Pulse.Tick" },
+				],
+				cancellationToken);
+			tracepoints.Added.ShouldBe(2);
+
+			var breakpoints = await session.SetBreakpointsAsync(
+				[
+					new SetBreakpointRequest { Location = "NotYetLoaded!Somewhere.Later.Run" },
+					new SetBreakpointRequest { Location = "NotYetLoaded!Somewhere.Later.Stop", AutoContinueSeconds = 0 },
+					new SetBreakpointRequest { Location = "NotYetLoaded!Somewhere.Later.Walk", Condition = "this is not a condition" },
+					new SetBreakpointRequest { Location = "DebugProbeTarget.Program.NoSuchMethod" },
+				],
+				cancellationToken);
+			breakpoints.Total.ShouldBe(4);
+			breakpoints.Set.ShouldBe(2);
+			breakpoints.Results[0].Status.ShouldStartWith("set, not bound yet: ", Case.Sensitive);
+			breakpoints.Results[0].Status.ShouldContain("NotYetLoaded", Case.Sensitive);
+			breakpoints.Results[1].Status.ShouldContain("autoContinueSeconds", Case.Sensitive);
+			breakpoints.Results[2].Status.ShouldStartWith("refused: ", Case.Sensitive);
+			breakpoints.Results[3].Status.ShouldBe("set, will not bind: no method DebugProbeTarget.Program.NoSuchMethod in DebugProbeTarget.dll");
+
+			var first = tracepoints.Results[0].Tracepoint.ShouldNotBeNull().Id;
+			var second = tracepoints.Results[1].Tracepoint.ShouldNotBeNull().Id;
+			var breakpoint = breakpoints.Results[0].Breakpoint.ShouldNotBeNull().Id;
+			var never = breakpoints.Results[3].Breakpoint.ShouldNotBeNull().Id;
+
+			var removed = await session.RemoveTracepointsAsync([first, "tp-999", breakpoint, first], cancellationToken);
+
+			removed.Total.ShouldBe(4);
+			removed.Removed.ShouldBe(1);
+			removed.Results.Select(outcome => outcome.Status).ShouldBe(
+			[
+				"removed",
+				"not found",
+				$"refused: {breakpoint} is a stopping breakpoint, which {ToolNames.DebugRemoveBreakpoint} removes",
+				"not found",
+			]);
+			removed.Tracepoints.ShouldHaveSingleItem().Id.ShouldBe(second);
+			removed.Cursor.ShouldBeGreaterThan(0);
+
+			var stillSet = await session.ListBreakpointsAsync(cancellationToken);
+			stillSet.Breakpoints.Select(entry => entry.Id).ShouldBe([breakpoint, never]);
+
+			var cleared = await session.RemoveBreakpointsAsync([second, breakpoint, never], cancellationToken);
+			cleared.Results.Select(outcome => outcome.Status).ShouldBe(
+			[
+				$"refused: {second} is a tracepoint, which {ToolNames.DebugRemoveTracepoint} removes",
+				"removed",
+				"removed",
+			]);
+			cleared.Breakpoints.ShouldBeEmpty();
+
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A call that names nothing is refused whole. An empty list is a mistake in how the call was put
+	/// together, and an answer with no entries would read as a call that worked.
+	/// </summary>
+	[Test]
+	public async Task An_empty_batch_is_refused()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+
+			// Each names the argument that was empty, since that is what the caller has to change.
+			var adding = await Should.ThrowAsync<InvalidOperationException>(() => session.AddTracepointsAsync([], cancellationToken));
+			adding.Message.ShouldContain("tracepoints is empty", Case.Sensitive);
+
+			var setting = await Should.ThrowAsync<InvalidOperationException>(() => session.SetBreakpointsAsync([], cancellationToken));
+			setting.Message.ShouldContain("breakpoints is empty", Case.Sensitive);
+
+			var removingTracepoints = await Should.ThrowAsync<InvalidOperationException>(() => session.RemoveTracepointsAsync([], cancellationToken));
+			removingTracepoints.Message.ShouldContain("tracepointIds is empty", Case.Sensitive);
+
+			var removing = await Should.ThrowAsync<InvalidOperationException>(() => session.RemoveBreakpointsAsync([], cancellationToken));
+			removing.Message.ShouldContain("breakpointIds is empty", Case.Sensitive);
 
 			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ModelContextProtocol.Client;
 
 using RoseMcp.Contracts;
 
@@ -108,6 +109,85 @@ public sealed class RelayTests
 			// from the rest was that only the first went on to say anything after it.
 			text.ShouldContain("is not answering", Case.Sensitive);
 		}
+	}
+
+	/// <summary>
+	/// A worker's answer, through the tray's broker and the relay in front of it, reads in the text
+	/// block a client hands the model with its plus sign as itself. The broker writes that text from
+	/// the worker's structured content, and the relay passes the tray's result on; either one using a
+	/// default encoder would spell the plus as an escape inside the string, which no client decodes.
+	/// The worker's own text block never reaches here, so its registration is held by a test of its own.
+	/// </summary>
+	[Test]
+	public async Task A_relayed_worker_answer_spells_its_source_as_written()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		var directory = Path.GetDirectoryName(fixture.SolutionPath)!;
+		await using var relay = await RelayFixture.StartAsync(directory, cancellationToken);
+
+		using var answer = await relay.Session.CallToolAsync(
+			ToolNames.SymbolInfo,
+			"""{"symbols":["Core.Calculator.Add"],"includeSource":true}""",
+			cancellationToken);
+
+		Structured(answer);
+		var text = ErrorText(answer);
+
+		text.ShouldContain("left + right", Case.Sensitive);
+		text.ShouldNotContain("\\" + "u002B", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// The http host names a write's paths relative only to a directory a call said it stands in. An
+	/// agent talking to the broker directly says nothing, and the broker's own directory is nobody's,
+	/// so the path comes back absolute -- even with the broker standing over the very file, where a
+	/// path relative to it would look right and resolve, in the agent's own tools, against wherever the
+	/// agent happens to be. The relayed session says where it stands, so its answer is relative to that.
+	/// <para>
+	/// Through the real http host, because what is under test is how that host configures its broker:
+	/// a host that claimed its own directory as every caller's passes any test that builds the options
+	/// itself.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task The_http_host_names_paths_relative_only_to_a_directory_the_call_gave()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		await using var relay = await RelayFixture.StartAsync(fixture.Path(), cancellationToken, brokerDirectory: fixture.Path());
+
+		await using var agent = await McpClient.CreateAsync(
+			new HttpClientTransport(new HttpClientTransportOptions { Endpoint = new Uri($"http://127.0.0.1:{relay.Port}/") }),
+			new McpClientOptions { DiscoverProbeTimeout = Timeout.InfiniteTimeSpan },
+			cancellationToken: cancellationToken);
+
+		var direct = await agent.CallToolAsync(
+			ToolNames.ReplaceDocComment,
+			new Dictionary<string, object?>
+			{
+				["workspace"] = fixture.SolutionPath,
+				["symbol"] = "Core.Calculator.Multiply",
+				["comment"] = "Multiplies, over http.",
+			},
+			cancellationToken: cancellationToken);
+
+		var written = JsonSerializer.SerializeToElement(direct.StructuredContent);
+		written.ValueKind.ShouldBe(JsonValueKind.Object, $"the direct call failed: {JsonSerializer.Serialize(direct.Content)}");
+		written.GetProperty("changedFiles")[0].GetProperty("filePath").GetString()
+			.ShouldBe(fixture.Path("Simple", "Core", "Calculator.cs"), StringCompareShould.IgnoreCase);
+
+		using var relayed = await relay.Session.CallToolAsync(
+			ToolNames.ReplaceDocComment,
+			$$"""
+			{"workspace":{{JsonSerializer.Serialize(fixture.SolutionPath)}},"symbol":"Core.Calculator.Multiply","comment":"Multiplies, relayed."}
+			""",
+			cancellationToken);
+
+		Structured(relayed).GetProperty("changedFiles")[0].GetProperty("filePath").GetString()
+			.ShouldBe(Path.Combine("Simple", "Core", "Calculator.cs"));
 	}
 
 	/// <summary>The structured half of a tool reply, or the error text when the call failed.</summary>

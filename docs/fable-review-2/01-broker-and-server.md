@@ -42,13 +42,9 @@ session's directory now, and the hop on from there carries absolute paths only.
 - **Why it matters:** In the tray -- the shared, multi-session host the relay exists for -- one agent opening a large solution stalls every other agent on the machine for the length of a handshake. It reads as Rose being slow on a solution that is already warm, which is the reflex-to-grep failure CLAUDE.md is most worried about.
 - **Suggested change:** Per-key coordination. Replace `ConcurrentDictionary<string, WorkspaceWorker>` with `ConcurrentDictionary<string, Lazy<Task<WorkspaceWorker>>>` (or `AsyncLazy`), so the alive fast path is a lock-free `TryGetValue` and a start blocks only callers of that same solution. Keep a gate per solution for the check-dispose-replace sequence. If serialising *starts* across solutions is deliberate (to stop design-time builds competing), make that a separately named `SemaphoreSlim _starting` with that reason on it, and keep it off the fast path. `BrokerTests.Reuses_one_warm_worker_across_calls` should gain a sibling: open A, begin opening B with a slow handshake, assert a call on A completes before B's handshake does.
 
-### BRK-04 An ended live-app session is never evicted and is polled forever
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Broker/LiveAppSessionManager.cs:235-256`, `src/RoseMcp.Broker/LiveAppSession.cs:121-138`
-- **What:** `RefreshInfoAsync` sets `_alive = false` on a transport failure and `Describe` reports `Ended`, but nothing removes the session from `_sessions` or disposes its `McpClient`. `RefreshLoopAsync` iterates `Sessions` every second and calls `RefreshInfoAsync` on the dead client, which fails the same way, indefinitely. Only `CloseAsync`/`CloseForOperatorAsync` (a caller's explicit act) or manager disposal removes anything. Issue #157 makes the same observation about workers ("a worker lives until its broker does"); for sessions it is worse because a dead one is also actively polled.
-- **Why it matters:** A tray that has been up for a day carries every session any agent ever started, each costing a failed round trip per second and a row in `GET /admin/sessions` and the inspector. The `Ended` state is honest, but "ended and still here" is a state nothing acts on.
-- **Suggested change:** Make eviction the manager's job. On the `_alive` transition, the manager removes the session after one more `Describe` cycle (so a window sees `Ended` once), disposes the client, and records the eviction in `Activities`. For workers, the same shape answers #157: an idle timer per worker, eviction said in the activity log, and `rose_workspace_list` so a session can see what is warm. Test: attach to a child process, kill the child's host, assert the session leaves `Describe()` within a few ticks and the poll stops.
+### ~~BRK-04 An ended live-app session is never evicted and is polled forever~~
+**#379.** A session whose debug host had died stayed listed, and was polled every second, for the life
+of the broker. It is shown ended, with the reason, for a short grace period and then dropped.
 
 ### ~~BRK-05 `WorkerLauncher` still has the stale-binary trap the other two launchers fixed~~
 **#295.** The worker was resolved by recency alone, so a Release publish left in bin answered for a
@@ -169,24 +165,10 @@ workspace. The compiler enforces it now, and the revision is enumerated over the
 worktree Rose had opened could not be removed while the broker lived. Workers stand in an empty folder of
 Rose's own, and every path one is sent is absolute.
 
-### BRK-21 Three live-app tools answer with a bare sentence, and the guard for that is blind to them
-- **Found while closing card 0c, PR #295.** Not in the original review.
-- **Severity:** Low
-- **Effort:** S
-- **Where:** `src/RoseMcp.Broker/Tools/LiveAppDebugTools.cs:222` (`DetachAsync`), `:410`
-  (`ContinueAsync`), `:432` (`StepAsync`); the exemption is `ToolResultShapeTests.ProcessScoped`
-- **What:** All three return `Task<string>` and answer with a sentence -- "That session was not
-  open.", "Continued; the target is running again.", "Nothing was stopped to step." That is the same
-  shape BRK-12 found on `rose_workspace_close` and card 0c fixed there. A caller holding two sessions
-  cannot tell which one answered, and a sentence carries no field an agent can branch on.
-- **Why it matters:** The guard card 0c shipped cannot see these. It exempts the live-app surface by
-  prefix, because a debugged process is not workspace-scoped and has no revision -- which is right
-  for attribution and silently also excuses answering with prose. So the one defect the guard was
-  built to catch survives, on the surface the guard does not cover, and nothing will now notice.
-- **Suggested change:** A result record for each, carrying the session and the outcome as fields.
-  Then narrow the exemption: it should excuse a live-app result from *workspace* attribution, not
-  from being a result at all -- assert that every tool answers with a record, and let the prefix
-  decide only which attribution applies.
+### ~~BRK-21 Three live-app tools answer with a bare sentence, and the guard for that is blind to them~~
+**#380.** Three debug tools answered with a sentence naming no session, and the guard against that
+exempted the whole live-app surface. Every tool answers with a record, and the live-app exemption
+covers workspace attribution only.
 
 ## Pit-of-success inversions
 
@@ -209,7 +191,6 @@ Rose's own, and every path one is sent is absolute.
 - Is holding `_gate` across the worker handshake deliberate -- to stop several design-time builds competing on a cold machine -- or incidental? The `WorkerHandshakeTimeout` comment describes several starting at once as a real case, so serialising starts may be wanted; the fast path paying for it almost certainly is not (BRK-03).
 - The tray's `ShutdownAsync` calls `StopAsync` and never `DisposeAsync`. Is the intent that the LiveApp host detaches on its own stdin-close, making the broker's detach-first ordering a belt to the host's braces? If so, the decision record should say which one is load-bearing (BRK-07).
 - `WorkerExitReason.SolutionUnloaded` -- was it ever wired, or was the tray's display string written ahead of a worker exit code that never arrived (BRK-13)?
-- For #157, what should trigger eviction: idle time, memory pressure, or "no MCP session has touched this workspace since it disconnected"? The broker has no notion of which sessions use a workspace; adding one is the real cost of that issue.
 - Is `OrderedProgress` still believed to help after the invariant was written, or is it a candidate for deletion (BRK-14)?
 - Is there a Roslyn-half parity test anywhere I did not read? `ToolParityTests` covers `LiveAppPairs` only, and the `ToolNames` comment says the Roslyn half "needs no map" -- but I found no test that uses the absence of a map.
 - The `Source: "ModelContextProtocol.Core"` match: which `InvalidOperationException` was it written for? If it is the SDK's "session disposed" case there is probably a typed exception or a state property to check instead (BRK-06).

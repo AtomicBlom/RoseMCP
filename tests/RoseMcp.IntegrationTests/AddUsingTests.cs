@@ -125,7 +125,7 @@ public sealed class AddUsingTests
 		result.Verified.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
 		result.ResolvedDiagnosticCount.ShouldBeGreaterThan(0, "the import is what made the file compile");
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 	}
 
 	/// <summary>
@@ -148,7 +148,7 @@ public sealed class AddUsingTests
 
 		result.Applied.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 		result.Notices.ShouldContain(notice => notice.Contains("Imported System.Text", StringComparison.Ordinal));
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
@@ -347,7 +347,7 @@ public sealed class AddUsingTests
 
 		result.Applied.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 		result.Notices.ShouldContain(notice => notice.Contains("Imported static System.Math", StringComparison.Ordinal));
 
 		var text = await ReadAsync(fixture, "Greeter.cs");

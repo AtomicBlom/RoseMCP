@@ -94,6 +94,6 @@ public sealed class XamlReferenceTests
 
 		mention.FilePath.ShouldEndWith("Widget.xaml", Case.Insensitive);
 		mention.Text.ShouldContain("x:Class", Case.Sensitive);
-		string.Join(" ", result.Notices).ShouldContain("markup mention", Case.Sensitive);
+		string.Join(" ", result.Notices).ShouldContain("xamlMentions were left alone", Case.Sensitive);
 	}
 }

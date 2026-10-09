@@ -85,11 +85,13 @@ public sealed record MemberEditRequest
 	/// <summary>
 	/// Put the new member after this one, by name. Adding only. Placement is worth controlling
 	/// because a member's neighbours are how a reader finds it, and appending to the end of a
-	/// several-hundred-line type puts a private helper below the public surface it serves.
+	/// several-hundred-line type puts a private helper below the public surface it serves. A name
+	/// alone is the first member carrying it; a parameter list, <c>Bind(string, bool)</c>, picks one
+	/// overload, its types written as declared or fully qualified.
 	/// </summary>
 	public string? After { get; init; }
 
-	/// <summary>Put the new member before this one, by name. Adding only.</summary>
+	/// <summary>Put the new member before this one, by name, read the way <see cref="After"/> is. Adding only.</summary>
 	public string? Before { get; init; }
 
 	/// <summary>False returns the diff without touching disk.</summary>

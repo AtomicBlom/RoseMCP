@@ -79,6 +79,19 @@ public sealed class SymbolAddressTests
 		SymbolAddress.Parse(requested).Matches(Symbol("Shop.Till.Detach")).ShouldBe(matches);
 
 	/// <summary>
+	/// A parameter type is named by the language's keyword or by the framework's type, qualified or not,
+	/// since a signature read out of one tool may spell it either way. The framework's qualified name is
+	/// the one a caller copying from documentation or a stack trace writes.
+	/// </summary>
+	[Test]
+	[Arguments("Shop.Till.Ring(string, int)")]
+	[Arguments("Shop.Till.Ring(String, Int32)")]
+	[Arguments("Shop.Till.Ring(System.String, System.Int32)")]
+	[Arguments("Shop.Till.Ring(global::System.String, int)")]
+	public void Matches_a_parameter_type_by_any_of_its_names(string requested) =>
+		SymbolAddress.Parse(requested).Matches(Symbol("Shop.Till.Ring")).ShouldBeTrue();
+
+	/// <summary>
 	/// A parameter has no address, and says so rather than reporting a bare identifier that would
 	/// invite a call that cannot work: it is declared inside a member rather than as one, so no
 	/// declaration search could find it.

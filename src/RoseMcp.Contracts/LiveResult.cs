@@ -20,13 +20,15 @@ namespace RoseMcp.Contracts;
 public abstract record LiveResult
 {
 	/// <summary>
-	/// The newest event sequence the session had recorded when this answer was produced. Pass it as
-	/// <c>after</c> to see only what happened next.
+	/// The newest event sequence the session had recorded when this answer was produced, or, for an action
+	/// whose effect the target produces on its own time -- a resume, a step, a breakpoint that binds at
+	/// once -- when the action began, so the effect is never at or before it. Pass it as <c>after</c> to see
+	/// only what happened next.
 	/// <para>
 	/// The same numbering as <see cref="LiveDebugEventPage.NextCursor"/> and
 	/// <see cref="LiveStop.EventSequence"/>, which count the same events. It is not the sequence of
 	/// any particular event: a stop says which event announced it, and this says what the stream had
-	/// seen by the time the answer left.
+	/// seen by the time the answer left, or the action began.
 	/// </para>
 	/// </summary>
 	public long Cursor { get; init; }

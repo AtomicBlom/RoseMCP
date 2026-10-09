@@ -197,7 +197,8 @@ public sealed class LiveAppDebugTools(
 			+ "or ExceptionFirstChance alone is the difference between a readable answer and one that "
 			+ "has to be written to a file. Use waitSeconds with kinds to wait for one thing, such as "
 			+ "BreakpointHit, rather than calling this in a loop. Pass 'sequence' to fetch one event "
-			+ "whole when a page came back truncated.")]
+			+ "whole when a page came back truncated. A page cut at its limit counts what lies past it by "
+			+ "kind and exceptionType, each a value those filters take.")]
 	public async Task<LiveDebugEventPage> EventsAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.AfterSequenceArgument)]
@@ -210,10 +211,12 @@ public sealed class LiveAppDebugTools(
 		int waitSeconds = 0,
 		[Description(ToolDescriptions.EventSequenceArgument)]
 		long? sequence = null,
+		[Description(ToolDescriptions.EventExceptionTypeArgument)]
+		string? exceptionType = null,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.ReadEventsAsync(after, kinds, limit, waitSeconds, sequence, cancellationToken);
+		return await session.ReadEventsAsync(after, kinds, limit, waitSeconds, sequence, cancellationToken, exceptionType);
 	}
 
 	[McpServerTool(
@@ -222,23 +225,36 @@ public sealed class LiveAppDebugTools(
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = true,
-		OpenWorld = false)]
+		OpenWorld = false,
+		UseStructuredContent = true)]
 	[Description(
 		"Detach the debugger and end the session, leaving the target process running exactly as before. "
 			+ "Use this to stop watching a process without killing it; a debugger that is simply abandoned "
 			+ "would otherwise risk taking the target down with it, which detaching avoids. It fails rather "
 			+ "than reporting success if the debugger could not be detached, since that is the one outcome "
 			+ "where the target is at risk.")]
-	public async Task<string> DetachAsync(
+	public async Task<LiveSessionDetached> DetachAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
 	{
 		// Held before the close, because closing forgets it, and its answer to "did the detach
-		// actually happen" is the only thing that makes the sentence below true rather than habitual.
+		// actually happen" is the only thing that makes a result saying it did true rather than habitual.
 		var session = sessions.Find(sessionId);
 
 		var closed = await sessions.CloseAsync(sessionId, cancellationToken);
-		if (!closed) return "That session was not open.";
+		if (!closed)
+		{
+			// A session whose host died was dropped, and is said to be, so a caller holding its id does not
+			// read the answer as a wrong id. Only the caller that started it is told.
+			var dropped = sessions.FindDropped(sessionId);
+
+			return new LiveSessionDetached
+			{
+				SessionId = sessionId,
+				Detached = false,
+				Detail = dropped?.Explain(sessions.UtcNow, StartAgain),
+			};
+		}
 
 		if (session?.DetachFailure is { Length: > 0 } failure)
 		{
@@ -250,7 +266,7 @@ public sealed class LiveAppDebugTools(
 					+ "check the process before relying on it.");
 		}
 
-		return "Detached; the target keeps running.";
+		return new LiveSessionDetached { SessionId = sessionId, Detached = true };
 	}
 
 	[McpServerTool(
@@ -268,33 +284,28 @@ public sealed class LiveAppDebugTools(
 
 	[McpServerTool(
 		Name = ToolNames.DebugAddTracepoint,
-		Title = "Add a tracepoint",
+		Title = "Add tracepoints",
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = false,
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Add a tracepoint at a method by name: a breakpoint that logs and immediately continues, so it "
-			+ "never freezes the target the way a stopping breakpoint would -- the right default for a "
-			+ "turn-based agent. Each hit appears in rose_debug_events, carrying the values its message "
-			+ "interpolated as data as well as in the line. Prefer this over adding logging "
-			+ "statements and rebuilding, which needs a source edit and a restart to see anything. It binds "
-			+ "when the method's module is loaded, so an as-yet-unloaded module reads back as not bound.")]
-	public async Task<LiveTracepoint> AddTracepointAsync(
+		"Add tracepoints at methods by name: breakpoints that log and immediately continue, so they never "
+			+ "freeze the target the way a stopping breakpoint would -- the right default for a turn-based "
+			+ "agent. Each hit appears in rose_debug_events, carrying the values its message interpolated as "
+			+ "data as well as in the line. Prefer this over adding logging statements and rebuilding, which "
+			+ "needs a source edit and a restart to see anything. Each entry gets its own status: one whose "
+			+ "module has not loaded binds when it does, and one whose name did not resolve says why and "
+			+ "will not bind.")]
+	public async Task<LiveTracepointBatch> AddTracepointAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
-		[Description(ToolDescriptions.TracepointLocationArgument)]
-		string location,
-		[Description(ToolDescriptions.LogMessageArgument)]
-		string? logMessage = null,
-		[Description(ToolDescriptions.LogEveryNthHitArgument)]
-		int? logEveryNthHit = null,
-		[Description(ToolDescriptions.TracepointConditionArgument)]
-		string? condition = null,
+		[Description(ToolDescriptions.TracepointsArgument)]
+		AddTracepointRequest[] tracepoints,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.AddTracepointAsync(location, logMessage, logEveryNthHit, condition, cancellationToken);
+		return await session.AddTracepointsAsync(tracepoints, cancellationToken);
 	}
 
 	[McpServerTool(
@@ -306,9 +317,7 @@ public sealed class LiveAppDebugTools(
 		UseStructuredContent = true)]
 	[Description(
 		"List a session's tracepoints, each with its id, location, hit count, and whether it is bound "
-			+ "yet. Use it to confirm a tracepoint bound to a real method, since one whose module has not "
-			+ "loaded, or whose method name did not resolve, stays unbound and reports why rather than "
-			+ "failing loudly.")]
+			+ "yet, and why not: a module still to load, or a name that did not resolve.")]
 	public async Task<LiveTracepointList> ListTracepointsAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
@@ -319,51 +328,46 @@ public sealed class LiveAppDebugTools(
 
 	[McpServerTool(
 		Name = ToolNames.DebugRemoveTracepoint,
-		Title = "Remove a tracepoint",
+		Title = "Remove tracepoints",
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Remove a tracepoint by id and return the remaining set. Use it to stop a tracepoint once you "
-			+ "have seen what you needed, rather than leaving a hot-path log running for the life of the "
-			+ "session; removing an id that is already gone is harmless and simply returns the current set.")]
-	public async Task<LiveTracepointList> RemoveTracepointAsync(
+		"Remove tracepoints by id and return the remaining set. Use it to stop the tracepoints once you "
+			+ "have seen what you needed, rather than leaving hot-path logs running all session.")]
+	public async Task<LiveTracepointRemoval> RemoveTracepointAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
-		[Description(ToolDescriptions.TracepointIdArgument)] string tracepointId,
+		[Description(ToolDescriptions.TracepointIdsArgument)] string[] tracepointIds,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.RemoveTracepointAsync(tracepointId, cancellationToken);
+		return await session.RemoveTracepointsAsync(tracepointIds, cancellationToken);
 	}
 
 	[McpServerTool(
 		Name = ToolNames.DebugSetBreakpoint,
-		Title = "Set a stopping breakpoint",
+		Title = "Set stopping breakpoints",
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = false,
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Set a stopping breakpoint at a method by name: on hit it pauses the target and records the "
-			+ "stop with its call stack in rose_debug_events, so you can see how execution got there. The "
-			+ "target stays frozen until rose_debug_continue, or until an auto-continue safety timeout "
-			+ "(default 30s) fires so an unattended stop cannot wedge the app -- so read the events and "
-			+ "continue promptly. For non-invasive logging that never pauses, prefer rose_debug_add_tracepoint.")]
-	public async Task<LiveBreakpoint> SetBreakpointAsync(
+		"Set stopping breakpoints at methods by name: on hit one pauses the target and records the stop "
+			+ "with its call stack in rose_debug_events, so you can see how execution got there. The target "
+			+ "stays frozen until rose_debug_continue, or until an auto-continue safety timeout (default 30s) "
+			+ "fires so an unattended stop cannot wedge the app -- so read the events and continue promptly. "
+			+ "Each entry gets its own status, and why when unbound. For non-invasive logging that never pauses, prefer rose_debug_add_tracepoint.")]
+	public async Task<LiveBreakpointBatch> SetBreakpointAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
-		[Description(ToolDescriptions.BreakpointLocationArgument)]
-		string location,
-		[Description(ToolDescriptions.AutoContinueSecondsArgument)]
-		int? autoContinueSeconds = null,
-		[Description(ToolDescriptions.BreakpointConditionArgument)]
-		string? condition = null,
+		[Description(ToolDescriptions.BreakpointsArgument)]
+		SetBreakpointRequest[] breakpoints,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.SetBreakpointAsync(location, autoContinueSeconds, condition, cancellationToken);
+		return await session.SetBreakpointsAsync(breakpoints, cancellationToken);
 	}
 
 	[McpServerTool(
@@ -375,9 +379,8 @@ public sealed class LiveAppDebugTools(
 		UseStructuredContent = true)]
 	[Description(
 		"List a session's stopping breakpoints, each with its id, location, hit count, auto-continue "
-			+ "timeout, and whether it is bound yet. Use it to confirm a breakpoint bound to a real method, "
-			+ "since one whose module has not loaded, or whose method name did not resolve, stays unbound "
-			+ "and reports why rather than failing loudly.")]
+			+ "timeout, and whether it is bound yet, and why not: a module still to load, or "
+			+ "a name that did not resolve.")]
 	public async Task<LiveBreakpointList> ListBreakpointsAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
@@ -388,23 +391,23 @@ public sealed class LiveAppDebugTools(
 
 	[McpServerTool(
 		Name = ToolNames.DebugRemoveBreakpoint,
-		Title = "Remove a stopping breakpoint",
+		Title = "Remove stopping breakpoints",
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Remove a stopping breakpoint by id and return the remaining set. Use it once you have seen what "
-			+ "you needed so execution stops passing through that method; removing one the target is "
-			+ "currently held at does not itself resume -- call rose_debug_continue for that.")]
-	public async Task<LiveBreakpointList> RemoveBreakpointAsync(
+		"Remove stopping breakpoints by id and return the remaining set. Use it once you have seen what "
+			+ "you needed; removing one the target is currently held at does not itself resume -- call "
+			+ "rose_debug_continue for that.")]
+	public async Task<LiveBreakpointRemoval> RemoveBreakpointAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
-		[Description(ToolDescriptions.BreakpointIdArgument)] string breakpointId,
+		[Description(ToolDescriptions.BreakpointIdsArgument)] string[] breakpointIds,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.RemoveBreakpointAsync(breakpointId, cancellationToken);
+		return await session.RemoveBreakpointsAsync(breakpointIds, cancellationToken);
 	}
 
 	[McpServerTool(
@@ -413,18 +416,26 @@ public sealed class LiveAppDebugTools(
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = true,
-		OpenWorld = false)]
+		OpenWorld = false,
+		UseStructuredContent = true)]
 	[Description(
 		"Resume a target that is held at a stopping breakpoint, so it keeps running. Call this after you "
 			+ "have read the stop and its stack from rose_debug_events; it is a no-op if nothing is "
 			+ "currently stopped, which is safe to call speculatively.")]
-	public async Task<string> ContinueAsync(
+	public async Task<LiveContinued> ContinueAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		var continued = await session.ContinueAsync(cancellationToken);
-		return continued ? "Continued; the target is running again." : "Nothing was stopped at a breakpoint.";
+		var resumed = await session.ResumeAsync(cancellationToken);
+
+		return new LiveContinued
+		{
+			SessionId = sessionId,
+			Continued = resumed.Continued,
+			Detail = resumed.Detail,
+			Cursor = resumed.Cursor,
+		};
 	}
 
 	[McpServerTool(
@@ -433,21 +444,30 @@ public sealed class LiveAppDebugTools(
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = false,
-		OpenWorld = false)]
+		OpenWorld = false,
+		UseStructuredContent = true)]
 	[Description(
 		"Step a target that is held at a breakpoint: 'in' steps into calls, 'over' runs them without "
 			+ "descending, 'out' runs to the caller. The step resumes the target briefly and then holds it "
 			+ "again at the new location, which arrives as a StepComplete event in rose_debug_events with a "
 			+ "fresh stack and locals. It is a no-op if nothing is currently stopped. Line granularity "
 			+ "needs a PDB; without one, a step lands at the runtime's own step boundaries.")]
-	public async Task<string> StepAsync(
+	public async Task<LiveStepped> StepAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.StepModeArgument)] string mode = "over",
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		var stepped = await session.StepAsync(mode, cancellationToken);
-		return stepped ? $"Stepped {mode}; see the StepComplete event for the new location." : "Nothing was stopped to step.";
+		var stepped = await session.StepDetailedAsync(mode, cancellationToken);
+
+		return new LiveStepped
+		{
+			SessionId = sessionId,
+			Mode = mode,
+			Stepped = stepped.Continued,
+			Detail = stepped.Detail,
+			Cursor = stepped.Cursor,
+		};
 	}
 
 	[McpServerTool(
@@ -635,12 +655,31 @@ public sealed class LiveAppDebugTools(
 			await session.ResolveElementAsync(element, cancellationToken), cancellationToken);
 	}
 
+	/// <summary>
+	/// The caller's session with that id, or a refusal saying why there is none: that its host died and
+	/// it was dropped, where this caller started it and that is so, and otherwise that no such session is
+	/// open for this caller.
+	/// </summary>
+	/// <exception cref="McpException">No open session of this caller's has that id.</exception>
 	private LiveAppSession Require(string sessionId)
-		=> sessions.Find(sessionId)
-			?? throw new McpException(
-				$"No debug session '{sessionId}' is open for this client. rose_debug_list names the ones there "
-					+ "are. A session another client of this broker started belongs to it and is not reachable "
-					+ "from here.");
+	{
+		if (sessions.Find(sessionId) is { } session) return session;
+
+		if (sessions.FindDropped(sessionId) is { } dropped)
+		{
+			throw new McpException(dropped.Explain(sessions.UtcNow, StartAgain));
+		}
+
+		throw new McpException(
+			$"No debug session '{sessionId}' is open for this client. rose_debug_list names the ones there "
+				+ "are. A session another client of this broker started belongs to it and is not reachable "
+				+ "from here.");
+	}
+
+	/// <summary>What a caller whose session was dropped does to debug the target again.</summary>
+	private const string StartAgain =
+		$"Start a new session with {ToolNames.DebugAttach}, {ToolNames.DebugLaunch} or {ToolNames.DebugLaunchUwp} "
+			+ "to debug the target again.";
 
 	private static string DescribeProcess(int processId)
 	{

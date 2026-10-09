@@ -89,16 +89,13 @@ public static class MoveTypeService
 		{
 			Revision = snapshot.Revision,
 			TypeName = NameOf(moving),
-			SourcePath = sourcePath,
-			TargetPath = targetPath,
 			Applied = request.Apply,
 			RemovedUsings = cleanup.Removed,
-			ChangedFiles = outcome.ChangedFiles,
-			Diff = outcome.Diff,
 
-			// The write's own notices last: what the diff could not show, which for a split that leaves
-			// the source file shorter is the easiest change of all to miss.
-			Notices = [.. Notices(snapshot, request, moving, sourcePath, targetPath), .. outcome.Notices],
+			// The new file first, so the one this created is the first path the caller reads.
+			ChangedFiles = outcome.Leading(targetPath),
+			Diff = outcome.Diff,
+			Notices = Notices(snapshot, moving, sourcePath, targetPath),
 		};
 
 		return new MutationResult<MoveTypeResult>(result, request.Apply ? cleanup.Solution : null);
@@ -373,14 +370,11 @@ public static class MoveTypeService
 
 	private static IReadOnlyList<string> Notices(
 		WorkspaceSnapshot snapshot,
-		MoveTypeRequest request,
 		MemberDeclarationSyntax moving,
 		string sourcePath,
 		string targetPath)
 	{
 		var notices = new List<string>(snapshot.Notices);
-
-		if (!request.Apply) notices.Add("Preview only; nothing was written to disk.");
 
 		var movedFolder = !string.Equals(
 			Path.GetDirectoryName(Path.GetFullPath(sourcePath)),

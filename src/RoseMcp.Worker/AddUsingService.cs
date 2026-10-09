@@ -60,16 +60,16 @@ public static class AddUsingService
 		await edit.VerifyAsync(
 			document.FilePath!,
 			EditVerification.ProjectsHolding(solution, document.FilePath!),
+			[],
 			cancellationToken);
 
 		var notices = edit.Notices;
-		notices.AddRange(Notices(insertion, edit.Verification));
+		notices.AddRange(Notices(edit.Verification));
 		notices.AddRange(edit.Report());
 
 		var result = new UsingResult
 		{
 			Revision = snapshot.Revision,
-			FilePath = document.FilePath!,
 			Added = insertion.Added,
 			AlreadyInScope = insertion.AlreadyInScope,
 			Applied = edit.Applied,
@@ -77,7 +77,7 @@ public static class AddUsingService
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
 			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
-			TotalErrorCount = edit.Verification.TotalCount,
+			PreexistingErrorCount = edit.Verification.PreexistingCount,
 			ProjectsChecked = edit.Verification.Projects,
 			ChangedFiles = edit.Outcome.ChangedFiles,
 			Notices = notices,
@@ -89,21 +89,14 @@ public static class AddUsingService
 	/// <summary>
 	/// What importing a namespace has to say that no other writing tool does. Everything about the
 	/// write and the compile comes from <see cref="EditPipeline.Report"/>, which runs after this.
+	/// <para>
+	/// What was in scope already is the result's own list, with the reason for each, and a file left
+	/// untouched is the pipeline's sentence; neither is said again here. What is left is the advice for
+	/// the one way an import breaks a file.
+	/// </para>
 	/// </summary>
-	private static IEnumerable<string> Notices(UsingInsertion insertion, Verification verification)
+	private static IEnumerable<string> Notices(Verification verification)
 	{
-		if (insertion.Added.Count == 0)
-		{
-			yield return "Every namespace asked for was in scope already, so the file was not touched.";
-		}
-
-		foreach (var covered in insertion.AlreadyInScope)
-		{
-			yield return $"Did not import {covered}.";
-		}
-
-		if (verification.Introduced.Count == 0) yield break;
-
 		// CS0104 is a type name two imported namespaces both have, CS0121 a call two static imports
 		// both offer, CS0229 a member name two of them share. Anything else was not made by an
 		// ambiguity, and saying it was sends the caller looking for a clash that is not there.
@@ -111,9 +104,10 @@ public static class AddUsingService
 
 		var ambiguous = verification.Introduced.Any(entry => ambiguities.Contains(entry.Id));
 
-		yield return ambiguous
-			? "The import made a name ambiguous, which is the usual way adding one breaks a file. Qualify "
-				+ "the name, or use an alias instead."
-			: "Diagnostics appeared after the import that are not an ambiguity; each is listed with where it is.";
+		if (ambiguous)
+		{
+			yield return "The import made a name ambiguous, which is the usual way adding one breaks a file. Qualify "
+				+ "the name, or use an alias instead.";
+		}
 	}
 }

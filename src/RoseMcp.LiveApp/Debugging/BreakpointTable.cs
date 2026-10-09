@@ -28,6 +28,12 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 	private readonly List<BreakpointBinding> _bindings = [];
 	private int _nextId = 1;
 
+	/// <summary>
+	/// What a binding says before anything has been learned about it: recorded, and no bind tried
+	/// yet, which is how it stays while the target is not live to be asked.
+	/// </summary>
+	internal const string NotBoundYet = "not bound yet";
+
 	/// <summary>Whether every binding has a runtime breakpoint, so there is nothing left to bind.</summary>
 	internal bool AllBound => _bindings.TrueForAll(binding => binding.Bound);
 
@@ -56,12 +62,18 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 			AutoContinueSeconds = autoContinueSeconds,
 			ConditionText = string.IsNullOrWhiteSpace(condition) ? null : condition.Trim(),
 			Condition = BreakpointCondition.Parse(condition),
-			Detail = "not bound yet",
+			Detail = NotBoundYet,
 		};
 
 		_bindings.Add(binding);
 		return binding;
 	}
+
+	/// <summary>
+	/// Whether the binding with this id stops on a hit, or null when there is no such binding -- the
+	/// question that tells a breakpoint's id from a tracepoint's before either is removed.
+	/// </summary>
+	internal bool? StopsOnHit(string id) => _bindings.FirstOrDefault(entry => entry.Id == id)?.StopOnHit;
 
 	/// <summary>Drops a binding and deactivates whatever it had bound, reporting whether it was there.</summary>
 	internal bool Remove(string id)
@@ -149,6 +161,7 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 			if (others.Count > 0)
 			{
 				binding.Detail = TypeOwners.Ambiguity(typeName, [.. others, path], binding.Raw);
+				binding.WillNotBind = true;
 				continue;
 			}
 
@@ -249,7 +262,7 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 		foreach (var binding in _bindings)
 		{
 			if (binding.Bound) continue;
-			if (binding.Detail is not (null or "not bound yet")) continue;
+			if (binding.Detail is not (null or NotBoundYet)) continue;
 
 			var typeName = binding.Location.TypeName;
 
@@ -265,6 +278,7 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 				// The module is loaded and TryBind said nothing, so the type is what is missing --
 				// the method-level miss is reported by TryBind itself.
 				binding.Detail = $"no type {typeName} in {assembly}";
+				binding.WillNotBind = true;
 				continue;
 			}
 
@@ -320,6 +334,7 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 		if (owners.Count > 1)
 		{
 			binding.Detail = TypeOwners.Ambiguity(binding.Location.TypeName, [.. owners.Select(module => module.Name)], binding.Raw);
+			binding.WillNotBind = true;
 			return;
 		}
 
@@ -345,6 +360,7 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 		if (token is null)
 		{
 			binding.Detail = $"no method {binding.Location.TypeName}.{binding.Location.MethodName} in {Path.GetFileName(module.Name)}";
+			binding.WillNotBind = true;
 			return;
 		}
 
@@ -367,6 +383,7 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 			binding.ModulePath = module.Name;
 			binding.Source = TargetSymbols.SourceAt(module.Name, token.Value, offset ?? 0);
 			binding.Detail = null;
+			binding.WillNotBind = false;
 			buffer.Append(LiveDebugEventKind.SessionNotice, $"{binding.Id} bound at {binding.Raw}.");
 			logger.LogInformation("Binding {Id} bound at {Location} (token 0x{Token:x8}).", binding.Id, binding.Raw, token.Value);
 		}
@@ -378,6 +395,7 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 			binding.Detail = offset is { } bad
 				? $"bind failed at IL_{bad:X4}: {exception.Message}. The offset must be one this method's symbols report."
 				: $"bind failed: {exception.Message}";
+			binding.WillNotBind = true;
 			logger.LogDebug(exception, "Binding {Id} at {Location} failed.", binding.Id, binding.Raw);
 		}
 	}

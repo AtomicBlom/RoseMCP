@@ -294,6 +294,177 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
+	/// A session whose host has died is listed as ended, with the reason on its row, and then dropped:
+	/// out of the registry, its client disposed, and no longer polled. Nothing else removes it -- no
+	/// caller is going to close a session they cannot reach -- so without the drop it is carried, and
+	/// asked how it is every second, for the life of the broker.
+	/// <para>
+	/// The host is killed outright rather than told to exit, because that is the case: a host that
+	/// crashed, or that something on the machine ended, says nothing on its way out.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_session_whose_host_dies_is_shown_ended_then_dropped()
+	{
+		var logs = new RecordingLoggerFactory();
+
+		// Held open until the test has seen the ended row, then let go. A grace of seconds is a window the
+		// test has to land a look inside, and a test process stalled under load for longer than that sees
+		// the session already gone -- the manager doing its job on time, and the test missing it. The
+		// manager reads the grace on every tick, so shortening it here is what a later tick acts on.
+		BrokerOptions? configured = null;
+		await using var manager = CreateManager(logs, options =>
+		{
+			options.EndedSessionGrace = TimeSpan.FromHours(1);
+			configured = options;
+		});
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+			var hostProcessId = session.Describe().HostProcessId.ShouldNotBeNull();
+
+			using (var host = Process.GetProcessById(hostProcessId))
+			{
+				host.Kill(entireProcessTree: false);
+				await host.WaitForExitAsync(cancellationToken);
+			}
+
+			// Listed as ended, with the reason where a person reads it, before it goes.
+			LiveAppSessionSummary? ended = null;
+			var killedUtc = DateTime.UtcNow;
+			await WaitUntilAsync(
+				() =>
+				{
+					ended = manager.Describe().SingleOrDefault(row => row.SessionId == session.SessionId);
+					return ended?.Recent.Any(activity => activity.Operation == LiveAppSessionManager.DropOperation) ?? false;
+				},
+				cancellationToken,
+				() => $"killed the host at {killedUtc:HH:mm:ss.fff}Z; row {ended?.State.ToString() ?? "gone"}, alive {session.IsAlive}, "
+					+ $"recorded as dropped {manager.FindDropped(session.SessionId) is not null}; the manager logged:{Environment.NewLine}"
+					+ string.Join(Environment.NewLine, logs.Lines.TakeLast(80)));
+
+			ended!.State.ShouldBe(LiveAppSessionState.Ended);
+			ended.Recent.First(activity => activity.Operation == LiveAppSessionManager.DropOperation)
+				.Message.ShouldNotBeNull().ShouldContain("stopped answering");
+			session.IsAlive.ShouldBeFalse();
+
+			configured!.EndedSessionGrace = TimeSpan.Zero;
+
+			// The row leaves the registry first and the teardown follows it -- the client disposed, then
+			// the session's activity history forgotten, last because disposing files a call of its own --
+			// so the drop is finished when the history is gone, which on a loaded machine is seconds later.
+			await WaitUntilAsync(
+				() => manager.Describe().All(row => row.SessionId != session.SessionId)
+					&& manager.Activities.Recent(session.SessionId).Count == 0,
+				cancellationToken,
+				() => string.Join(Environment.NewLine, logs.Lines.TakeLast(80)));
+
+			manager.Sessions.ShouldBeEmpty();
+			manager.Find(session.SessionId).ShouldBeNull();
+
+			// Ended without asking a host that was not there to detach.
+			session.DetachFailure.ShouldNotBeNull().ShouldContain("already stopped answering");
+
+			// The id still names something to the caller that holds it: the next call hears that the host
+			// died, not that the id is wrong or belongs to somebody else.
+			var tools = new RoseMcp.Broker.Tools.LiveAppDebugTools(
+				manager,
+				NoInspector.WithoutAnEndpoint,
+				new CallerPaths(Microsoft.Extensions.Options.Options.Create(new BrokerOptions())));
+
+			var refused = await Should.ThrowAsync<ModelContextProtocol.McpException>(
+				() => tools.EventsAsync(session.SessionId, cancellationToken: cancellationToken));
+			refused.Message.ShouldContain("host stopped answering");
+			refused.Message.ShouldContain(ToolNames.DebugAttach);
+			refused.Message.ShouldNotContain("belongs to it");
+
+			var detached = await tools.DetachAsync(session.SessionId, cancellationToken);
+			detached.Detached.ShouldBeFalse();
+			detached.Detail.ShouldNotBeNull().ShouldContain("host stopped answering");
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A host that dies between polls is known dead without a poll having to catch it dying. The
+	/// session is driven with no manager, so nothing polls it: the host is killed, and the session has to
+	/// see it from its client's own view of the pipe.
+	/// <para>
+	/// The case under load, and the one that matters: a poll in flight when the host dies fails with an
+	/// I/O error, but every poll after the client has seen the pipe close is refused as "the transport is
+	/// not connected" -- which reads, by exception type, like a slow host. A busy machine delays the poll
+	/// past the moment the client notices, and judged by exception type the session is kept, polled and
+	/// listed as running forever.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_host_that_dies_between_polls_is_known_dead()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		var session = await LiveAppSession.StartAsync(
+			"session-between-polls",
+			AttachTo(child.Id),
+			ExpectedArchitecture,
+			LiveAppHostLauncher.ResolveHostPath(ExpectedArchitecture, new BrokerOptions()),
+			new ActivityLog(),
+			Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance,
+			cancellationToken);
+
+		try
+		{
+			session.IsAlive.ShouldBeTrue();
+			var hostProcessId = session.HostProcessId.ShouldNotBeNull();
+
+			using (var host = Process.GetProcessById(hostProcessId))
+			{
+				host.Kill(entireProcessTree: false);
+				await host.WaitForExitAsync(cancellationToken);
+			}
+
+			await WaitUntilAsync(() => !session.IsAlive, cancellationToken);
+
+			// A poll after the client has seen the pipe close is refused rather than failed, and must not
+			// make the session look merely slow.
+			await session.RefreshInfoAsync(cancellationToken);
+
+			session.IsAlive.ShouldBeFalse();
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ended);
+		}
+		finally
+		{
+			await session.DisposeAsync();
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// Waits for a condition the manager's own poll makes true, failing after a generous bound -- and
+	/// saying, through <paramref name="describe"/>, what the state was when it gave up.
+	/// </summary>
+	private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken cancellationToken, Func<string>? describe = null)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+
+		while (!condition())
+		{
+			if (DateTime.UtcNow > deadline)
+			{
+				throw new TimeoutException($"The condition did not hold within 30 s. {describe?.Invoke()}");
+			}
+
+			await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+		}
+	}
+
+	/// <summary>
 	/// #219: ICorDebug refuses to detach while any breakpoint the session bound is still active, so a
 	/// session that did the one thing a debug session is for could not let go of the user's process --
 	/// and what it left behind said nothing, since the session is gone from the list while the debugger

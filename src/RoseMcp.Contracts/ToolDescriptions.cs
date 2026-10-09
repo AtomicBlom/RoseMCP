@@ -27,6 +27,15 @@ public static class ToolDescriptions
 			+ "Type.Type or Type..ctor for a constructor. Preferred over a position: it needs no grep "
 			+ "first and does not go stale when an earlier edit moves the line.";
 
+	/// <summary>
+	/// The reads that are plural by intent take a list, each name answered on its own, and only a list:
+	/// one spelling, so a caller with one symbol learns nothing extra to ask about several. The grammar
+	/// is <see cref="SymbolArgument"/>'s, kept short here since that is where it is explained.
+	/// </summary>
+	public const string SymbolsArgument =
+		"Symbols by name, as Namespace.Type.Member, each answered on its own. Add a parameter list to pick an "
+			+ "overload, Type..ctor for a constructor. Preferred over a position.";
+
 	public const string FilePathArgument =
 		"Path to the file: absolute, or relative to where your session is running. Give it with line and "
 			+ "column to point at a symbol, or on its own to say which file a name is declared in.";
@@ -45,8 +54,8 @@ public static class ToolDescriptions
 	/// only to decide whether to narrow it.
 	/// </summary>
 	public const string VerifyScopeArgument =
-		"How much to compile: auto, file, dependents, or solution. Defaults to auto. Narrowing it to "
-			+ "file is faster and the result names the dependents nobody looked at.";
+		"How much to compile: auto (the default), file, dependents, or solution. file is fastest, and "
+			+ "names the dependents it left out.";
 
 	/// <summary>
 	/// The workspace argument, on nearly every tool. It was 258 characters and appeared thirty times
@@ -56,8 +65,16 @@ public static class ToolDescriptions
 	/// only moment it is worth reading.
 	/// </summary>
 	public const string WorkspaceArgument =
-		"Solution, project or file path that picks the workspace. Usually omitted: inferred from the "
-			+ "other arguments or the working directory.";
+		"Solution, project or file path picking the workspace. Usually omitted: inferred from other "
+			+ "arguments or the working directory.";
+
+	/// <summary>
+	/// The key every result carries, accepted wherever <see cref="WorkspaceArgument"/> is. Short for
+	/// the same reason that one is: it appears on every routed tool. Why a key resolves only while its
+	/// workspace is loaded, and what to do when it does not, is in the error that says so.
+	/// </summary>
+	public const string WorkspaceKeyArgument =
+		"Instead of workspace, the key a result carried.";
 
 	/// <summary>Which live-app session, on every tool that works against one.</summary>
 	public const string SessionArgument = "The session id returned by rose_debug_attach.";
@@ -72,16 +89,23 @@ public static class ToolDescriptions
 	/// </para>
 	/// </summary>
 	public const string ApplyArgument =
-		"Write the change. False returns the diff without touching disk. Defaults to true.";
+		"Write the change; false previews it as a diff.";
+
+	/// <summary>
+	/// Shared by every writing tool. An applied write says where each file changed rather than echoing what
+	/// the caller sent, so the diff is opt-in there; a preview carries it regardless.
+	/// </summary>
+	public const string IncludeDiffArgument =
+		"Also return an applied write's diff.";
 
 	public const string ExpectedRevisionArgument =
-		"Fail rather than apply if the workspace has moved past this revision.";
+		"Refuse if the workspace has moved past this revision.";
 
 	public const string VerifyArgument =
-		"Compile afterwards and report what the change broke and what it resolved. Defaults to true.";
+		"Compile afterwards, with analyzers where it wrote, and report what the change broke and resolved.";
 
 	public const string VerifySolutionArgument =
-		"Compile the whole solution afterwards and report what the change broke. Defaults to true.";
+		"Compile the whole solution afterwards and report what the change broke.";
 
 	public const string MemberArgument =
 		"The member, as Namespace.Type.Member. Add a parameter list to pick an overload.";
@@ -97,8 +121,11 @@ public static class ToolDescriptions
 		"Imports the code needs, ensured in the same file: System.Text, static System.Math, or Json = "
 			+ "System.Text.Json. One already in scope is reported, not added.";
 
+	public const string SignatureUsingsArgument =
+		"Imports the parameter types need, as System.Text, ensured in each file whose declaration changes.";
+
 	public const string ProjectFilterArgument =
-		"Limit to one project, by name or by the path to its project file. Defaults to the whole solution.";
+		"Limit to one project, by name or by the path to its project file.";
 
 	public const string SingleFilePathArgument =
 		"Path to the file: absolute, or relative to where your session is running.";
@@ -115,35 +142,47 @@ public static class ToolDescriptions
 		"Lowest severity to report: hidden, info, warning, or error. Defaults to warning.";
 
 	public const string IncludeAnalyzersArgument =
-		"Run analyzers as well as the compiler. Much slower over a whole solution; off by default.";
+		"Run analyzers as well as the compiler, as a write does where it wrote. Much slower over a whole solution.";
 
-	public const string MaxDiagnosticsArgument = "Maximum diagnostics to return. Defaults to 200.";
+	public const string MaxDiagnosticsArgument = "Most diagnostics to list; past it, their shape instead.";
 
-	public const string MaxReferencesArgument = "Maximum references to return. Defaults to 200.";
+	public const string DiagnosticIdFilterArgument = "Only diagnostics with this id, as CS0103.";
+
+	public const string DiagnosticIsGeneratedArgument = "true: only diagnostics in generated code; false: only the rest.";
+
+	public const string MaxReferencesArgument = "Most references to list across the symbols; past it, their shape instead.";
 
 	public const string DefinitionsOnlyArgument =
-		"Return where it is declared and how many uses there are, without listing them.";
+		"Return where it is declared, how many uses there are and their shape, without listing them.";
 
 	public const string ReferenceProjectArgument =
 		"Only references compiled by this project, named or given as the path to its project file.";
 
+	public const string ContainingMemberArgument =
+		"Only references inside this member: Type.Member, or a name alone for every type's.";
+
+	public const string IsTestProjectArgument = "true: only references in test projects; false: only the rest.";
+
+	public const string IsGeneratedArgument = "true: only references in generated code; false: only the rest.";
+
 	public const string IncludePreviewsArgument =
 		"Give each location its line of source. On by default; off is much smaller.";
 
-	public const string MaxImplementationsArgument = "Maximum matches to return. Defaults to 200.";
+	public const string MaxImplementationsArgument = "Maximum matches to return.";
 
 	public const string SearchQueryArgument = "Name or abbreviation to search for.";
 
-	public const string MaxSearchMatchesArgument = "Maximum matches to return. Defaults to 50.";
+	public const string MaxSearchMatchesArgument = "Most matches to list, closest first; past it, the shape of the rest too.";
+
+	public const string SearchKindArgument = "Only matches of this kind: NamedType, Method, Property, Field, Event or Namespace.";
 
 	public const string IncludeInheritedArgument = "Also list what the base classes contribute. Off by default.";
 
 	public const string IncludeDocumentationArgument =
-		"Give each type and member the first line of its documentation. On by default; off is much smaller.";
+		"Add the first sentence of each type's and member's summary. Off by default.";
 
 	public const string IncludeSignaturesArgument =
-		"Give each member its full signature. On by default; off leaves the name, kind and location, "
-			+ "which is what a search through a large type needs.";
+		"Add each member's full signature, which tells overloads apart. Off by default.";
 
 	public const string IncludeTriviaArgument =
 		"Match the body's text, not its tokens, so find can lie inside a // comment or string, or take "
@@ -157,7 +196,7 @@ public static class ToolDescriptions
 	public const string ArityArgument =
 		"How many type arguments the use site supplies, where the name is not written with them.";
 
-	public const string MaxCandidatesArgument = "Maximum candidates to return. Defaults to 20.";
+	public const string MaxCandidatesArgument = "Maximum candidates to return.";
 
 	public const string HintNameArgument =
 		"Hint name of the generated document, for example Widget.Greeting.g.cs.";
@@ -194,9 +233,9 @@ public static class ToolDescriptions
 
 	public const string MembersCodeArgument = "One or more whole declarations.";
 
-	public const string AfterArgument = "Put them after this member, by name.";
+	public const string AfterArgument = "Put them after this member, by name; Greet(string, int) picks an overload.";
 
-	public const string BeforeArgument = "Put them before this member, by name.";
+	public const string BeforeArgument = "Put them before this member, by name; Greet(string, int) picks an overload.";
 
 	public const string ParametersArgument =
 		"The parameters it should have, written as they would go between the parentheses. Leave it off to keep them.";
@@ -227,7 +266,7 @@ public static class ToolDescriptions
 		"Which project compiles it, where the path is inside more than one project's directory.";
 
 	public const string ResolveUsingsArgument =
-		"Work out the namespaces the code needs and add the ones with a single answer. Defaults to true.";
+		"Work out the namespaces the code needs and add the ones with a single answer.";
 
 	public const string CommentArgument =
 		"The comment: plain text taken as the summary, or the whole thing as XML.";
@@ -243,21 +282,37 @@ public static class ToolDescriptions
 	public const string PropertiesArgument = "Further MSBuild properties, each as Name=Value.";
 
 	public const string IncludeSourceArgument =
-		"Also return the declaration's own source text, so understanding a member does not end in a file "
-			+ "read.";
+		"Also return each declaration's source text.";
 
 	public const string OutlineTypeArgument =
 		"The type, as Namespace.Type. One of this and filePath.";
 
+	public const string OutlineTypesArgument =
+		"Types, as Namespace.Type, each outlined on its own. One of this and filePath.";
+
 	public const string OutlineFilePathArgument =
-		"The file to outline. One of this and type; also narrows a partial type to one of its files.";
+		"The file to outline, only what it declares. One of this and symbols.";
+
+	public const string OutlineMembersArgument =
+		"Only members whose name contains this, ignoring case.";
+
+	public const string MaxOutlineMembersArgument =
+		"Maximum members to list, across every type.";
+
+	/// <summary>
+	/// rose_symbol_info's cap, its own rather than the outline's because the outline's spans every type
+	/// in a file and this one has only the type asked about. The filter is shared: "only members whose
+	/// name contains this" is the same sentence whichever tool narrows by it.
+	/// </summary>
+	public const string MaxSymbolMembersArgument =
+		"Maximum members to list, across the symbols.";
 
 	/// <summary>
 	/// Its own rather than the outline's, which names outlining. The type argument is shared, because
 	/// "the type, as Namespace.Type" is the same sentence whatever is then done with it.
 	/// </summary>
 	public const string SplitOptionsFilePathArgument =
-		"The file to read. One of this and type; every type it declares is answered for.";
+		"The file to read. One of this and symbol; every type it declares is answered for.";
 
 	public const string ResolveNameArgument =
 		"The name as the code spells it: Encoding, List<int>, Encoding.UTF8, or System.Text.Encoding.";
@@ -355,9 +410,25 @@ public static class ToolDescriptions
 			+ "when a page came back truncated. Empty if not buffered: below oldestAvailable it was "
 			+ "dropped, above totalObserved it has not happened. Overrides the rest.";
 
+	public const string EventExceptionTypeArgument = "Only exceptions of this type, by full or short name.";
+
 	public const string MaxEventsArgument =
 		"Maximum events in this page (default 500). Lower it when you only need to see whether something "
 			+ "is happening.";
+
+	/// <summary>
+	/// A list of objects rather than a list of locations sharing one message and one condition,
+	/// because neither is shared in practice: a message interpolates the locals of the method it is
+	/// in, and a condition names them, so the entry, exit and branch of one path each want their own.
+	/// No JSON example: the item schema already spells the shape, and every quote in an example costs
+	/// six characters of the surface's budget once the listing escapes it.
+	/// </summary>
+	public const string TracepointsArgument =
+		"One entry per method on the path, each with its own message and condition; only location is required.";
+
+	/// <summary>A list of objects for the reason <see cref="TracepointsArgument"/> gives.</summary>
+	public const string BreakpointsArgument =
+		"One entry per method to break on, each with its own condition and timeout; only location is required.";
 
 	/// <summary>
 	/// The debugger's location grammar, said to be the one the rest of the surface uses. It is the
@@ -382,10 +453,14 @@ public static class ToolDescriptions
 			+ "fields and elements: {count}, {state.Inner.Count}, {items[0].Name}. Read from memory, "
 			+ "so no property getters. {{ is a literal brace.";
 
-	public const string LogEveryNthHitArgument =
-		"Optional: log only every Nth hit to thin a hot path; every hit is still counted.";
+	public const string LogEveryNthHitArgument = "Optional: log only every Nth hit; every hit is still counted.";
 
-	public const string TracepointIdArgument = "The tracepoint id returned by rose_debug_add_tracepoint.";
+	/// <summary>
+	/// A list because removing is plural for the same reason adding is: the tracepoints that
+	/// instrumented one path are finished with together.
+	/// </summary>
+	public const string TracepointIdsArgument =
+		"The ids rose_debug_add_tracepoint returned. One already gone is reported as not found.";
 
 	public const string BreakpointLocationArgument =
 		"The method to break on, as the Namespace.Type.Method the rose_* tools take; it binds in whichever "
@@ -395,7 +470,8 @@ public static class ToolDescriptions
 	public const string AutoContinueSecondsArgument =
 		"Seconds a hit is held before the target auto-continues on its own; default 30.";
 
-	public const string BreakpointIdArgument = "The breakpoint id returned by rose_debug_set_breakpoint.";
+	public const string BreakpointIdsArgument =
+		"The ids rose_debug_set_breakpoint returned. One already gone is reported as not found.";
 
 	public const string StepModeArgument = "in, over, or out.";
 
@@ -489,12 +565,12 @@ public static class ToolDescriptions
 			+ "'skipped' says how many those were. A name that is not a kind is refused.";
 
 	public const string TracepointConditionArgument =
-		"Optional condition gating each hit, as 'name OP literal' over the method's arguments/locals, "
-			+ "e.g. count >= 100. Only simple value compares; expressions need eval.";
+		"Optional gate on each hit: name OP literal over the method's arguments or locals, e.g. count >= 100. "
+			+ "No expressions.";
 
 	public const string BreakpointConditionArgument =
-		"Optional condition gating each hit, as 'name OP literal' over the method's arguments/locals, "
-			+ "e.g. id == 42. Only simple value compares; expressions need eval.";
+		"Optional gate on each hit: name OP literal over the method's arguments or locals, e.g. id == 42. "
+			+ "No expressions.";
 
 	/// <summary>
 	/// Capped at 60 so the call cannot outlive the caller's own timeout, and a wait that ends empty
@@ -571,7 +647,7 @@ public static class ToolDescriptions
 		degradedReasons -- each with its fix. Ask it when answers look wrong rather than assuming the
 		code is. Thousands of errors about System.Object undefined mean a configuration the solution
 		does not declare; rose_workspace_reload takes another. It waits for the load, unlike
-		rose_workspace_open.
+		rose_workspace_open; an evicted or crashed worker is reported, not restarted.
 		""";
 
 	public const string IncludeProjectsArgument =
@@ -591,6 +667,15 @@ public static class ToolDescriptions
 		solution costs a gigabyte or more, so this is worth doing when moving off one for good.
 		""";
 
+	public const string WorkspaceList = """
+		Every solution this broker holds a worker for, warm or stopped, without loading or waking any of
+		them: each one's key to pass back as the workspace argument, its state, how long it has been idle
+		and how many calls are running on it. Use it to see what is already open before choosing a
+		workspace, or to find out why a solution is cold again. A worker idle past idleEvictionAfter is
+		stopped to free its memory and listed as Evicted; the next call on it starts a fresh one by
+		itself, so there is nothing to reopen.
+		""";
+
 	public const string Diagnostics = """
 		Compiler diagnostics, and optionally analyzer ones, from a live Roslyn compilation of the
 		current state of disk -- edits by other tools are absorbed before the analysis runs, so results
@@ -600,48 +685,50 @@ public static class ToolDescriptions
 		MSBuild targets, so it cannot see emit-time errors, anything a build step generates or repacks,
 		or a failure in a project reference's own build, and analyzers are opt-in here while they can
 		be errors there. Diagnostics inside source-generated code are included, tagged with the hint
-		name that reads that code back. To repair what it reports, ask rose_list_code_fixes.
+		name that reads that code back. To repair what it reports, ask rose_list_code_fixes. Past
+		maxResults the answer is their shape: counts by id, project and file, each a value id, project
+		or filePath takes.
 		""";
 
 	public const string SymbolInfo = """
-		What a symbol actually is: full signature, kind, accessibility, containing type, XML
-		documentation, every declaration site, and what it overrides or implements -- which is usually
-		where an override's documentation lives. Name it as Namespace.Type.Member, which needs no grep
-		first and does not go stale when an edit moves a line; a file position works too, and is the way
-		to reach a local or a parameter. Pass includeSource so understanding a member does not end in a
-		file read. Each declaration reports its first and last line, so where a member stops is known
-		rather than approximated. Resolved from the compilation, so it answers from a use site as well as
-		a declaration, and equally about a referenced assembly's types, members and constructors:
-		StringBuilder and System.Text.StringBuilder.AppendLine(string) both reach one. Overloads are
-		refused rather than guessed between -- add the parameter types. isFromSource false means it
-		cannot be renamed or edited.
+		What a symbol is: full signature, kind, accessibility, containing type, documented summary, each
+		declaration with its first and last line, and what it overrides or implements -- usually where
+		an override's documentation lives. Name several in one call as Namespace.Type.Member, which needs no grep and
+		survives an edit moving a line; a file position reaches a local or a parameter. includeSource
+		adds the declaration's text, so understanding it does not end in a file read. A referenced
+		assembly's types and members answer too, as StringBuilder or
+		System.Text.StringBuilder.AppendLine(string); such a type lists what can be called on it, with
+		signatures and obsolete marks, filtered by members. Overloads are refused rather than guessed --
+		add the parameter types. isFromSource false means it cannot be edited.
 		""";
 
 	public const string FindReferences = """
 		Every reference to a symbol, resolved semantically across the solution. Unlike a text search
 		this follows overrides, interface implementations and aliases, and will not match comments,
-		strings or unrelated identifiers that share a name. Name the symbol as Namespace.Type.Member;
+		strings or unrelated identifiers that share a name. Name symbols as Namespace.Type.Member, several per call;
 		a position still reaches a local or a parameter, and needs the column on the identifier itself,
-		since one on a neighbour answers completely and correctly about a different symbol. Each hit
-		names the member it sits inside, which turns a flat list into "used by these six methods". A
-		large answer narrows three ways: definitionsOnly for the count alone, project for one project,
-		includePreviews=false to drop the line of source. For the opposite direction, use
+		since one on a neighbour answers completely and correctly about a different symbol. Hits are
+		listed by file, each naming its containing member. Past maxResults the answer is their shape:
+		counts by project, test project, generated code and member, each group a value project,
+		isTestProject, isGenerated or containingMember takes. definitionsOnly gives the shape alone;
+		includePreviews=false drops the source lines. For the opposite direction, use
 		rose_find_implementations.
 		""";
 
 	public const string FindImplementations = """
-		What implements, overrides or derives from a symbol -- derived types for a class, implementing
-		types for an interface, overriding members for a virtual or abstract one. Grep cannot answer
-		this at all: an implementation need not mention the interface's name anywhere near the member.
-		Name the symbol as Namespace.Type.Member, which also works for a type in a referenced assembly,
-		so "what here implements IDisposable" is one call. The answer says which of those three
-		questions it actually answered, since that depends on what the symbol turns out to be.
+		What implements, overrides or derives from a symbol: implementing types for an interface,
+		derived types for a class, overriding members for a virtual or abstract one; the answer says
+		which. Grep cannot answer this: an implementation need not name the interface near the member.
+		Name the symbol as Namespace.Type.Member, a referenced assembly's type included, so "what here
+		implements IDisposable" is one call. Lists this solution's source only, counting what it left
+		out.
 		""";
 
 	public const string SearchSymbols = """
 		Finds declarations across the solution by name pattern. Understands the abbreviations people
 		actually type, so SLoader matches SolutionLoader. Use this to locate a type or member before
-		asking for its references, its implementations, or renaming it.
+		asking for its references, its implementations, or renaming it. Past maxResults the closest are
+		listed with counts of all by kind and project, each a value kind or project takes.
 		""";
 
 	public const string ListGeneratedDocuments = """
@@ -668,7 +755,7 @@ public static class ToolDescriptions
 		member, are applied and listed rather than refused -- pass apply=false first and look before
 		committing to it. Also reports XAML that still names the old identifier and does not change it,
 		since markup is text to the compiler and a broken binding builds and runs. A symbol from
-		metadata is refused: there is no source to write. Returns a unified diff of every file changed.
+		metadata is refused: there is no source to write.
 		""";
 
 	public const string MoveTypeToFile = """
@@ -676,17 +763,17 @@ public static class ToolDescriptions
 		declaration goes across with its doc comments and attributes, indented and spaced exactly as
 		it was, and using directives the split makes unnecessary are dropped from both files -- which
 		is what stops the result from failing a build that treats unused usings as errors. Use this
-		rather than reading a file and writing two. Returns a unified diff of both files; pass
-		apply=false to preview. Declines rather than guessing when the type is the only one in its
-		file, when the target already exists, or when preprocessor directives are involved.
+		rather than reading a file and writing two; pass apply=false to preview the diff. Declines
+		rather than guessing when the type is the only one in its file, when the target already
+		exists, or when preprocessor directives are involved.
 		""";
 
 	public const string FormatDocuments = """
 		Formats C# files to their .editorconfig: indentation, braces, line endings, trailing
 		whitespace and final newline. Call this after writing or editing a C# file
 		by any other means: hand-written C# routinely lands with spaces where the repository wants
-		tabs and LF where it wants CRLF, a failed build wherever IDE0055 is an error. Returns a
-		unified diff; apply=false checks without writing. It applies dotnet format's whitespace
+		tabs and LF where it wants CRLF, a failed build wherever IDE0055 is an error. apply=false checks
+		without writing, and returns the diff. It applies dotnet format's whitespace
 		check (IDE0055), which has no rule for where a line wraps or how deep a wrapped line sits,
 		so clean does not vouch for those. A wrapped list whose items begin at different depths is reported, as is a
 		multi-line literal whose endings dotnet format will reject; neither is rewritten.
@@ -700,8 +787,8 @@ public static class ToolDescriptions
 		replace written as C# with placeholders; the first rule to match a site wins, and a rule an
 		earlier one hides is refused. A capture keeps its own text. A replacement that would not compile
 		at its site is left alone and reported with the compiler's reason. The result is a summary, not a
-		diff: counts per rule with the overloads it covers, skipped sites by reason, and the calls into
-		the same types that no rule matched. Preview with apply=false first.
+		diff: counts per rule with the overloads it covers, skipped sites by reason, and the calls to
+		the rules' methods that no rule matched. Preview with apply=false first.
 		""";
 
 	/// <summary>
@@ -735,7 +822,7 @@ public static class ToolDescriptions
 	/// </summary>
 	public const string PatternApplyArgument =
 		"Write the change. False returns the same summary without touching disk, with the diff while it "
-			+ "is small enough to read. Defaults to true.";
+			+ "is small enough to read.";
 
 	public const string ListCodeFixes = """
 		What the solution's own analyzers offer to fix in one file: the diagnostic, the titles of the
@@ -797,14 +884,15 @@ public static class ToolDescriptions
 	public const string ChangeSignature = """
 		Changes a member's parameters, its accessibility, or both, and everything that must change with
 		them: the declaration you named, what it overrides or implements, every override and
-		implementation of that, the arguments at every call site, and the param tags in its documentation
-		comment. Use it rather than grep and an edit per layer -- a missed forwarder compiles at some layers
-		and not others. Give the full parameter list as it should read between the parentheses; what
-		changed is worked out from it. Existing parameters cannot be reordered, and a new one needs a
-		default or an arguments entry. Every use left alone is listed with the reason, including the ones
-		that still compile because a new parameter has a default -- a forwarder passing the old default is
-		the bug that hides. Accessibility works on any member or type: overrides move with it, and an
-		interface implementation that would stop being one is refused. Verified against the whole solution.
+		implementation of that, the arguments at every call site, and its param tags. Use it rather than
+		grep and an edit per layer -- a missed forwarder compiles at some layers and not others. Give the
+		full parameter list as it should read; what changed is worked out from it. Existing parameters
+		cannot be reordered, a new one needs a default or an arguments entry, and a type its files do
+		not import goes in usings. Every use left alone is listed with
+		the reason, including the ones that still compile because a new parameter has a default -- a
+		forwarder passing the old default is the bug that hides. Accessibility works on any member or
+		type: overrides move with it, and an interface implementation that would stop being one is
+		refused. Verified against the whole solution.
 		""";
 
 	public const string BuildFreshness = """
@@ -826,31 +914,27 @@ public static class ToolDescriptions
 		Both of those are build errors where the analyzers are turned up, which is where this matters.
 		An argument that is not exactly one import is refused before the file is touched. Reports what
 		was added, what was already covered and why, and how many errors the import resolved. Prefer
-		the usings argument on rose_replace_member, rose_replace_body and rose_add_member when you are
-		writing the code; this is for code that arrived some other way.
+		the usings argument of the tool writing the code; this is for code that arrived some other way.
 		""";
 
 	public const string MoveMember = """
-		Moves a static member from one type to another and takes its call sites with it, in one
-		change. Use this rather than adding it to the new type and deleting it from the old: those
-		are two writes, and a failure between them leaves the member declared twice. The call sites
-		are the part that gets forgotten -- callSites=qualify writes the new type in front of each
-		one, callSites=usingStatic adds a using static to each calling file and leaves the calls as
-		they are, and the choice is made once here rather than once per file. The declaration moves
-		exactly as written, documentation comment and attributes included, reindented for where it
-		lands. Instance members are refused: moving one changes what 'this' means inside it and every
-		call site would need a receiver it has no reason to have to hand.
+		Moves a member from one type to another and takes its call sites with it, in one change. Use
+		this rather than adding it to the new type and deleting it from the old: those are two writes,
+		and a failure between them leaves the member declared twice. callSites=qualify writes the new
+		type in front of each call, callSites=usingStatic imports it statically in each calling file,
+		chosen once rather than per file. The declaration moves as written, documentation comment and
+		attributes included. An instance member moves only when nothing calls it and it reads nothing
+		of its type that the target lacks, such as a test method between fixtures; anything else is
+		refused with what was found.
 		""";
 
 	public const string Outline = """
-		What a type or a file declares: every member with its full signature, kind, accessibility,
-		whether it is abstract or static, where it is, and the first line of its documentation. Name a
-		type or give a file path -- one of the two. Use it instead of reading the file to find out what
-		is in it, which is the read that comes before most edits and the one that puts the file in front
-		of you: once it is open, the edit goes through a text tool. The signatures are the compiler's,
-		so an interface implementation can be written from this alone. Members a generator wrote are
-		marked, since there is no file to edit for those. Pass includeInherited for what the base
-		classes contribute.
+		What a type or a file declares: each member's name, kind, accessibility and line. Name a type
+		or give a file path -- one of the two. Use it instead of reading the file to find out what is
+		in it, which is the read before most edits and the one that puts the file in front of you.
+		members filters a large type by name. includeSignatures adds the compiler's signatures, enough
+		to implement an interface from; includeDocumentation adds each summary's first sentence. Generated members are
+		marked, having no file to edit. includeInherited adds what base classes contribute.
 		""";
 
 	public const string FindSplitOptions = """

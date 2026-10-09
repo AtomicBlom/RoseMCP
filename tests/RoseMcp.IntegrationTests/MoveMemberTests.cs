@@ -232,6 +232,354 @@ public sealed class MoveMemberTests
 		thrown.Message.ShouldContain("is already in", Case.Sensitive);
 	}
 
+	/// <summary>
+	/// An instance member nothing calls and that reads nothing of its type moves like a static one. A
+	/// test method moving between fixtures is the shape: the runner finds it by attribute, so there is no
+	/// call site to give a receiver, and its body means the same in either fixture. Its documentation
+	/// comment and its attribute go with it.
+	/// </summary>
+	[Test]
+	public async Task Moves_an_instance_member_nothing_calls_and_that_reads_nothing_of_its_type()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await WriteFixturesAsync(fixture);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await MoveAsync(session, "Library.Misplaced.Adds_two_numbers", "Library.Placed");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.Notices.ShouldContain(notice => notice.Contains("Moved as an instance member", StringComparison.Ordinal));
+		result.Notices.ShouldNotContain(notice => notice.Contains("call site(s) now name", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Fixtures.cs");
+		var placed = text.IndexOf("class Placed", StringComparison.Ordinal);
+		var moved = text.IndexOf("public void Adds_two_numbers()", StringComparison.Ordinal);
+
+		moved.ShouldBeGreaterThan(placed);
+		text.ShouldContain(
+			"\t/// <summary>Adds two numbers, and reads nothing of the fixture.</summary>\r\n\t[Fact]\r\n"
+				+ "\tpublic void Adds_two_numbers()", Case.Sensitive);
+		text.IndexOf("Adds two numbers", StringComparison.Ordinal).ShouldBeGreaterThan(placed);
+	}
+
+	/// <summary>
+	/// What a fixture inherits, the type it moves to inherits too, so a call through an implicit
+	/// <c>this</c> to a member of their common base still reaches the same member.
+	/// </summary>
+	[Test]
+	public async Task Moves_an_instance_member_that_uses_what_both_types_inherit()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await WriteFixturesAsync(fixture);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await MoveAsync(session, "Library.Misplaced.Uses_the_shared_base", "Library.Placed");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		var text = await ReadAsync(fixture, "Fixtures.cs");
+
+		text.IndexOf("Uses_the_shared_base", StringComparison.Ordinal)
+			.ShouldBeGreaterThan(text.IndexOf("class Placed", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// A call a member makes to itself is a reference, and one that goes where the member goes. It is
+	/// not a call site to refuse over, nor one to rewrite.
+	/// </summary>
+	[Test]
+	public async Task Moves_an_instance_member_that_calls_itself()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await WriteFixturesAsync(fixture);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await MoveAsync(session, "Library.Misplaced.Counts_down", "Library.Placed");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		var text = await ReadAsync(fixture, "Fixtures.cs");
+
+		text.ShouldContain("remaining > 0 ? Counts_down(remaining - 1) : 0", Case.Sensitive);
+		text.IndexOf("Counts_down", StringComparison.Ordinal)
+			.ShouldBeGreaterThan(text.IndexOf("class Placed", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// Every other instance member is refused, with what decided it, and nothing is written. Each row is
+	/// one way a move would change what the member means: state of its own type, an explicit or captured
+	/// <c>this</c>, a base the target does not share, a primary constructor parameter, a type parameter,
+	/// a name that would bind to something else in the target, a name the target already answers to --
+	/// its own, inherited, or an extension's, any of which existing calls could leave for the moved
+	/// member -- a name the compiler binds by pattern, state a record's or a struct's equality covers,
+	/// dispatch a reference search cannot see, a type that cannot take it, and a call site, implicit
+	/// ones included.
+	/// </summary>
+	[Test]
+	[Arguments("Library.Misplaced.Reads_the_seed", "Library.Placed", "reads Misplaced._seed at line")]
+	[Arguments("Library.Misplaced.Calls_a_helper", "Library.Placed", "reads Misplaced.Helper at line")]
+	[Arguments("Library.Misplaced.Names_this", "Library.Placed", "names 'this' at line")]
+	[Arguments("Library.Misplaced.Captures_this", "Library.Placed", "reads Misplaced._seed at line")]
+	[Arguments("Library.Misplaced.Uses_the_shared_base", "Library.Unrelated", "reads FixtureBase.Shared at line")]
+	[Arguments("Library.Seeded.Reads_the_seed", "Library.Placed", "a parameter of Seeded's primary constructor")]
+	[Arguments("Library.Boxed.Make", "Library.Placed", "a type parameter of Boxed")]
+	[Arguments("Library.Misplaced.Uses_the_shared_base", "Library.Shadowing", "would mean Library.Shadowing.Shared()")]
+	[Arguments("Library.Misplaced.Logs_a_note", "Library.Noting", "would mean Library.Noting.Note(object)")]
+	[Arguments("Library.Misplaced.Close", "Library.Closing", "Closing already answers to Close, with Library.Closer.Close(), which it inherits")]
+	[Arguments("Library.Misplaced.Log", "Library.Logger", "Logger already answers to Log, with Library.Logger.Log(object)")]
+	[Arguments("Library.Misplaced.Trace", "Library.Logger", "Logger already answers to Trace, with the extension method Library.LoggerExtensions.Trace(")]
+	[Arguments("Library.Misplaced.Deconstruct", "Library.Placed", "a name the compiler looks up by pattern")]
+	[Arguments("Library.Bag.GetEnumerator", "Library.Placed", "with 1 reference(s), the first in BagUse.cs")]
+	[Arguments("Library.Misplaced._spare", "Library.Ledger", "Ledger is a record, whose generated Equals, GetHashCode and ToString")]
+	[Arguments("Library.Point.Spare", "Library.Placed", "Point is a struct, whose equality and layout")]
+	[Arguments("Library.Misplaced.Names_base", "Library.Placed", "names 'base' at line")]
+	[Arguments("Library.Misplaced.Adds_two_numbers", "Library.IRunnable", "IRunnable is an interface")]
+	[Arguments("Library.Misplaced._left", "Library.Placed", "declared in one statement with others (_left, _right)")]
+	[Arguments("Library.Misplaced.ToString", "Library.Placed", "is an override")]
+	[Arguments("Library.Runner.Run", "Library.Placed", "implements Library.IRunnable.Run() for Running")]
+	[Arguments("Library.Misplaced.Adds_two_numbers", "Library.Resettled", "Resettled is static")]
+	[Arguments("Library.Misplaced.Is_called", "Library.Placed", "with 1 reference(s), the first in Fixtures.cs")]
+	public async Task Refuses_an_instance_member_whose_move_would_change_what_it_means(
+		string symbol,
+		string targetType,
+		string reason)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await WriteFixturesAsync(fixture);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var before = await ReadAsync(fixture, "Fixtures.cs");
+
+		var thrown = await Should.ThrowAsync<ArgumentException>(() => MoveAsync(session, symbol, targetType)).OfExactType();
+
+		thrown.Message.ShouldContain(reason, Case.Sensitive);
+		(await ReadAsync(fixture, "Fixtures.cs")).ShouldBe(before);
+	}
+
+	/// <summary>
+	/// Test fixtures, some of whose members could move and some of which could not. Written by the tests
+	/// that use it rather than kept in the fixture, so no other test of the Members solution sees types
+	/// it never asked for.
+	/// </summary>
+	private static async Task WriteFixturesAsync(FixtureSolution fixture)
+	{
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "BagUse.cs"),
+			"""
+			namespace Library;
+
+			/// <summary>Reaches Bag.GetEnumerator only through a foreach, which names it nowhere.</summary>
+			public static class Emptying
+			{
+				public static int Sum(Bag bag)
+				{
+					var total = 0;
+
+					foreach (var item in bag) total += item;
+
+					return total;
+				}
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Fixtures.cs"),
+			"""
+			namespace Library;
+
+			/// <summary>Marks a test, which a runner finds by reflection rather than calls.</summary>
+			[AttributeUsage(AttributeTargets.Method)]
+			public sealed class FactAttribute : Attribute
+			{
+			}
+
+			/// <summary>What every fixture inherits.</summary>
+			public abstract class FixtureBase
+			{
+				protected int Shared() => 1;
+			}
+
+			/// <summary>A fixture holding tests that belong in another.</summary>
+			public sealed class Misplaced : FixtureBase
+			{
+				private readonly int _seed = 2;
+
+				/// <summary>Adds two numbers, and reads nothing of the fixture.</summary>
+				[Fact]
+				public void Adds_two_numbers()
+				{
+					var sum = 1 + 2;
+					Func<int, int> twice = value => value * 2;
+					_ = twice(sum);
+				}
+
+				[Fact]
+				public int Reads_the_seed() => _seed;
+
+				[Fact]
+				public int Calls_a_helper() => Helper();
+
+				[Fact]
+				public int Names_this() => this.GetHashCode();
+
+				[Fact]
+				public Func<int> Captures_this() => () => _seed + 1;
+
+				[Fact]
+				public int Uses_the_shared_base() => Shared() + 1;
+
+				[Fact]
+				public void Logs_a_note() => Note("hello");
+
+				[Fact]
+				public int Counts_down(int remaining) => remaining > 0 ? Counts_down(remaining - 1) : 0;
+
+				public void Close()
+				{
+				}
+
+				public int Is_called() => 3;
+
+				public int Calls_it() => Is_called();
+
+				public int Names_base() => base.GetHashCode();
+
+				public void Log(string text) => Console.WriteLine(text);
+
+				public void Trace(string text) => Console.WriteLine(text);
+
+				public void Deconstruct(out int first, out int second) => (first, second) = (1, 2);
+
+				private int _spare;
+
+				private int _left = 1, _right = 2;
+
+				public override string ToString() => "misplaced";
+
+				private static void Note(string text) => Console.WriteLine(text);
+
+				private int Helper() => _seed;
+			}
+
+			/// <summary>Where the misplaced tests belong.</summary>
+			public sealed class Placed : FixtureBase
+			{
+				[Fact]
+				public void Already_here()
+				{
+				}
+			}
+
+			/// <summary>A fixture that inherits nothing.</summary>
+			public sealed class Unrelated
+			{
+			}
+
+			/// <summary>A fixture whose own Shared hides the one every fixture inherits.</summary>
+			public sealed class Shadowing : FixtureBase
+			{
+				private new int Shared() => 2;
+			}
+
+			/// <summary>A fixture with a Note of its own, which takes anything.</summary>
+			public sealed class Noting
+			{
+				private static void Note(object value) => Console.WriteLine(value);
+			}
+
+			/// <summary>Something a fixture can close.</summary>
+			public class Closer
+			{
+				public void Close()
+				{
+				}
+			}
+
+			/// <summary>A fixture that inherits a Close that a moved one would hide.</summary>
+			public sealed class Closing : Closer
+			{
+			}
+
+			/// <summary>Something that runs, called only through an interface.</summary>
+			public interface IRunnable
+			{
+				void Run();
+			}
+
+			/// <summary>A Run that implements nothing itself, and that a derived type hands to an interface.</summary>
+			public class Runner
+			{
+				public void Run()
+				{
+				}
+			}
+
+			/// <summary>Implements IRunnable with the Run it inherits.</summary>
+			public sealed class Running : Runner, IRunnable
+			{
+			}
+
+			/// <summary>A fixture whose state comes in through its primary constructor.</summary>
+			public sealed class Seeded(int seed)
+			{
+				public int Reads_the_seed() => seed;
+			}
+
+			/// <summary>A fixture over a type it is given.</summary>
+			public sealed class Boxed<T>
+			{
+				public T? Make() => default;
+			}
+
+			/// <summary>Logs anything, which a call passing a string reaches today.</summary>
+			public sealed class Logger
+			{
+				public void Log(object value) => Console.WriteLine(value);
+			}
+
+			/// <summary>Traces through a Logger, for a call an instance Trace would take over.</summary>
+			public static class LoggerExtensions
+			{
+				public static void Trace(this Logger logger, string text) => logger.Log(text);
+			}
+
+			/// <summary>Calls on a Logger that a moved Log or Trace would quietly take over.</summary>
+			public static class Logging
+			{
+				public static void Run()
+				{
+					new Logger().Log("x");
+					new Logger().Trace("y");
+				}
+			}
+
+			/// <summary>Enumerable by pattern, which a foreach elsewhere reaches without naming.</summary>
+			public sealed class Bag
+			{
+				public IEnumerator<int> GetEnumerator()
+				{
+					yield return 1;
+				}
+			}
+
+			/// <summary>A record, whose equality takes in every field it holds.</summary>
+			public sealed record Ledger(int Total);
+
+			/// <summary>A struct, whose equality takes in every field it holds.</summary>
+			public struct Point
+			{
+				public int Spare { get; set; }
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+	}
+
 	private static Task<MemberEditResult> MoveAsync(
 		WorkspaceSession session,
 		string symbol,
@@ -286,6 +634,5 @@ public sealed class MoveMemberTests
 		var said = string.Join(" ", result.Notices);
 
 		said.ShouldContain("System.Globalization", Case.Sensitive);
-		said.ShouldContain("This introduced", Case.Sensitive);
 	}
 }

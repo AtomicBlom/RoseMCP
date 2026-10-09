@@ -48,6 +48,13 @@ public sealed record LiveDebugEventPage : LiveResult
 	public int Skipped { get; init; }
 
 	/// <summary>
+	/// Where the page stopped at its limit with matching events still buffered past it, how those
+	/// divide by kind and by exception type, so one exception among a page of module loads is seen to
+	/// be there and asked for by its type rather than paged to. Absent where the page holds every match.
+	/// </summary>
+	public LiveDebugEventShape? Beyond { get; init; }
+
+	/// <summary>
 	/// What could make this page read as more than it is. Empty on almost every call: the case worth
 	/// saying is a wait answered out of history rather than by something new, and saying it here costs
 	/// nothing on the calls that do not need it.

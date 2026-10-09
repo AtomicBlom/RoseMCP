@@ -76,7 +76,7 @@ public sealed class SolutionWriterTests
 
 		var outcome = await SolutionWriter.ApplyAsync(before, after, write: false, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken);
 
-		outcome.ChangedFiles.ShouldBe([path]);
+		outcome.ChangedFiles.Select(file => file.FilePath).ShouldBe([path]);
 		File.Exists(path).ShouldBeFalse("rendering the diff writes nothing");
 	}
 
@@ -105,7 +105,7 @@ public sealed class SolutionWriterTests
 		var outcome = await SolutionWriter.ApplyAsync(
 			before, after, write: false, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken);
 
-		outcome.ChangedFiles.ShouldBe([path]);
+		outcome.ChangedFiles.Select(file => file.FilePath).ShouldBe([path]);
 		CountOf(outcome.Diff, "+++ ").ShouldBe(1);
 	}
 

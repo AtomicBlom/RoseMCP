@@ -14,9 +14,6 @@ public sealed record PatternRewriteResult : WorkspaceMutationResult
 {
 	public required long Revision { get; init; }
 
-	/// <summary>False when this was a preview, or when nothing matched; nothing was written.</summary>
-	public required bool Applied { get; init; }
-
 	/// <summary>Every site a rule matched, rewritten or not.</summary>
 	public required int SitesMatched { get; init; }
 
@@ -26,7 +23,10 @@ public sealed record PatternRewriteResult : WorkspaceMutationResult
 	/// <summary>The sites a rule matched whose replacement would not compile there, and were left as they were.</summary>
 	public required int SitesSkipped { get; init; }
 
-	/// <summary>Calls into the rules' types that no rule matched.</summary>
+	/// <summary>
+	/// Calls into the rules' types that no rule matched: every one of them, whether or not
+	/// <see cref="Unmatched"/> lists its method.
+	/// </summary>
 	public required int SitesUnmatched { get; init; }
 
 	/// <summary>Each rule, in order, whether it matched anything or not.</summary>
@@ -35,20 +35,31 @@ public sealed record PatternRewriteResult : WorkspaceMutationResult
 	/// <summary>The skipped sites, grouped by the rule and the error that stopped them. Capped; the notices say how many more.</summary>
 	public required IReadOnlyList<PatternSkipGroup> Skipped { get; init; }
 
-	/// <summary>The unmatched calls, grouped by the method they call. Capped; the notices say how many more.</summary>
+	/// <summary>
+	/// The unmatched calls to methods some rule is written for, grouped by the overload they call: a
+	/// call to another overload of a method a rule binds is the gap in a catalog. Calls to methods no
+	/// rule names are counted in <see cref="SitesUnmatched"/> and a notice rather than listed, since a
+	/// narrow catalog over a wide scope would otherwise list every other method on the same types.
+	/// Capped; the notices say how many more.
+	/// </summary>
 	public required IReadOnlyList<PatternUnmatchedGroup> Unmatched { get; init; }
 
 	/// <summary>
-	/// The files worth looking at: every one with a skipped or unmatched site, then the most rewritten.
-	/// Capped; <see cref="FileCount"/> is the whole number.
+	/// The files worth looking at: every one with a skipped site or a call <see cref="Unmatched"/> would
+	/// list, then the most rewritten. Capped; <see cref="FileCount"/> is the whole number.
 	/// </summary>
 	public required IReadOnlyList<PatternFileOutcome> Files { get; init; }
 
-	/// <summary>How many files a rule matched in.</summary>
+	/// <summary>How many files a rule matched in, or had a call in that <see cref="Unmatched"/> would list.</summary>
 	public required int FileCount { get; init; }
 
-	/// <summary>The unified diff, while it is small enough to read; empty otherwise, with a notice saying so.</summary>
-	public required string Diff { get; init; }
+	/// <summary>
+	/// How many files this wrote, or would write. <see cref="WorkspaceMutationResult.ChangedFiles"/> names
+	/// them only up to a cap, with a notice past it: at the scale of a migration the paths are the
+	/// largest thing the result would carry, and <see cref="Files"/> already names the ones with
+	/// something to read.
+	/// </summary>
+	public required int FilesChanged { get; init; }
 
 	/// <summary>Whether the changed projects were compiled afterwards.</summary>
 	public bool Verified { get; init; }
@@ -59,8 +70,10 @@ public sealed record PatternRewriteResult : WorkspaceMutationResult
 	/// <summary>How many errors the change made go away.</summary>
 	public int ResolvedDiagnosticCount { get; init; }
 
-	/// <summary>Every error in the projects checked, after the change.</summary>
-	public int TotalErrorCount { get; init; }
+	/// <summary>
+	/// Errors in the projects checked that were there before the change and still are.
+	/// </summary>
+	public int PreexistingErrorCount { get; init; }
 
 	/// <summary>The projects that were compiled to verify it.</summary>
 	public IReadOnlyList<string> ProjectsChecked { get; init; } = [];
@@ -74,7 +87,8 @@ public sealed record PatternRuleOutcome
 
 	/// <summary>
 	/// The overloads its find covers, as addresses: what says which of a method's overloads a rule
-	/// reaches, without the caller having to work it out from the text.
+	/// reaches, without the caller having to work it out from the text. Only the first for a rule that
+	/// matched nothing, which needs no more than that to say what it bound to.
 	/// </summary>
 	public required IReadOnlyList<string> BoundTo { get; init; }
 
@@ -96,7 +110,7 @@ public sealed record PatternRuleOutcome
 	/// </summary>
 	public required int Outranked { get; init; }
 
-	/// <summary>One site it matched, before and after, in a preview.</summary>
+	/// <summary>One site it matched, before and after, in a preview; absent when it matched nothing.</summary>
 	public PatternSample? Sample { get; init; }
 }
 

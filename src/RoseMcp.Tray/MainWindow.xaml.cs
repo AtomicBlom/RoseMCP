@@ -238,9 +238,9 @@ public sealed partial class MainWindow : Window
 		MergeSessions(sessions);
 
 		var running = workspaces.Sum(summary => summary.Running.Count) + sessions.Sum(summary => summary.Running.Count);
-		Headline.Text = DescribeHeadline(workspaces, sessions);
-		Subtitle.Text = DescribeSubtitle(workspaces, sessions, running);
-		Tray.ToolTipText = DescribeTooltip(workspaces.Count, sessions.Count, running);
+		Headline.Text = TraySummary.Headline(workspaces, sessions);
+		Subtitle.Text = TraySummary.Subtitle(workspaces, sessions, running);
+		Tray.ToolTipText = TraySummary.Tooltip(workspaces, sessions.Count, running);
 
 		// Empty only when there is neither kind of thing. A machine with a debug session and no
 		// loaded solution is not idle, and telling it how to register an endpoint would be answering
@@ -495,75 +495,6 @@ public sealed partial class MainWindow : Window
 
 			existing.Update(summary);
 		}
-	}
-
-	/// <summary>
-	/// The one line to read: how much is loaded, whether it is up yet, and how many targets are
-	/// being debugged.
-	/// </summary>
-	public static string DescribeHeadline(
-		IReadOnlyList<WorkspaceSummary> workspaces,
-		IReadOnlyList<LiveAppSessionSummary> sessions)
-	{
-		var debugging = sessions.Count > 0 ? Format.Count(sessions.Count, "session") : null;
-
-		if (workspaces.Count == 0)
-		{
-			return debugging is null ? "Nothing loaded" : $"Debugging {debugging}";
-		}
-
-		var solutions = Format.Count(workspaces.Count, "solution");
-		var allLoading = workspaces.All(summary => summary.State == WorkspaceState.Loading);
-		var loaded = allLoading ? $"Loading {solutions}" : $"{solutions} loaded";
-
-		return debugging is null ? loaded : $"{loaded}, debugging {debugging}";
-	}
-
-	/// <summary>What it costs, whether it is busy, and whether anything below needs a look.</summary>
-	public static string DescribeSubtitle(
-		IReadOnlyList<WorkspaceSummary> workspaces,
-		IReadOnlyList<LiveAppSessionSummary> sessions,
-		int running)
-	{
-		if (workspaces.Count == 0 && sessions.Count == 0) return "Waiting for a client to ask about one.";
-
-		var parts = new List<string>();
-
-		if (workspaces.Count > 0)
-		{
-			var workingSet = workspaces.Sum(summary => summary.WorkingSetBytes ?? 0);
-			parts.Add($"{Format.Bytes(workingSet)} working set");
-		}
-
-		parts.Add(running == 0 ? "idle" : $"{Format.Count(running, "operation")} running");
-
-		var troubled = workspaces.Count(summary => summary.State is WorkspaceState.Degraded or WorkspaceState.Faulted);
-		if (troubled > 0) parts.Add(troubled == 1 ? "1 needs attention" : $"{troubled} need attention");
-
-		// A held target is the one state here somebody has to end: an app frozen by a debugger stays
-		// frozen until its safety timer or a person lets it go.
-		var held = sessions.Count(summary => summary.Stop is not null);
-		if (held > 0) parts.Add($"{Format.Count(held, "target")} stopped");
-
-		return string.Join(Format.Separator, parts);
-	}
-
-	/// <summary>
-	/// Kept to a few words: this is read hovering over a 16-pixel icon, and it is the only view of
-	/// the broker available without opening the window.
-	/// </summary>
-	public static string DescribeTooltip(int workspaces, int sessions, int running)
-	{
-		if (workspaces == 0 && sessions == 0) return "RoseMCP - nothing loaded";
-
-		var parts = new List<string>();
-
-		if (workspaces > 0) parts.Add(Format.Count(workspaces, "solution"));
-		if (sessions > 0) parts.Add(Format.Count(sessions, "session"));
-
-		parts.Add(running == 0 ? "idle" : $"{running} running");
-
-		return $"RoseMCP - {string.Join(", ", parts)}";
 	}
 
 	/// <summary>How a Claude Code user points their agent at this broker over http.</summary>

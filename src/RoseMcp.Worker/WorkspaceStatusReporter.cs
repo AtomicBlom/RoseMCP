@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 
@@ -14,13 +16,14 @@ namespace RoseMcp.Worker;
 /// solution was first opened. After an hour of edits those are not the same thing.
 /// </para>
 /// </summary>
-public static class WorkspaceStatusReporter
+public static partial class WorkspaceStatusReporter
 {
 	public static async Task<WorkspaceStatusReport> DescribeAsync(
 		Solution solution,
 		string solutionPath,
 		IReadOnlyList<WorkspaceDiagnostic> workspaceDiagnostics,
 		RestoreReport? restore,
+		IReadOnlyList<ProjectEvaluationFailure> evaluationFailures,
 		long revision,
 		double loadSeconds,
 		CancellationToken cancellationToken,
@@ -36,7 +39,7 @@ public static class WorkspaceStatusReporter
 		var analyzerFailures = analyzerLoader?.LoadFailures ?? [];
 
 		var degradedReasons = (IReadOnlyList<string>)
-			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore, build, analyzerFailures),
+			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore, build, analyzerFailures, evaluationFailures),
 			 .. XamlReasons(xamlReports)];
 
 		return new WorkspaceStatusReport
@@ -50,9 +53,10 @@ public static class WorkspaceStatusReporter
 			LoadDiagnosticCount = workspaceDiagnostics.Count,
 			DegradedReasons = degradedReasons,
 			AnalyzerLoadFailures = analyzerFailures,
+			EvaluationFailures = evaluationFailures,
 			BuildConfiguration = build?.Describe(),
 			AvailableConfigurations = build?.Available.Configurations ?? [],
-			Notices = [.. NoticesFor(build, solution, cancellationToken)],
+			Notices = [.. NoticesFor(build, solution, workspaceDiagnostics, evaluationFailures, cancellationToken)],
 			Restore = restore,
 			LoadSeconds = loadSeconds,
 		};
@@ -200,6 +204,197 @@ public static class WorkspaceStatusReporter
 			+ "generator colliding, and only one of them loaded. Rebuild them, or check their dependencies and "
 			+ "the Roslyn version they were built against, then reload. analyzerLoadFailures has each message.";
 	}
+
+	/// <summary>
+	/// The one reason covering projects that name an SDK and that this worker's own MSBuild could not
+	/// evaluate, or null when every such project evaluated.
+	/// <para>
+	/// Degrading, where the same failure in a legacy project is only a notice, because an SDK project is
+	/// exactly what the SDK's own MSBuild exists to evaluate: when it cannot, either the project is broken or
+	/// MSBuild in this process is. Grouped by message, because one cause failing every project is one message
+	/// carrying a count, and a line per project would bury it.
+	/// </para>
+	/// <para>
+	/// Said as the worker being broken only on the evidence that tells the two apart: every SDK project failed
+	/// here, and the design-time build -- which runs in a build host of its own -- loaded every one of them. A
+	/// broken import or a malformed <c>Directory.Build.props</c> fails both, and telling someone to restart the
+	/// worker over that is wrong advice; legacy projects fail here by design, so they count toward neither side.
+	/// </para>
+	/// </summary>
+	/// <param name="failures">Every project the worker's own MSBuild could not evaluate.</param>
+	/// <param name="projectCount">How many distinct project files the solution loaded.</param>
+	/// <param name="loadedProjects">The project files the design-time build loaded successfully.</param>
+	public static string? EvaluationReason(
+		IReadOnlyList<ProjectEvaluationFailure> failures,
+		int projectCount,
+		IReadOnlySet<string> loadedProjects)
+	{
+		var sdk = failures.Where(failure => failure.NamesSdk).ToArray();
+		if (sdk.Length == 0) return null;
+
+		var messages = Grouped(sdk);
+		var sdkProjects = projectCount - (failures.Count - sdk.Length);
+		var everySdkProjectFailed = sdk.Length >= sdkProjects;
+		var buildHostLoadedThem = sdk.All(failure => loadedProjects.Contains(failure.Project));
+
+		if (everySdkProjectFailed && buildHostLoadedThem)
+		{
+			return $"This worker's own MSBuild could not evaluate any of the solution's {Count(sdk.Length, "SDK project", "SDK projects")}, "
+				+ "though the design-time build, in a process of its own, loaded every one of them. That says this worker's "
+				+ $"MSBuild is broken -- usually an SDK it can no longer resolve -- rather than that the projects are: {messages}. "
+				+ "What they import is unknown, so every .props or .targets change reloads the whole solution, and a worker in this "
+				+ "state cannot be relied on for anything that resolves through MSBuild or loads an assembly afterwards. Nothing in "
+				+ "the solution fixes this: rose_workspace_reload starts a fresh worker. evaluationFailures has each project's message.";
+		}
+
+		return $"{Count(sdk.Length, "project that names an SDK", "projects that name an SDK")} could not be evaluated by this "
+			+ $"worker's own MSBuild: {messages}. What they import is unknown here, so every .props or .targets change reloads "
+			+ "the whole solution. If the message names something in the project or a build file it imports, fix that; if the "
+			+ "design-time build loaded the project anyway, MSBuild in this process is going wrong, and rose_workspace_reload "
+			+ "starts a fresh worker. evaluationFailures has each project's message.";
+	}
+
+	/// <summary>
+	/// The one notice covering projects that name no SDK and could not be evaluated, or null when there are none.
+	/// <para>
+	/// Not degrading: a legacy project's targets ship only with Visual Studio's MSBuild, which the design-time build
+	/// uses and this evaluation cannot, so its failure here is expected and its answers are as good as any.
+	/// </para>
+	/// </summary>
+	public static string? EvaluationNotice(IReadOnlyList<ProjectEvaluationFailure> failures)
+	{
+		var legacy = failures.Where(failure => !failure.NamesSdk).ToArray();
+		if (legacy.Length == 0) return null;
+
+		return $"{Count(legacy.Length, "project that names no SDK", "projects that name no SDK")} could not be evaluated "
+			+ $"by this worker's own MSBuild: {Name(legacy.Select(ProjectName))}. That is expected of a legacy project, whose "
+			+ "targets ship with Visual Studio's MSBuild, which the design-time build uses, so it does not make the workspace "
+			+ "degraded. What they import is unknown here, so every .props or .targets change reloads the whole solution. "
+			+ "evaluationFailures has each project's message.";
+	}
+
+	/// <summary>
+	/// The one reason covering assemblies tool calls failed to load for this worker's own code, or null when
+	/// none have.
+	/// <para>
+	/// Grouped by assembly, each naming the tools that failed on it, because one assembly is one broken path
+	/// through the worker and the tools are how a caller recognises which of its answers are missing. Without
+	/// this the workspace goes on reporting itself healthy while two tools fail on every call, and the only
+	/// way to find out is to be the next caller.
+	/// </para>
+	/// </summary>
+	public static string? AssemblyLoadReason(IReadOnlyList<AssemblyLoadFault> faults)
+	{
+		if (faults.Count == 0) return null;
+
+		var assemblies = faults
+			.GroupBy(fault => fault.Assembly, StringComparer.OrdinalIgnoreCase)
+			.Select(group => $"{group.Key} ({string.Join(", ", group.Select(fault => fault.Tool).Distinct(StringComparer.Ordinal))})")
+			.ToArray();
+
+		return $"This worker could not load {Count(assemblies.Length, "assembly", "assemblies")} its own code needs, so the "
+			+ $"tools that reach that code fail on every call while the rest answer: {Name(assemblies)}. "
+			+ (faults.Any(fault => fault.RuntimeDirectoryMissing) ? AssemblyLoadFault.RuntimeGone : string.Empty)
+			+ "A running process does not recover from this and nothing in the solution causes it: rose_workspace_reload "
+			+ "starts a fresh worker.";
+	}
+
+	/// <summary>
+	/// The one notice a read carries from a workspace that is degraded, or null when nothing degrades it.
+	/// <para>
+	/// A read cannot report what its workspace could not see: a project whose design-time build failed
+	/// resolves nothing and so reports nothing, and a generator that did not load writes nothing for the
+	/// compiler to complain about. An empty list from a degraded workspace is therefore not the fact an empty
+	/// list from a healthy one is, and without this the two read the same. One line rather than the reasons,
+	/// because it rides on every read and the reasons, each with its fix, are what status is for: the first
+	/// reason's opening sentence is the why, since every reason leads with what is wrong and ends with the
+	/// remedy.
+	/// </para>
+	/// <para>
+	/// The why is held to <see cref="MaxDegradedWhy"/> characters. An opening sentence can quote what MSBuild
+	/// said for every project that failed, and a quote or bracket left open in one of those messages leaves no
+	/// full stop to find, so unbounded the line would grow with the solution's failures on every read and every
+	/// batch -- the volume that gets a notice read past.
+	/// </para>
+	/// </summary>
+	/// <param name="reasons">Why the workspace is degraded, as status would list them; empty when it is not.</param>
+	public static string? DegradedNotice(IReadOnlyList<string> reasons)
+	{
+		if (reasons.Count == 0) return null;
+
+		var others = reasons.Count == 1 ? string.Empty : $" {Count(reasons.Count - 1, "more reason", "more reasons")} besides.";
+
+		return "This workspace is degraded, so this answer can be missing what it could not see rather than reporting it: "
+			+ $"{Bounded(FirstSentence(reasons[0]), MaxDegradedWhy)}{others} Ask rose_workspace_status for every reason and its fix.";
+	}
+
+	/// <summary>
+	/// The most of a reason a read's degraded notice repeats. Enough for every reason's opening sentence that
+	/// names its cause and a few of its projects, which is what the folded reasons are written to fit; past
+	/// it, the sentence is quoting MSBuild, and status has the quote.
+	/// </summary>
+	public const int MaxDegradedWhy = 240;
+
+	/// <summary>
+	/// <paramref name="text"/> cut to at most <paramref name="max"/> characters at a word boundary, an ellipsis
+	/// saying it was cut, or the text itself where it fits.
+	/// </summary>
+	private static string Bounded(string text, int max)
+	{
+		if (text.Length <= max) return text;
+
+		const string Ellipsis = "...";
+		var room = max - Ellipsis.Length;
+		var space = text.LastIndexOf(' ', room);
+		var cut = space > room / 2 ? space : room;
+
+		return $"{text[..cut].TrimEnd(' ', ',', ';', ':')}{Ellipsis}";
+	}
+
+	/// <summary>
+	/// A reason's opening sentence, ended with a full stop. A full stop inside parentheses or double quotes
+	/// does not end it, since that is where a reason quotes MSBuild or names a dialect's own explanation.
+	/// </summary>
+	private static string FirstSentence(string reason)
+	{
+		var depth = 0;
+		var quoted = false;
+
+		for (var index = 0; index < reason.Length; index++)
+		{
+			switch (reason[index])
+			{
+				case '(':
+					depth++;
+					break;
+				case ')':
+					depth = Math.Max(0, depth - 1);
+					break;
+				case '"':
+					quoted = !quoted;
+					break;
+				case '.' when depth == 0 && !quoted && (index + 1 == reason.Length || reason[index + 1] == ' '):
+					return reason[..(index + 1)];
+			}
+		}
+
+		var trimmed = reason.TrimEnd();
+
+		return trimmed.EndsWith('.') ? trimmed : $"{trimmed}.";
+	}
+
+	/// <summary>
+	/// Failures grouped by what MSBuild said, the commonest first, each naming a few of its projects.
+	/// </summary>
+	private static string Grouped(IEnumerable<ProjectEvaluationFailure> failures) =>
+		string.Join("; ", failures
+			.GroupBy(failure => failure.Message, StringComparer.Ordinal)
+			.OrderByDescending(group => group.Count())
+			.Select(group => $"\"{group.Key}\" ({Count(group.Count(), "project", "projects")}: {Name(group.Select(ProjectName))})"));
+
+	/// <summary>A project file's name without its directory or extension, which is how a project is named everywhere else.</summary>
+	private static string ProjectName(ProjectEvaluationFailure failure) =>
+		Path.GetFileNameWithoutExtension(failure.Project);
 
 	/// <summary>
 	/// The one reason covering projects left with no restore output, or null when none were.
@@ -361,13 +556,31 @@ public static class WorkspaceStatusReporter
 	/// It is still worth saying, because the thing it warns about does not present as a build
 	/// failure. It presents as a test failing for a reason that has nothing to do with the change.
 	/// </para>
+	/// <para>
+	/// A reference left unresolved because its project has not been built is a notice for the same
+	/// reason: the projects still load, and the remedy is a build rather than anything about trust.
+	/// </para>
 	/// </summary>
 	private static IEnumerable<string> NoticesFor(
 		BuildProperties? build,
 		Solution solution,
+		IReadOnlyList<WorkspaceDiagnostic> workspaceDiagnostics,
+		IReadOnlyList<ProjectEvaluationFailure> evaluationFailures,
 		CancellationToken cancellationToken)
 	{
 		if (build?.Notice is { } notice) yield return notice;
+
+		if (EvaluationNotice(evaluationFailures) is { } unevaluated) yield return unevaluated;
+
+		var messages = workspaceDiagnostics.Select(diagnostic => diagnostic.Message).ToArray();
+
+		// Only read the project files when there is an unresolved reference to attribute, since status is asked often
+		// and this is the only thing here that needs to know which projects name an SDK.
+		var anyUnresolved = messages.Any(message => message.Contains(UnresolvedMarker, StringComparison.Ordinal));
+		if (anyUnresolved && UnbuiltReferenceNotice(build, messages, Outputs(solution), File.Exists) is { } unbuilt)
+		{
+			yield return unbuilt;
+		}
 
 		var stale = BuildFreshness.Of(solution, project: null, cancellationToken)
 			.Count(project => project.Stale);
@@ -386,14 +599,204 @@ public static class WorkspaceStatusReporter
 	private static string? WrongPlatformSuspicion(
 		BuildProperties? build,
 		IReadOnlyList<WorkspaceDiagnostic> diagnostics) =>
-		build?.SuspectWrongPlatform(diagnostics.Select(diagnostic => diagnostic.Message));
+		build?.SuspectWrongPlatform(diagnostics.Select(diagnostic => diagnostic.Message), File.Exists);
+
+	/// <summary>A project's identity and the file its build writes, which is what an unresolved reference names.</summary>
+	/// <param name="Name">The project's name.</param>
+	/// <param name="FilePath">The project file.</param>
+	/// <param name="OutputFilePath">The assembly or metadata file its build writes; empty where Roslyn does not know it.</param>
+	/// <param name="NamesSdk">
+	/// Whether the project file names an SDK, which decides whether <c>dotnet build</c> can build it or it needs MSBuild.
+	/// </param>
+	public readonly record struct ProjectOutput(string Name, string FilePath, string OutputFilePath, bool NamesSdk = true);
+
+	/// <summary>
+	/// The notice for references the design-time build could not resolve because the in-solution project that
+	/// writes them has not been built, naming each such project, what wanted it, and the build that fixes it;
+	/// null when no load diagnostic is that.
+	/// <para>
+	/// MSBuild says only "Cannot resolve Assembly or Windows Metadata file", with a path. That is accurate and
+	/// says nothing about what to do, and on a fresh clone or worktree it is the first thing status shows for
+	/// a WinUI or UWP solution, whose design-time build looks for a referenced project's output on disk rather
+	/// than in the solution. The path is the referenced project's own output, so the remedy is known exactly:
+	/// build that project, then reload. A path no project in the solution writes is some other failure -- a
+	/// package or SDK reference -- and is left to the raw diagnostic, since naming a project to build for it
+	/// would be wrong advice.
+	/// </para>
+	/// <para>
+	/// A notice rather than a degraded reason: the projects still load, and the remedy is a build rather than
+	/// anything about whether to trust the answers. Where every path named has been built since the load, it
+	/// says that a reload is all that is left.
+	/// </para>
+	/// <para>
+	/// Nothing where the platform this server chose is suspected, which takes the same outputs existing under
+	/// another declared platform: then the remedy is to reload under that one, and building under this one
+	/// would build for the platform that is the mistake. Where nothing exists under any platform, as on a
+	/// fresh clone, the platform is not suspected and the remedy is this one.
+	/// </para>
+	/// <para>
+	/// The build named is the one the load ran under -- its configuration, platform and pinned properties,
+	/// passed as the restore passes them -- because a plain build writes to a different output folder and the
+	/// reference would stay unresolved after the caller did as told. A project that names no SDK, which is
+	/// every UWP one, is built with MSBuild, since <c>dotnet build</c> cannot build it.
+	/// </para>
+	/// </summary>
+	/// <param name="build">The properties the solution loaded under, which say whether the platform is suspect.</param>
+	/// <param name="diagnosticMessages">The load diagnostics, as MSBuild worded them.</param>
+	/// <param name="projects">Every project in the solution, with the file its build writes.</param>
+	/// <param name="exists">Whether a file is on disk now.</param>
+	public static string? UnbuiltReferenceNotice(
+		BuildProperties? build,
+		IReadOnlyList<string> diagnosticMessages,
+		IReadOnlyList<ProjectOutput> projects,
+		Func<string, bool> exists)
+	{
+		if (build?.SuspectWrongPlatform(diagnosticMessages, exists) is not null) return null;
+
+		var unbuilt = new Dictionary<string, (ProjectOutput Producer, SortedSet<string> Wanting, List<string> Paths)>(
+			StringComparer.OrdinalIgnoreCase);
+
+		foreach (var message in diagnosticMessages)
+		{
+			var unresolved = UnresolvedReference().Match(message);
+			if (!unresolved.Success) continue;
+
+			var path = unresolved.Groups["path"].Value;
+			if (Producer(path, projects) is not { } producer) continue;
+
+			if (!unbuilt.TryGetValue(producer.FilePath, out var entry))
+			{
+				entry = (producer, new SortedSet<string>(StringComparer.OrdinalIgnoreCase), []);
+				unbuilt[producer.FilePath] = entry;
+			}
+
+			entry.Paths.Add(path);
+
+			var wanting = ProcessedProject().Match(message);
+			if (wanting.Success) entry.Wanting.Add(Path.GetFileNameWithoutExtension(wanting.Groups["project"].Value));
+		}
+
+		if (unbuilt.Count == 0) return null;
+
+		var named = string.Join(", ", unbuilt.Values.Select(entry => entry.Wanting.Count == 0
+			? ProjectName(entry.Producer)
+			: $"{ProjectName(entry.Producer)} (wanted by {string.Join(", ", entry.Wanting)})"));
+
+		var one = unbuilt.Count == 1;
+		var builtSince = unbuilt.Values.All(entry => entry.Paths.All(exists));
+		if (builtSince)
+		{
+			return $"The design-time build could not resolve the output of {named}, which had not been built when the "
+				+ $"solution loaded. {(one ? "It has" : "They have")} been built since, so rose_workspace_reload clears this.";
+		}
+
+		var builds = string.Join(" and ", unbuilt.Values.Select(entry => BuildCommand(entry.Producer, build)));
+		var needsMsBuild = unbuilt.Values.Any(entry => !entry.Producer.NamesSdk);
+		var msBuild = needsMsBuild
+			? " A project that names no SDK, which is every UWP one, is built with MSBuild, since dotnet build cannot build it."
+			: string.Empty;
+
+		return $"The design-time build could not resolve the output of {named}, because {(one ? "it has" : "they have")} "
+			+ "not been built: a WinUI or UWP project's design-time build looks for a referenced project's output on disk "
+			+ $"rather than in the solution. Build {(one ? "it" : "them")} first, under the properties this load used, with "
+			+ $"{builds}, then rose_workspace_reload.{msBuild}";
+	}
+
+	/// <summary>
+	/// The command that builds a project under the properties the load ran under, so its output lands where the
+	/// load looks: <c>dotnet build</c> for a project that names an SDK, <c>msbuild</c> for one that does not.
+	/// </summary>
+	private static string BuildCommand(ProjectOutput project, BuildProperties? build)
+	{
+		var tool = project.NamesSdk ? "dotnet build" : "msbuild";
+		var properties = (build?.AsRestoreArguments() ?? [])
+			.Select(argument => argument.Contains(' ', StringComparison.Ordinal) ? $"\"{argument}\"" : argument);
+
+		return string.Join(" ", [tool, $"\"{project.FilePath}\"", .. properties]);
+	}
+
+	/// <summary>
+	/// Every project with the file its build writes and whether it names an SDK. A project file that cannot be
+	/// read is taken to name one, which is what every project this server can evaluate itself does.
+	/// </summary>
+	private static ProjectOutput[] Outputs(Solution solution) =>
+	[
+		.. solution.Projects.Select(project =>
+			new ProjectOutput(
+				project.Name,
+				project.FilePath ?? string.Empty,
+				project.OutputFilePath ?? string.Empty,
+				NamesSdk(project.FilePath))),
+	];
+
+	private static bool NamesSdk(string? projectFile)
+	{
+		if (string.IsNullOrEmpty(projectFile) || !File.Exists(projectFile)) return true;
+
+		try
+		{
+			return ProjectItemStyle.NamesSdk(File.ReadAllText(projectFile));
+		}
+		catch (IOException)
+		{
+			return true;
+		}
+		catch (UnauthorizedAccessException)
+		{
+			return true;
+		}
+	}
+
+	/// <summary>The words MSBuild opens an unresolved reference with, which is what <see cref="UnresolvedReference"/> matches.</summary>
+	private const string UnresolvedMarker = "Cannot resolve Assembly or Windows Metadata file";
+
+	/// <summary>
+	/// The project whose build writes a file, matched by the whole path where it can be and otherwise by file
+	/// name, since a design-time build under other global properties can look for the same assembly under a
+	/// different output folder.
+	/// </summary>
+	private static ProjectOutput? Producer(string path, IReadOnlyList<ProjectOutput> projects)
+	{
+		var writers = projects.Where(project => project.OutputFilePath.Length > 0).ToArray();
+
+		foreach (var project in writers)
+		{
+			if (SamePath(project.OutputFilePath, path)) return project;
+		}
+
+		var fileName = Path.GetFileName(path);
+
+		foreach (var project in writers)
+		{
+			if (Path.GetFileName(project.OutputFilePath).Equals(fileName, StringComparison.OrdinalIgnoreCase)) return project;
+		}
+
+		return null;
+	}
+
+	private static bool SamePath(string one, string other) =>
+		string.Equals(
+			one.Replace('/', '\\'),
+			other.Replace('/', '\\'),
+			StringComparison.OrdinalIgnoreCase);
+
+	/// <summary>A project as a caller names it: its file's name, so the targets of a multi-targeted project read as one.</summary>
+	private static string ProjectName(ProjectOutput project) =>
+		project.FilePath.Length > 0 ? Path.GetFileNameWithoutExtension(project.FilePath) : project.Name;
+
+	[GeneratedRegex(@"Cannot resolve Assembly or Windows Metadata file '(?<path>[^']+)'", RegexOptions.CultureInvariant)]
+	private static partial Regex UnresolvedReference();
+
+	[GeneratedRegex(@"processing the file '(?<project>[^']+)'", RegexOptions.CultureInvariant)]
+	private static partial Regex ProcessedProject();
 
 	private static IReadOnlyList<string> CollectDegradedReasons(
 		IReadOnlyList<WorkspaceDiagnostic> workspaceDiagnostics,
 		IReadOnlyList<ProjectStatus> projects,
 		RestoreReport? restore,
 		BuildProperties? build,
-		IReadOnlyList<AnalyzerLoadFailure> analyzerLoadFailures)
+		IReadOnlyList<AnalyzerLoadFailure> analyzerLoadFailures,
+		IReadOnlyList<ProjectEvaluationFailure> evaluationFailures)
 	{
 		var reasons = new List<string>();
 
@@ -437,6 +840,23 @@ public static class WorkspaceStatusReporter
 		// the project reports a clean load and a generator count of zero -- a healthy-looking workspace
 		// that is not one, and the second of the three failures this server exists to prevent.
 		if (AnalyzerReason(analyzerLoadFailures) is { } analyzers) reasons.Add(analyzers);
+
+		// The design-time build runs in Roslyn's build host, a process of its own, so it can load every project
+		// while this process's MSBuild evaluates none of them -- a workspace that reports Loaded from a worker
+		// that has lost its SDK. Counted against distinct project files, which is what the evaluation walked:
+		// a multi-targeted project is several projects here and one evaluation there.
+		var projectFiles = projects
+			.Select(project => project.FilePath)
+			.Where(path => path.Length > 0)
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.Count();
+
+		var loadedProjects = projects
+			.Where(project => project.LoadedSuccessfully && project.FilePath.Length > 0)
+			.Select(project => Path.GetFullPath(project.FilePath))
+			.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+		if (EvaluationReason(evaluationFailures, projectFiles, loadedProjects) is { } evaluation) reasons.Add(evaluation);
 
 		// Counted, but only degrading when something actually came back impaired. MSBuild's Failure
 		// kind covers complaints that have no bearing on whether a project compiled, and a status

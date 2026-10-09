@@ -116,13 +116,23 @@ internal sealed class EditPipeline
 	/// <para>
 	/// A preview is verified too: what an edit would break is the question a preview is asking.
 	/// </para>
+	/// <para>
+	/// <paramref name="usingsReach"/> is the files the tool's own <c>usings</c> argument imports into,
+	/// and empty for a tool that has none. Required rather than defaulted, because the import a
+	/// verification suggests names that argument only for a file it reaches, and a tool that left it
+	/// out would go back to advising an argument it does not take.
+	/// </para>
 	/// </summary>
-	internal async Task VerifyAsync(string path, IReadOnlyList<string> scope, CancellationToken cancellationToken)
+	internal async Task VerifyAsync(
+		string path,
+		IReadOnlyList<string> scope,
+		IReadOnlyCollection<string> usingsReach,
+		CancellationToken cancellationToken)
 	{
 		if (!_verify || !Changed) return;
 
 		Verification = await EditVerification.RunAsync(
-			_diagnostics, _snapshot.Solution, Solution, scope, path, cancellationToken);
+			_diagnostics, _snapshot.Solution, Solution, scope, path, usingsReach, cancellationToken);
 	}
 
 	/// <summary>
@@ -136,6 +146,7 @@ internal sealed class EditPipeline
 		Asked asked,
 		string path,
 		IReadOnlyList<string> scope,
+		IReadOnlyCollection<string> usingsReach,
 		CancellationToken cancellationToken)
 	{
 		if (ReferenceEquals(rewritten, Solution)) return;
@@ -144,7 +155,7 @@ internal sealed class EditPipeline
 		Outcome = await WrittenAsync(rewritten, asked, cancellationToken);
 
 		Verification = await EditVerification.RunAsync(
-			_diagnostics, _snapshot.Solution, rewritten, scope, path, cancellationToken);
+			_diagnostics, _snapshot.Solution, rewritten, scope, path, usingsReach, cancellationToken);
 	}
 
 	/// <summary>
@@ -171,62 +182,36 @@ internal sealed class EditPipeline
 	/// A tool's own lines come after these. Nothing here knows what the tool was for, which is what
 	/// makes it the same sentence from all of them.
 	/// </para>
+	/// <para>
+	/// Each line is said only where it is true of this call and is not already a field. Whether this
+	/// was a preview is <c>applied</c>, whether anything compiled is <c>verified</c>, and the counts
+	/// of errors introduced, resolved and already there are fields too; a sentence repeating one costs
+	/// every call and teaches the caller to skim the channel the rare lines arrive on. What is true of
+	/// every call -- that analyzers run where a write lands -- is in the tool descriptions.
+	/// </para>
 	/// </summary>
 	internal IEnumerable<string> Report()
 	{
-		if (!_apply) yield return "Preview only; nothing was written to disk.";
-
-		// What the diff could not show. Said before the verification lines, because a caller reading a
-		// result whose diff looks empty is asking about the write rather than about the compile.
+		// What the write did beyond what it was asked to. Said before the verification lines, because it is
+		// about whether to keep the change at all.
 		foreach (var notice in Outcome.Notices) yield return notice;
 
-		if (!Verification.Ran)
-		{
-			if (Changed)
-			{
-				yield return "Nothing was compiled, so this says nothing about whether the code is sound. Pass "
-					+ "verify=true, or ask rose_diagnostics.";
-			}
-
-			yield break;
-		}
+		if (!Verification.Ran) yield break;
 
 		foreach (var notice in Verification.Notices) yield return notice;
 
-		var compiled = string.Join(", ", Verification.Projects);
-
-		// What this edit did, in prose, because the entries alone leave it to the reader to notice
-		// that a list is not empty. Said whether or not the list was cut, since a count of three and
-		// a count of three hundred want the same sentence and only one of them fits in the list.
-		if (Verification.Introduced.Count > 0)
+		// Only where the list was cut, since its length is otherwise the count.
+		if (Verification.Introduced.Count > Listed)
 		{
-			yield return Verification.Introduced.Count > Listed
-				? $"This introduced {Verification.Introduced.Count} error(s) in {compiled}; the first {Listed} are listed."
-				: $"This introduced {Verification.Introduced.Count} error(s) in {compiled}.";
+			yield return $"This introduced {Verification.Introduced.Count} errors; introducedDiagnostics lists the first {Listed}.";
 		}
 
-		// What it put right, which is the other half of what an edit did and was said by one tool out
-		// of the six. Every result carries the count; only the import tool told anybody.
-		if (Verification.ResolvedCount > 0)
-		{
-			yield return $"{Verification.ResolvedCount} error(s) went away.";
-		}
+		// Which compile ran is a fact no field states, and the one line a clean result carries.
+		if (Verification.HasNoErrors) yield return Verification.Clean(string.Join(", ", Verification.Projects));
 
-		if (Verification.TotalCount == 0) yield return Verification.Clean(compiled);
-
-		var existing = Verification.TotalCount - Verification.Introduced.Count;
-
-		if (existing > 0)
-		{
-			// The count is analyzer-inclusive wherever the edit wrote, and rose_diagnostics leaves
-			// analyzers out by default, so the bare advice sends a caller to a tool that answers 0
-			// about 297 errors, which reads as the two disagreeing rather than as a default.
-			yield return Verification.AnalyzedProjects.Count == 0
-				? $"{existing} error(s) in {compiled} were there before this edit; ask rose_diagnostics for those."
-				: $"{existing} error(s) in {compiled} were there before this edit; ask rose_diagnostics with "
-					+ "includeAnalyzers=true for those, since this count includes the analyzer diagnostics it "
-					+ "leaves out by default.";
-		}
+		// Only where part of the count is a kind rose_diagnostics hides by default, which is the one case
+		// the count needs explaining: otherwise the two tools read as disagreeing.
+		if (Verification.PreexistingAdvice() is { } advice) yield return advice;
 
 		// The namespace itself, where the compilation could work it out. This is the answer the caller
 		// needs next, and without it the next step is going back to editing text by hand.

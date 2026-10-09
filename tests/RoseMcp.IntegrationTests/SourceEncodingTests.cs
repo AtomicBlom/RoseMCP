@@ -140,7 +140,7 @@ public sealed class SourceEncodingTests
 
 		moved.Applied.ShouldBeTrue();
 		StartsWithMark(source).ShouldBeTrue("the file the type left keeps its mark");
-		StartsWithMark(moved.TargetPath!).ShouldBeTrue("the file the type landed in is the same file's encoding");
+		StartsWithMark(moved.ChangedFiles[0].FilePath).ShouldBeTrue("the file the type landed in is the same file's encoding");
 	}
 
 	private static CancellationToken Token => TestContext.Current!.Execution.CancellationToken;

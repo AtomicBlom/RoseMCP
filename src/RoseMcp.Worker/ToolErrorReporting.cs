@@ -1,6 +1,7 @@
 using System.Text.Json;
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
@@ -31,6 +32,17 @@ public static class ToolErrorReporting
 	/// The solution this worker owns, named in every error it reports. Which workspace answered is
 	/// the one thing a failing call could never say, and it is the thing most likely to be wrong --
 	/// the failures worth explaining are mostly a file that belongs to some other solution.
+	/// <para>
+	/// An assembly the worker's own code could not load is explained rather than forwarded, and recorded
+	/// on the workspace host so status says so too: the loader's message names a file, and says nothing of the
+	/// worker being unable to answer that tool again until it is replaced.
+	/// </para>
+	/// <para>
+	/// Anything else is told apart by <see cref="ToolFailure"/>: a refusal this worker wrote keeps its words,
+	/// and an exception that escaped Roslyn or the BCL is framed as the fault it is, so it cannot be read as
+	/// advice about the arguments. Either way no CLR parameter name reaches the caller, since the only names
+	/// a caller knows are the tool's schema.
+	/// </para>
 	/// </summary>
 	public static IMcpServerBuilder WithToolErrorMessages(this IMcpServerBuilder builder, string solutionPath) =>
 		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
@@ -41,7 +53,10 @@ public static class ToolErrorReporting
 			}
 			catch (Exception exception) when (Explainable(exception))
 			{
-				throw new McpException($"{Named(context, exception)} (workspace: {solutionPath})", exception);
+				var message = Recorded(context, exception)?.Refusal
+					?? ToolFailure.Message(exception, context.Params?.Name ?? "The tool");
+
+				throw new McpException($"{Named(context, exception, message)} (workspace: {solutionPath})", exception);
 			}
 		}));
 
@@ -55,8 +70,39 @@ public static class ToolErrorReporting
 		&& !string.IsNullOrWhiteSpace(exception.Message);
 
 	/// <summary>
-	/// The message to forward: the argument the caller got wrong where the binder refused one, and
-	/// the exception's own words otherwise.
+	/// The assembly the call failed to load for this worker's own code, recorded on the workspace host, or null when
+	/// the failure was anything else.
+	/// </summary>
+	private static AssemblyLoadFault? Recorded(RequestContext<CallToolRequestParams> context, Exception exception)
+	{
+		var fault = AssemblyLoadFault.From(exception, context.Params?.Name ?? "The tool");
+		if (fault is null) return null;
+
+		// Said rather than skipped when there is no host to record on: unrecorded, the workspace goes on calling
+		// itself healthy, which is the failure this exists to prevent.
+		if (context.Services?.GetService<WorkspaceHost>() is { } host)
+		{
+			host.RecordAssemblyLoadFault(fault);
+		}
+		else
+		{
+			context.Services?.GetService<ILoggerFactory>()
+				?.CreateLogger(typeof(ToolErrorReporting).FullName!)
+				.LogWarning(
+					"{Tool} failed to load {Assembly}, and there is no workspace host to record it on, so status will not say so.",
+					fault.Tool,
+					fault.Assembly);
+		}
+
+		return fault;
+	}
+
+	/// <summary>
+	/// The message to forward: the argument the caller got wrong where the binder refused one,
+	/// <paramref name="message"/> otherwise -- the exception's own words, or the boundary's explanation
+	/// of them -- and after either, any argument the call carried under a name the tool does not
+	/// declare. Composed by <see cref="ToolArgumentShape.Refusal"/>, so every
+	/// boundary words it the same way.
 	/// <para>
 	/// The binder's account of a malformed argument names a CLR type the caller never wrote and points
 	/// at the root of the document, which is the one refusal on this surface that says nothing about
@@ -64,12 +110,15 @@ public static class ToolErrorReporting
 	/// already been refused means a schema this cannot read costs nothing.
 	/// </para>
 	/// </summary>
-	private static string Named(RequestContext<CallToolRequestParams> context, Exception exception)
+	private static string Named(RequestContext<CallToolRequestParams> context, Exception exception, string message)
 	{
-		if (exception is not JsonException) return exception.Message;
-		if (context.MatchedPrimitive is not McpServerTool tool) return exception.Message;
+		if (context.MatchedPrimitive is not McpServerTool tool) return ToolArgumentShape.WithoutParameterNames(message);
 
-		return ToolArgumentShape.Mismatch(tool.ProtocolTool.InputSchema, context.Params?.Arguments)
-			?? exception.Message;
+		return ToolArgumentShape.Refusal(
+			message,
+			exception is JsonException,
+			tool.ProtocolTool.Name,
+			tool.ProtocolTool.InputSchema,
+			context.Params?.Arguments);
 	}
 }

@@ -102,8 +102,35 @@ public static class DeclarationLocator
 		var resolution = await SourceAsync(solution, requested, cancellationToken);
 		var found = await FindAsync(solution, resolution, filePath, typesOnly: true, cancellationToken);
 
-		var target = Writable(found);
+		return AsType(Writable(found));
+	}
 
+	/// <summary>
+	/// The declaration of a type, for reading: a partial declared in several files is one answer, as
+	/// <see cref="FindSymbolAsync(Solution, string, string?, CancellationToken)"/> has it, and the
+	/// declaration given is a hand-written one where there is one. Refuses anything that is not a type,
+	/// as <see cref="FindTypeAsync"/> does.
+	/// </summary>
+	public static async Task<TypeTarget> FindTypeToReadAsync(
+		Solution solution,
+		string requested,
+		CancellationToken cancellationToken)
+	{
+		var resolution = await SourceAsync(solution, requested, cancellationToken);
+		var found = await FindAsync(solution, resolution, filePath: null, typesOnly: true, cancellationToken);
+
+		var bySignature = found.Declarations
+			.OrderBy(target => target.IsGenerated)
+			.GroupBy(target => target.Signature, StringComparer.Ordinal)
+			.ToArray();
+
+		if (bySignature.Length != 1) throw bySignature.Length == 0 ? found.NotFound() : found.Ambiguous();
+
+		return AsType(bySignature[0].First());
+	}
+
+	private static TypeTarget AsType(DeclarationTarget target)
+	{
 		// A named type whose declaration is not a type declaration is a delegate, and a delegate has
 		// no members to add to.
 		if (target.Symbol is not INamedTypeSymbol symbol || target.Declaration is not BaseTypeDeclarationSyntax declaration)

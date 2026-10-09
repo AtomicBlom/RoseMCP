@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <!-- A test framework on the reference list is what makes this a test project. -->
+  <ItemGroup>
+    <PackageReference Include="xunit.v3.assert" Version="4.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Core\Core.csproj" />
+  </ItemGroup>
+  <!-- One file compiled by two projects, a product project and a test project. -->
+  <ItemGroup>
+    <Compile Include="..\App\Shelf.cs" Link="Shelf.cs" />
+  </ItemGroup>
+</Project>

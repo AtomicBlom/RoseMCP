@@ -43,8 +43,8 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 Logic goes in `Contracts` only when a test needs it and the host that owns it cannot be referenced.
 `XamlStackModules`, `ToolArgumentShape`, `PathArguments`, `XamlProviderPath`, `ValuePath`,
 `SymbolLocation`, `HostVersion`, `BreakpointCondition`, `LogMessageTemplate`, `XamlRequestKind`,
-`SandboxSweep` and `XamlWire` are the whole list, each a pure function over strings or JSON with the
-host's own facts passed in. Three of the launchable hosts are `net10.0-windows` or reachable only as a
+`SandboxSweep`, `XamlWire`, `ToolJson` and `ToolFailure` are the whole list, each a pure function over strings or
+JSON -- or, for `ToolFailure`, over the exception a boundary caught -- with the host's own facts passed in. Three of the launchable hosts are `net10.0-windows` or reachable only as a
 child process, so a rule living beside its host is a rule the unit suite cannot see -- and one kept
 `internal` there is a rule no test can see at all. It is not a licence for behaviour: anything holding
 state, touching Roslyn, or knowing what a tool does belongs in the host.

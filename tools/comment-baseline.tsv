@@ -8,7 +8,6 @@ src/RoseMcp.Broker/LocalAttachPolicy.cs	issue	1
 src/RoseMcp.Broker/Tools/BrokerTools.cs	history	1
 src/RoseMcp.Broker/Tools/BrokerTools.cs	issue	1
 src/RoseMcp.Broker/WorkerLauncher.cs	issue	1
-src/RoseMcp.Broker/WorkspaceManager.cs	history	1
 src/RoseMcp.Contracts/LiveXamlSelection.cs	issue	1
 src/RoseMcp.Contracts/XamlStackModules.cs	issue	2
 src/RoseMcp.LiveApp/Debugging/CorDebugInspector.cs	issue	1

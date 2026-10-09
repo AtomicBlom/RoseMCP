@@ -46,13 +46,36 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	// about itself rather than from the transport, which does not expose the child it started.
 	private Process? _process;
 
-	private WorkspaceWorker(string solutionPath, McpClient client, ActivityLog activities, ILogger logger)
+	/// <summary>Makes the first stop the one recorded, when a crash and a deliberate stop race.</summary>
+	private readonly object _stopGate = new();
+
+	/// <summary>
+	/// Callers holding this worker for a call, from before the call starts to after it ends. Taken
+	/// under the manager's gate, which is what makes "nobody holds it" a fact the sweep can act on
+	/// rather than a guess about a call that has been handed the worker and has not started yet.
+	/// </summary>
+	private int _holds;
+
+	/// <summary><see cref="LastUsedUtc"/> as ticks, so a call ending on one thread and the sweep reading on another cannot tear it.</summary>
+	private long _lastUsedTicks;
+
+	/// <summary>The clock the idle times are read from, the one the eviction sweep reads too.</summary>
+	private readonly TimeProvider _clock;
+
+	private WorkspaceWorker(
+		string solutionPath,
+		McpClient client,
+		ActivityLog activities,
+		ILogger logger,
+		TimeProvider clock)
 	{
 		SolutionPath = solutionPath;
 		_client = client;
 		_activities = activities;
 		_logger = logger;
-		StartedUtc = DateTime.UtcNow;
+		_clock = clock;
+		StartedUtc = clock.GetUtcNow().UtcDateTime;
+		_lastUsedTicks = StartedUtc.Ticks;
 	}
 
 	public string SolutionPath { get; }
@@ -64,6 +87,26 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	public string Key => _key ??= Solutions.WorkspaceKey.For(SolutionPath);
 
 	public DateTime StartedUtc { get; }
+
+	/// <summary>
+	/// When a tool call last finished with this worker, or when its first load finished, or when it
+	/// started if neither has happened. Only calls routed to it count as use: status, listing and the
+	/// tray's polling read it without being use, so a workspace somebody merely watches still goes
+	/// idle. The load finishing is not use either; it is when there was first something to use.
+	/// </summary>
+	public DateTime LastUsedUtc => new(Volatile.Read(ref _lastUsedTicks), DateTimeKind.Utc);
+
+	/// <summary>When it stopped serving, for a worker that has. Null while it runs.</summary>
+	public DateTime? StoppedUtc { get; private set; }
+
+	/// <summary>Why it stopped, in words, where the stop had more to say than its exit reason. Null otherwise.</summary>
+	public string? StopDetail { get; private set; }
+
+	/// <summary>
+	/// When the eviction sweep first saw the solution file missing, or null while it is there. Only
+	/// the sweep reads and writes it.
+	/// </summary>
+	internal DateTime? SolutionMissingSinceUtc { get; private set; }
 
 	/// <summary>
 	/// What is wrong with this worker being a different build from the broker, or null where it is
@@ -204,7 +247,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			loggerFactory,
 			cancellationToken);
 
-		var worker = new WorkspaceWorker(solutionPath, client, activities, logger)
+		var worker = new WorkspaceWorker(solutionPath, client, activities, logger, options.TimeProvider)
 		{
 			VersionMismatch = ChildHostVersion.Mismatch(
 				client.ServerInfo?.Version, workerPath, typeof(WorkspaceWorker).Assembly),
@@ -274,7 +317,135 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		}
 	}
 
-	public void MarkStopped(WorkerExitReason reason) => ExitReason = reason;
+	/// <summary>
+	/// Records that the worker has stopped serving, and when, the first time only: the first reason
+	/// is the true one. A worker the broker stops on purpose then fails its in-flight calls and exits
+	/// the same way a crash does, and neither may relabel it. <paramref name="detail"/> is why, in
+	/// words, for a stop that has more to say than its reason -- an eviction says how long the worker
+	/// sat unused.
+	/// </summary>
+	public void MarkStopped(WorkerExitReason reason, string? detail = null)
+	{
+		lock (_stopGate)
+		{
+			if (!IsAlive) return;
+
+			StoppedUtc = _clock.GetUtcNow().UtcDateTime;
+			StopDetail = detail;
+			ExitReason = reason;
+		}
+	}
+
+	/// <summary>
+	/// Holds this worker for one call until the returned handle is disposed, so the eviction sweep
+	/// leaves it alone. Taken under the manager's gate, which the sweep also holds while it decides, so
+	/// a worker handed to a caller is never stopped between being handed over and being called -- or,
+	/// for the load the worker follows itself, before the worker is registered at all, which no sweep
+	/// can see past either. <paramref name="use"/> says whether the call counts as use, which restarts
+	/// the idle clock now and again when the call ends: a call that runs for an hour has not left the
+	/// worker idle for that hour.
+	/// </summary>
+	internal IDisposable Hold(bool use)
+	{
+		Interlocked.Increment(ref _holds);
+		if (use) Touch();
+
+		return new WorkerHold(this, use);
+	}
+
+	/// <summary>
+	/// Records whether the solution file is there, for the sweep's grace period. Missing counts from
+	/// the first sweep that saw it gone, and any sweep that sees it back starts the count over.
+	/// </summary>
+	internal void ObserveSolution(bool exists, DateTime nowUtc) =>
+		SolutionMissingSinceUtc = exists ? null : SolutionMissingSinceUtc ?? nowUtc;
+
+	/// <summary>What the eviction sweep decides on, read now.</summary>
+	public EvictionFacts EvictionFacts() => new(
+		Alive: IsAlive,
+		Loading: State == WorkspaceState.Loading,
+		Busy: Volatile.Read(ref _holds) > 0 || _activities.Running(SolutionPath).Count > 0,
+		LastUsedUtc: LastUsedUtc,
+		StoppedUtc: StoppedUtc,
+		SolutionMissingSinceUtc: SolutionMissingSinceUtc);
+
+	/// <summary>
+	/// This worker as <c>rose_workspace_list</c> reports it. Broker-side facts only, so listing never
+	/// waits on the worker and never counts as using it.
+	/// </summary>
+	public WorkspaceListEntry ListEntry(DateTime nowUtc)
+	{
+		var idle = nowUtc - LastUsedUtc;
+
+		return new WorkspaceListEntry
+		{
+			Workspace = SolutionPath,
+			WorkspaceKey = Key,
+			State = State,
+			ExitReason = IsAlive ? null : ExitReason.ToString(),
+			ProjectCount = LastStatus?.ProjectCount,
+			IdleFor = idle < TimeSpan.Zero ? TimeSpan.Zero : idle,
+			Running = _activities.Running(SolutionPath).Count,
+		};
+	}
+
+	/// <summary>
+	/// Status for a worker that has stopped, answered from what the broker knows rather than by
+	/// starting a fresh one. Asking whether a workspace is healthy is looking at it; starting a worker
+	/// to answer would load the solution again and wipe the record of why it stopped, so a session
+	/// that checks status now and then would keep an evicted workspace warm and never learn it had
+	/// been evicted.
+	/// <para>
+	/// The shape the worker itself gives once its solution is gone: nothing is loaded, so no project
+	/// is, and revision 0 identifies no snapshot. Why it stopped is the degraded reason, because it is
+	/// the reason there are no answers, and the notice says what brings it back.
+	/// </para>
+	/// </summary>
+	internal WorkspaceStatusReport StoppedStatus() => new()
+	{
+		SolutionPath = SolutionPath,
+		State = State,
+		Revision = 0,
+		Projects = [],
+		LoadDiagnostics = [],
+		DegradedReasons = [StopDescription()],
+		Notices =
+		[
+			"Nothing is loaded, and asking for status started nothing. The next call that needs this "
+				+ "workspace starts a fresh worker; rose_workspace_reload starts one now.",
+		],
+	};
+
+	/// <summary>Why this worker stopped, as one sentence for a person.</summary>
+	private string StopDescription() => ExitReason switch
+	{
+		WorkerExitReason.Evicted => $"The worker was evicted. {StopDetail}".TrimEnd(),
+		WorkerExitReason.Crashed => "The worker exited on its own. Its log says why.",
+		WorkerExitReason.SolutionUnloaded => "The worker unloaded the solution when its file went away.",
+		_ => "The worker was stopped.",
+	};
+
+	private void Touch() => Volatile.Write(ref _lastUsedTicks, _clock.GetUtcNow().UtcDateTime.Ticks);
+
+	/// <summary>
+	/// One caller's hold on the worker. Released once however often it is disposed, so a caller that
+	/// disposes on two paths cannot release somebody else's hold.
+	/// </summary>
+	private sealed class WorkerHold(WorkspaceWorker worker, bool use) : IDisposable
+	{
+		private int _released;
+
+		public void Dispose()
+		{
+			if (Interlocked.Exchange(ref _released, 1) != 0) return;
+
+			// The idle clock restarts before the hold goes, so a sweep that sees nobody holding the
+			// worker also sees the call that just finished.
+			if (use) worker.Touch();
+
+			Interlocked.Decrement(ref worker._holds);
+		}
+	}
 
 	/// <summary>
 	/// Asks the worker who it is. Cheap by design -- it loads nothing -- so it is safe to call on
@@ -326,7 +497,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			{
 				if (!IsAlive) return;
 
-				ExitReason = WorkerExitReason.Crashed;
+				MarkStopped(WorkerExitReason.Crashed);
 				_logger.LogWarning("The worker for {SolutionPath} exited on its own.", SolutionPath);
 			};
 
@@ -334,7 +505,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 
 			// Between opening the handle and arming the event the process can already have gone, and
 			// Exited does not fire for an exit that happened first.
-			if (process.HasExited && IsAlive) ExitReason = WorkerExitReason.Crashed;
+			if (process.HasExited) MarkStopped(WorkerExitReason.Crashed);
 		}
 		catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
 		{
@@ -376,7 +547,10 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		long? workingSet = null;
 		long? privateMemory = null;
 
-		if (ProcessId is { } id)
+		// Only while it runs. A stopped worker's row stays for as long as the idle limit, and Windows
+		// hands a dead process's id to the next one it starts, so sampling it would report somebody
+		// else's memory as this solution's.
+		if (IsAlive && ProcessId is { } id)
 		{
 			try
 			{
@@ -402,11 +576,11 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			ExitReason = ExitReason.ToString(),
 			State = State,
 			StartedUtc = StartedUtc,
-			Uptime = DateTime.UtcNow - StartedUtc,
+			Uptime = _clock.GetUtcNow().UtcDateTime - StartedUtc,
 			ProcessId = ProcessId,
 			WorkingSetBytes = workingSet,
 			PrivateMemoryBytes = privateMemory,
-			ManagedHeapBytes = ManagedHeapBytes,
+			ManagedHeapBytes = IsAlive ? ManagedHeapBytes : null,
 			BuildConfiguration = status?.BuildConfiguration,
 			ProjectCount = status?.ProjectCount,
 			FailedProjects = status is null
@@ -434,9 +608,21 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// </summary>
 	private void BeginLoading() => _ = FollowLoadAsync();
 
+	/// <summary>
+	/// Follows the load to its end, and starts the idle clock there.
+	/// <para>
+	/// Held for the whole load, and let go only after the clock has restarted. The status report that
+	/// ends the load is what moves the worker out of <see cref="WorkspaceState.Loading"/>, and it lands
+	/// before this resumes; unheld, a sweep in that gap would see a loaded worker idle since its process
+	/// started and evict a solution that took longer than the limit to load the moment it finished.
+	/// Taken before the worker is registered, so no sweep can see it unheld, which is the guarantee the
+	/// manager's gate gives every other hold.
+	/// </para>
+	/// </summary>
 	private async Task FollowLoadAsync()
 	{
 		var load = Stopwatch.StartNew();
+		var hold = Hold(use: false);
 
 		try
 		{
@@ -446,6 +632,11 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 				CancellationToken.None,
 				operation: LoadOperation);
 
+			// The idle clock starts when the worker became usable, not when its process did. Counting
+			// the load as idle would evict a solution that loads slowly soon after it is ready, and
+			// one that loads for longer than the idle limit the moment it finishes. Before the
+			// duration, so whoever sees the load finished also sees the clock restarted.
+			Touch();
 			LoadDuration = load.Elapsed;
 		}
 		catch (Exception exception)
@@ -455,6 +646,10 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			// the tray can say so about a worker no client has spoken to yet.
 			_loadFailure = $"Loading the solution failed: {exception.Message}";
 			_logger.LogDebug(exception, "Following the load of {SolutionPath} ended early.", SolutionPath);
+		}
+		finally
+		{
+			hold.Dispose();
 		}
 	}
 
@@ -481,7 +676,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			// closes a worker fails the same way, and calling that a crash would be a lie.
 			if (IsAlive)
 			{
-				ExitReason = WorkerExitReason.Crashed;
+				MarkStopped(WorkerExitReason.Crashed);
 				_logger.LogWarning(exception, "The worker for {SolutionPath} died during {Tool}.", SolutionPath, tool);
 			}
 
@@ -540,7 +735,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 
 	public async ValueTask DisposeAsync()
 	{
-		if (IsAlive) ExitReason = WorkerExitReason.StoppedByBroker;
+		MarkStopped(WorkerExitReason.StoppedByBroker);
 
 		try
 		{

@@ -36,6 +36,9 @@ public static class MissingImports
 	/// </summary>
 	private const int Looked = 5;
 
+	/// <summary>How many files one suggestion names before it counts the rest.</summary>
+	private const int FilesNamed = 5;
+
 	/// <summary>
 	/// True for a diagnostic that means a name did not bind, and so might be answered by an import.
 	/// <para>
@@ -48,31 +51,56 @@ public static class MissingImports
 	/// <summary>
 	/// One line per unresolved name saying what would import it, or nothing where there is nothing
 	/// useful to say.
+	/// <para>
+	/// A name is looked up once, and every file it failed in is kept with it: the advice depends on the
+	/// file, so a name unresolved both where the tool's <c>usings</c> reaches and where it does not needs
+	/// both answers, and one that failed in two files no argument reaches needs both files named.
+	/// </para>
 	/// </summary>
 	/// <param name="snapshot">The solution as the edit leaves it.</param>
 	/// <param name="introduced">The errors the edit brought into being.</param>
+	/// <param name="usingsReach">
+	/// The files the writing tool's own <c>usings</c> argument imports into. A name unresolved in one of
+	/// them is answered with that argument; anywhere else, and for a tool with no such argument, with
+	/// rose_add_using alone, since an argument the tool does not take is one its caller passes for
+	/// nothing.
+	/// </param>
 	/// <param name="cancellationToken">Cancels the lookups.</param>
 	public static async Task<IReadOnlyList<string>> SuggestAsync(
 		WorkspaceSnapshot snapshot,
 		IReadOnlyList<DiagnosticEntry> introduced,
+		IReadOnlyCollection<string> usingsReach,
 		CancellationToken cancellationToken)
 	{
-		var suggestions = new List<string>();
-		var asked = new HashSet<string>(StringComparer.Ordinal);
+		var reached = usingsReach.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var names = new List<UnresolvedName>();
 
 		foreach (var entry in introduced)
 		{
 			if (!IsUnresolved(entry.Id)) continue;
 			if (entry.FilePath is not { Length: > 0 } path) continue;
-			if (asked.Count >= Looked) break;
 
 			var unresolved = await UnresolvedAtAsync(snapshot.Solution, path, entry.Line, entry.Column, cancellationToken);
-			if (unresolved is not { } found || !asked.Add(found.Name)) continue;
+			if (unresolved is not { } found) continue;
 
-			if (await DescribeAsync(snapshot, found.Name, found.Use, path, cancellationToken) is { } suggestion)
+			var known = names.Find(name => name.Name == found.Name);
+
+			if (known is null)
 			{
-				suggestions.Add(suggestion);
+				if (names.Count >= Looked) continue;
+
+				known = new UnresolvedName(found.Name, found.Use, path);
+				names.Add(known);
 			}
+
+			known.FailedIn(path, reached.Contains(path));
+		}
+
+		var suggestions = new List<string>();
+
+		foreach (var name in names)
+		{
+			suggestions.AddRange(await DescribeAsync(snapshot, name, cancellationToken));
 		}
 
 		return suggestions;
@@ -83,17 +111,21 @@ public static class MissingImports
 	/// there are several, and nothing at all where the name is simply not written yet -- silence
 	/// being the honest report there, since a name that resolves to nothing is not an import
 	/// problem and saying it might be would send the caller looking in the wrong place.
+	/// <para>
+	/// The single answer names the <c>usings</c> argument for the files the tool's own argument
+	/// reaches, and rose_add_using with each other file for the rest, which is the one way to the
+	/// import that every caller has. A file is named by its whole path, because that is what
+	/// rose_add_using's filePath is matched against, and two files can share a name.
+	/// </para>
 	/// </summary>
-	private static async Task<string?> DescribeAsync(
+	private static async Task<IReadOnlyList<string>> DescribeAsync(
 		WorkspaceSnapshot snapshot,
-		string name,
-		NameUse use,
-		string filePath,
+		UnresolvedName name,
 		CancellationToken cancellationToken)
 	{
 		var resolution = await NameResolver.ResolveAsync(
 			snapshot,
-			new ResolveNameRequest { Name = name, FilePath = filePath, Use = use },
+			new ResolveNameRequest { Name = name.Name, FilePath = name.FirstPath, Use = name.Use },
 			cancellationToken);
 
 		var usable = resolution.Candidates
@@ -106,8 +138,18 @@ public static class MissingImports
 			// three overloads of one extension method are still one import, and listing them would
 			// read as a choice the caller has to make when there is none.
 			var what = usable is [{ } only] ? only.Symbol : $"in {single}";
+			var said = new List<string>();
 
-			return $"{name} is {what}: pass usings: [\"{single}\"], or call rose_add_using.";
+			if (name.Reached) said.Add($"{name.Name} is {what}: pass usings: [\"{single}\"], or call rose_add_using.");
+
+			if (name.Elsewhere.Count > 0)
+			{
+				var lead = name.Reached ? $"{name.Name} is also unresolved where usings does not reach" : $"{name.Name} is {what}";
+
+				said.Add($"{lead}: call rose_add_using with namespaces: [\"{single}\"] {On(name.Elsewhere)}.");
+			}
+
+			return said;
 		}
 
 		var spaces = usable
@@ -117,15 +159,66 @@ public static class MissingImports
 
 		if (spaces.Length > 1)
 		{
-			return $"{name} is in {spaces.Length} namespaces ({string.Join(", ", spaces)}); rose_resolve_name "
-				+ "describes them, and importing the wrong one compiles.";
+			return
+			[
+				$"{name.Name} is in {spaces.Length} namespaces ({string.Join(", ", spaces)}); rose_resolve_name "
+					+ "describes them, and importing the wrong one compiles.",
+			];
 		}
 
 		// Everything found carries a reason it would not help, and the reason is the useful part: a
 		// nested type or an unreferenced project is a different fix from an import.
-		if (resolution.Candidates is [{ Caveat: { } caveat } sole]) return $"{name} is {sole.Symbol}, {caveat}.";
+		if (resolution.Candidates is [{ Caveat: { } caveat } sole]) return [$"{name.Name} is {sole.Symbol}, {caveat}."];
 
-		return null;
+		return [];
+	}
+
+	/// <summary>
+	/// The files a rose_add_using call is wanted on, one call per file since it takes one, and a count
+	/// past <see cref="FilesNamed"/> rather than a list nobody reads to the end of.
+	/// </summary>
+	private static string On(IReadOnlyList<string> files)
+	{
+		if (files.Count == 1) return $"on {files[0]}";
+
+		var named = files.Take(FilesNamed).ToList();
+		var rest = files.Count - named.Count;
+
+		if (rest > 0) named.Add($"{rest} more file(s) the introduced errors name");
+
+		return $"once for each of {string.Join(", ", named.Take(named.Count - 1))} and {named[^1]}";
+	}
+
+	/// <summary>
+	/// One name that did not bind, with where: whether any of it is somewhere the tool's own
+	/// <c>usings</c> reaches, and every other file, in the order the errors came.
+	/// </summary>
+	private sealed class UnresolvedName(string name, NameUse use, string firstPath)
+	{
+		private readonly List<string> _elsewhere = [];
+
+		public string Name { get; } = name;
+
+		public NameUse Use { get; } = use;
+
+		/// <summary>Where the name is resolved from, which decides what is reachable.</summary>
+		public string FirstPath { get; } = firstPath;
+
+		public bool Reached { get; private set; }
+
+		public IReadOnlyList<string> Elsewhere => _elsewhere;
+
+		public void FailedIn(string path, bool reached)
+		{
+			if (reached)
+			{
+				Reached = true;
+
+				return;
+			}
+
+			if (!_elsewhere.Contains(path, StringComparer.OrdinalIgnoreCase)) _elsewhere.Add(path);
+		}
 	}
 
 	/// <summary>

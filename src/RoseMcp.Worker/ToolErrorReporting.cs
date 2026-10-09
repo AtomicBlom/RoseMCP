@@ -37,6 +37,12 @@ public static class ToolErrorReporting
 	/// on the workspace host so status says so too: the loader's message names a file, and says nothing of the
 	/// worker being unable to answer that tool again until it is replaced.
 	/// </para>
+	/// <para>
+	/// Anything else is told apart by <see cref="ToolFailure"/>: a refusal this worker wrote keeps its words,
+	/// and an exception that escaped Roslyn or the BCL is framed as the fault it is, so it cannot be read as
+	/// advice about the arguments. Either way no CLR parameter name reaches the caller, since the only names
+	/// a caller knows are the tool's schema.
+	/// </para>
 	/// </summary>
 	public static IMcpServerBuilder WithToolErrorMessages(this IMcpServerBuilder builder, string solutionPath) =>
 		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
@@ -47,7 +53,8 @@ public static class ToolErrorReporting
 			}
 			catch (Exception exception) when (Explainable(exception))
 			{
-				var message = Recorded(context, exception)?.Refusal ?? exception.Message;
+				var message = Recorded(context, exception)?.Refusal
+					?? ToolFailure.Message(exception, context.Params?.Name ?? "The tool");
 
 				throw new McpException($"{Named(context, exception, message)} (workspace: {solutionPath})", exception);
 			}
@@ -105,7 +112,7 @@ public static class ToolErrorReporting
 	/// </summary>
 	private static string Named(RequestContext<CallToolRequestParams> context, Exception exception, string message)
 	{
-		if (context.MatchedPrimitive is not McpServerTool tool) return message;
+		if (context.MatchedPrimitive is not McpServerTool tool) return ToolArgumentShape.WithoutParameterNames(message);
 
 		return ToolArgumentShape.Refusal(
 			message,

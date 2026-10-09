@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace RoseMcp.Contracts;
 
@@ -33,7 +34,7 @@ namespace RoseMcp.Contracts;
 /// dictionary, with no dependency on the MCP packages, so it stays inside what this assembly is for.
 /// </para>
 /// </summary>
-public static class ToolArgumentShape
+public static partial class ToolArgumentShape
 {
 	/// <summary>
 	/// A sentence naming the argument whose shape does not match the schema, or null when every
@@ -217,10 +218,13 @@ public static class ToolArgumentShape
 	/// <summary>
 	/// The message for a call a tool refused: the argument whose shape the binder could not take
 	/// where that was the refusal, the refusal's own words otherwise, and after either, every
-	/// argument the call carried that the tool does not declare.
+	/// argument the call carried that the tool does not declare. Any CLR parameter name in it is
+	/// put in the tool's terms or taken out, by <see cref="WithoutParameterNames"/>.
 	/// <para>
 	/// The one composition all three MCP boundaries use, so a refusal reads the same whichever
-	/// process wrote it.
+	/// process wrote it. It is also safe to run twice: a worker's refusal passes through it in the
+	/// worker and again in the broker that relays it, and the second pass changes nothing the first
+	/// already settled.
 	/// </para>
 	/// </summary>
 	/// <param name="message">What the refusal said.</param>
@@ -238,7 +242,8 @@ public static class ToolArgumentShape
 		JsonElement inputSchema,
 		IEnumerable<KeyValuePair<string, JsonElement>>? arguments)
 	{
-		var reason = binderRefused ? Mismatch(inputSchema, arguments) ?? message : message;
+		var said = binderRefused ? Mismatch(inputSchema, arguments) ?? message : message;
+		var reason = WithoutParameterNames(said, inputSchema);
 		if (NotArguments(tool, inputSchema, arguments) is not { } undeclared) return reason;
 
 		var trimmed = reason.TrimEnd();
@@ -246,6 +251,52 @@ public static class ToolArgumentShape
 
 		return endsASentence ? $"{trimmed} {undeclared}" : $"{trimmed}. {undeclared}";
 	}
+
+	/// <summary>
+	/// A message with every CLR parameter name taken out of it: <c>(Parameter 'line')</c> becomes
+	/// <c>(argument `line`)</c> where the tool declares an argument of that name, and goes where it
+	/// does not.
+	/// <para>
+	/// The caller's vocabulary is the tool's schema. An <see cref="ArgumentException"/> appends the
+	/// name of a parameter of whichever method threw it, and that name is in the thrower's vocabulary:
+	/// Roslyn's <c>(Parameter 'symbol')</c> reached callers of a tool with no <c>symbol</c> argument, and
+	/// of one whose <c>symbol</c> argument was the one thing that was right, and each reading of it sent
+	/// a caller to fix something that was not broken. A name the schema declares is said as the
+	/// argument it is, since then it is the most direct pointer the caller could have; any other is
+	/// dropped rather than translated, because there is nothing true to translate it into.
+	/// </para>
+	/// <para>
+	/// Anywhere in the message, not only at its end, and every occurrence:
+	/// <see cref="ArgumentOutOfRangeException"/> puts the actual value after the name, the worker adds
+	/// its workspace after that, and a message composed from another carries both. A message with
+	/// none is returned as it was, so a second pass over the same message changes nothing.
+	/// </para>
+	/// </summary>
+	/// <param name="message">The message to put in the tool's terms.</param>
+	/// <param name="inputSchema">
+	/// The tool's declared input schema; left at its default, no name is the tool's and every one goes.
+	/// </param>
+	public static string WithoutParameterNames(string message, JsonElement inputSchema = default)
+	{
+		if (!message.Contains("(Parameter '", StringComparison.Ordinal)) return message;
+
+		var properties = Properties(inputSchema);
+
+		return ParameterName().Replace(message, match =>
+		{
+			var name = match.Groups["name"].Value;
+			var isArgument = properties is { } declared && name.Length > 0 && declared.TryGetProperty(name, out _);
+
+			return isArgument ? $" (argument `{name}`)" : string.Empty;
+		});
+	}
+
+	/// <summary>
+	/// The suffix <see cref="ArgumentException.Message"/> adds for a parameter name, with the space
+	/// before it, so taking it out leaves the sentence it followed as it was.
+	/// </summary>
+	[GeneratedRegex(@" ?\(Parameter '(?<name>[^']*)'\)", RegexOptions.CultureInvariant)]
+	private static partial Regex ParameterName();
 
 	/// <summary>
 	/// What to send instead: the nearest declared names where any is close, and otherwise every name

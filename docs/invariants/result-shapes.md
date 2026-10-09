@@ -8,6 +8,21 @@ Read before adding a tool, adding a field to a result, or changing an error path
   solution it owns. Convert at the boundary, never at the throw sites: the exception type carries
   meaning further in -- services separate a caller's mistake from an impossible state, the manager
   separates either from a dead worker, and retry decisions turn on that.
+- **No error names a CLR concept the caller did not send.** The caller's vocabulary is the tool's
+  schema, and a framework's parameter name is never in it: Roslyn's `(Parameter 'symbol')` reached
+  callers of a tool with no `symbol` argument, and of one whose `symbol` was the one thing they got
+  right, and every reading of it sent them to fix something that was not broken. So every boundary
+  passes its message through `ToolArgumentShape.WithoutParameterNames`, which says a parameter the
+  schema declares as that argument and drops any other, wherever in the message it sits; it is
+  idempotent, because a worker's refusal is composed in the worker and again in the broker that
+  relays it. The other half is telling a refusal from a leak, since Rose and every framework refuse
+  with the same `ArgumentException` and `InvalidOperationException`: `ToolFailure` reads the
+  deepest frame that is not a throw helper, and only code in a RoseMcp assembly, the MCP SDK's binder,
+  a JSON failure or an I/O failure counts as a refusal and keeps its words. Anything else is framed as
+  the named component's failure inside the named tool, with its message kept and its parameter name
+  gone. By frame rather than by a marker type, because a marker needs every throw site to remember it
+  and calls the one that forgot a fault; the frame is known for every exception with nothing to
+  remember. `ParameterNameBoundaryTests` holds all three boundaries to it.
 - **Every tool answers with a record, and the live-app prefixes excuse only workspace
   attribution.** A sentence names nothing a caller can check and gives an agent nothing to branch
   on but its wording: "closed" says which workspace to nobody holding two, and "detached" which

@@ -300,6 +300,67 @@ public sealed class ToolArgumentShapeTests
 	}
 
 	/// <summary>
+	/// A parameter name the tool does not declare goes, and the sentence it followed is left as it was:
+	/// Roslyn's <c>symbol</c> is not an argument of <c>rose_resolve_name</c>, which takes a name.
+	/// </summary>
+	[Test]
+	public void Drops_a_parameter_name_the_tool_does_not_declare()
+	{
+		ToolArgumentShape.WithoutParameterNames(
+				"Parameter 'symbol' must be a symbol from this compilation or some referenced assembly. (Parameter 'symbol')",
+				Schema("""{"name":{"type":"string"},"filePath":{"type":["string","null"]}}"""))
+			.ShouldBe("Parameter 'symbol' must be a symbol from this compilation or some referenced assembly.");
+	}
+
+	/// <summary>A parameter name the tool does declare is said as the argument it is.</summary>
+	[Test]
+	public void Names_a_parameter_the_tool_declares_as_its_argument()
+	{
+		ToolArgumentShape.WithoutParameterNames("A.cs has 3 line(s); line 9 does not exist. (Parameter 'filePath')", Outline)
+			.ShouldBe("A.cs has 3 line(s); line 9 does not exist. (argument `filePath`)");
+	}
+
+	/// <summary>
+	/// Not only at the end, and not only once: an out-of-range value puts the actual value after the
+	/// name, the worker puts its workspace after that, and a composed message carries two.
+	/// </summary>
+	[Test]
+	public void Takes_out_every_parameter_name_wherever_it_sits()
+	{
+		var thrown = new ArgumentOutOfRangeException("index", 7, "Too far. (Parameter 'other')");
+
+		var message = ToolArgumentShape.WithoutParameterNames($"{thrown.Message} (workspace: D:\\a\\A.slnx)");
+
+		message.ShouldNotContain("(Parameter '", Case.Sensitive);
+		message.ShouldStartWith("Too far.", Case.Sensitive);
+		message.ShouldContain("Actual value was 7.", Case.Sensitive);
+		message.ShouldEndWith("(workspace: D:\\a\\A.slnx)", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A worker's refusal is composed in the worker and again in the broker that relays it, so the
+	/// second pass has to leave the first one's answer alone.
+	/// </summary>
+	[Test]
+	public void Putting_a_message_in_the_tools_terms_twice_changes_nothing_the_first_time_did_not()
+	{
+		var thrown = "Line 9 does not exist. (Parameter 'filePath') Nothing else. (Parameter 'node')";
+
+		var once = ToolArgumentShape.Refusal(thrown, false, "rose_outline", Outline, Arguments("""{"filePath":"A.cs"}"""));
+		var twice = ToolArgumentShape.Refusal(once, false, "rose_outline", Outline, Arguments("""{"filePath":"A.cs"}"""));
+
+		once.ShouldBe("Line 9 does not exist. (argument `filePath`) Nothing else.");
+		twice.ShouldBe(once);
+	}
+
+	/// <summary>A message with no parameter name is returned as it was, whatever the schema.</summary>
+	[Test]
+	public void Leaves_a_message_without_a_parameter_name_alone()
+	{
+		ToolArgumentShape.WithoutParameterNames("Nothing is called A.").ShouldBe("Nothing is called A.");
+	}
+
+	/// <summary>
 	/// The schema rose_debug_add_tracepoint is actually listed with, built from its declaration rather
 	/// than written out by hand, so the required list the entry check reads is the one the SDK emits.
 	/// </summary>

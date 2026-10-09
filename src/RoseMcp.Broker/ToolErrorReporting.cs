@@ -37,6 +37,12 @@ public static class ToolErrorReporting
 	/// a call could come back as the bare shrug this exists to remove -- a boundary is wherever an
 	/// exception meets the SDK, not wherever a tool is written.
 	/// </para>
+	/// <para>
+	/// A refusal the broker wrote keeps its words, and so does one a worker or a live-app host relayed,
+	/// which that host's own filter has already put in the caller's terms; an exception that escaped a
+	/// framework here is framed as the fault it is by <see cref="ToolFailure"/>. No CLR parameter name
+	/// survives either path, and running the composition again over a relayed message changes nothing.
+	/// </para>
 	/// </summary>
 	public static IMcpServerBuilder WithToolErrorMessages(this IMcpServerBuilder builder) =>
 		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
@@ -49,7 +55,7 @@ public static class ToolErrorReporting
 			{
 				// A refusal a tool already wrote for the wire keeps its words, and gains only what it
 				// could not know: an argument the caller sent that the binder dropped before the tool ran.
-				var named = Named(context, exception);
+				var named = Named(context, exception, exception.Message);
 				if (named == exception.Message) throw;
 
 				throw new McpException(named, exception);
@@ -59,13 +65,15 @@ public static class ToolErrorReporting
 				and not McpException
 				&& !string.IsNullOrWhiteSpace(exception.Message))
 			{
-				throw new McpException(Named(context, exception), exception);
+				var message = ToolFailure.Message(exception, context.Params?.Name ?? "The tool");
+
+				throw new McpException(Named(context, exception, message), exception);
 			}
 		}));
 
 	/// <summary>
-	/// The message to forward: the argument the caller got wrong where the binder refused one, the
-	/// exception's own words otherwise, and after either, any argument the call carried under a name
+	/// The message to forward: the argument the caller got wrong where the binder refused one,
+	/// <paramref name="message"/> otherwise, and after either, any argument the call carried under a name
 	/// the tool does not declare.
 	/// <para>
 	/// The binder's account of a malformed argument names a CLR type the caller never wrote and points
@@ -80,12 +88,12 @@ public static class ToolErrorReporting
 	/// caller's original arguments that are named, not the ones the broker forwarded.
 	/// </para>
 	/// </summary>
-	private static string Named(RequestContext<CallToolRequestParams> context, Exception exception)
+	private static string Named(RequestContext<CallToolRequestParams> context, Exception exception, string message)
 	{
-		if (context.MatchedPrimitive is not McpServerTool tool) return exception.Message;
+		if (context.MatchedPrimitive is not McpServerTool tool) return ToolArgumentShape.WithoutParameterNames(message);
 
 		return ToolArgumentShape.Refusal(
-			exception.Message,
+			message,
 			exception is JsonException,
 			tool.ProtocolTool.Name,
 			tool.ProtocolTool.InputSchema,

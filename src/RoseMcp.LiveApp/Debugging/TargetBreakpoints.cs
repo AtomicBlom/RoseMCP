@@ -253,16 +253,12 @@ internal sealed class TargetBreakpoints(DebuggedTarget target, DebugEventBuffer 
 	private sealed record Requested(string Location, BreakpointBinding? Binding, string? Refusal);
 
 	/// <summary>
-	/// A refusal's reason without the framework's <c>(Parameter 'spec')</c> suffix, which names a
-	/// parameter of a parser the caller never called rather than anything the caller sent.
+	/// A refusal's reason without the framework's <c>(Parameter 'spec')</c>, which names a parameter of a
+	/// parser the caller never called rather than anything the caller sent. Taken out the way every MCP
+	/// boundary takes it out, since this reason reaches the caller in an entry's status rather than
+	/// through a boundary.
 	/// </summary>
-	private static string Reason(ArgumentException exception)
-	{
-		var suffix = exception.ParamName is { } name ? $" (Parameter '{name}')" : null;
-		var carriesSuffix = suffix is not null && exception.Message.EndsWith(suffix, StringComparison.Ordinal);
-
-		return carriesSuffix ? exception.Message[..^suffix!.Length] : exception.Message;
-	}
+	private static string Reason(ArgumentException exception) => ToolArgumentShape.WithoutParameterNames(exception.Message);
 
 	/// <summary>
 	/// A note for each location asked for more than once in one call. Every copy is added -- two

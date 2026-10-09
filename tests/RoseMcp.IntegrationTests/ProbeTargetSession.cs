@@ -177,14 +177,16 @@ internal static class ProbeTargetSession
 	}
 
 	/// <summary>
-	/// Skips or fails, on the one question that separates the two: has this app ever come up in this
-	/// run?
+	/// Skips or fails, on two questions: has this app ever come up in this run, and was this machine set
+	/// up to run it?
 	/// <para>
 	/// A machine that cannot run these tests never produces a first success and goes on skipping,
 	/// which is what keeps a laptop without the WinUI tooling, or one where the Windows App Runtime
 	/// never bootstraps (#180), out of the red. A run that produced a first success and then could not
 	/// is reporting something real, and a skip there is an acceptance test reading as green while it
-	/// did not run.
+	/// did not run. Before a first success, <see cref="MachineLimit.Reached(string)"/> answers the second
+	/// question: where <see cref="MachineLimit.RequiredVariable"/> says the machine was set up for these
+	/// tests, as CI's is, never launching is a failure too.
 	/// </para>
 	/// </summary>
 	/// <param name="hasLaunched">Whether the fixture has seen its app come up in this run.</param>

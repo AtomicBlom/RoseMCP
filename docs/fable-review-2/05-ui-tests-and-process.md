@@ -542,35 +542,9 @@ failure on CI" rule are each a specific failure someone paid for. The release jo
 MinVer off the tag so there is one place to get the version right, two runners because only a Linux
 tar records an execute bit, and `Assert-WindowsPackage` gating the artifact.
 
-### UIP-22 `PublishedLayoutTests` guards a layout it stages itself, not the one `deploy.ps1` writes
-- **Severity:** Medium → **High**
-- **Effort:** M
-- **Where:** `tests/RoseMcp.UnitTests/PublishedLayoutTests.cs:32-42` (`Stage(...)` by hand, docstring "The shape `Publish-Tree` writes"), `tools/deploy.ps1:131` (`Publish-Tree`), `:396` (`Assert-WindowsPackage`)
-- **Scope grew with PR #277.** The layout had two parties when this was filed. It now has five:
-  `tools/deploy.ps1`, `tools/RoseMcp.Deploy.ps1`, `tools/build-installer.ps1`, `installer/install.ps1`
-  and `installer/rosemcp.iss` — the last two being **packaged content a user runs**, not a script this
-  repository runs. The installer work was careful about the part it could see (one staged tree feeds
-  both the zip and the setup exe, so they carry identical bytes, and `RoseMcp.Deploy.ps1` holds what
-  all three agree about for stopping a running install). What it could not do is join any of that to
-  the C# resolvers, which is this finding. A layout change now passes every C# test and fails on a
-  stranger's machine at install time.
-- **What:** The test builds a directory tree from nine hard-coded paths and asserts the C# resolvers
-  find things in it, with `searchRepository: false` so the development fallback cannot mask a break.
-  That part is excellent. What it does not do is read anything `deploy.ps1` produces: if `Publish-Tree`
-  moves the tray, renames `live-app/<rid>/`, or stops publishing the inspector, the test stages the
-  old shape and passes. The docstring even names the coupling -- "the shape `Publish-Tree` writes" --
-  and there is nothing but that sentence holding the two together. `Assert-WindowsPackage` covers the
-  other half (both windows, a host per architecture, both providers, and each PE's machine type) but
-  knows nothing about whether a resolver can find any of it.
-- **Why it matters:** The failure class is named in the test's own docstring -- "three defects lived
-  only on an install" -- and the guard that was built for it is half of a pair with no join. A layout
-  change made in PowerShell passes every C# test and fails only when somebody runs the install.
-- **Suggested change:** Make one of them the source. Cheapest: have `Publish-Tree` write a
-  `layout.json` listing every path it produced, have `Assert-WindowsPackage` validate against it, and
-  have `PublishedLayoutTests` stage from a committed copy of that file with a test that the committed
-  copy matches what a `-Mode package` run emits. More direct: have the test shell out to
-  `deploy.ps1 -Mode package -SkipBuild` into a temp root. Either way the arrangement stops being a
-  fact two files remember separately.
+### ~~UIP-22 `PublishedLayoutTests` guards a layout it stages itself, not the one `deploy.ps1` writes~~
+**#387.** Five parties each wrote the published layout down for themselves, so a change to it passed
+every test and failed at install time. They all read one committed layout, or are tested against it.
 
 ### ~~UIP-23 The comment conventions are unenforced and the debt is growing, not shrinking~~
 **#295. Wrong in part:** three of the phrases this finding counted are not history clauses. Nothing
@@ -714,10 +688,8 @@ tool.** The rule's own wording claims it is structural ("added once, in `Workspa
 added later cannot forget it") and it is not: three tools are spot-checked. Enumerating
 `ToolNames` and asserting both fields on each result makes the claim true. *(UIP-17)*
 
-**5. "The published layout is what the resolvers look for" -> one artefact both sides read.**
-`Publish-Tree` writes a layout in PowerShell and `PublishedLayoutTests` re-types it in C#. A
-`layout.json` emitted by the publish and consumed by both the package assertion and the test turns a
-remembered agreement into a checked one. *(UIP-22)*
+**~~5. "The published layout is what the resolvers look for" -> one artefact both sides read.~~**
+**#387.** Built: every party reads one committed layout, or is tested against it.
 
 **6. "Comments carry no history and no closed-issue tags" -> a CI grep.** 100 history clauses and 60
 issue tags, both up since #171 was filed. The convention is long, well argued and entirely

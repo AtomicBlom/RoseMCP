@@ -61,7 +61,7 @@ still to decide.
 Issues filed after the review, up to #362, are triaged into the cards below. The ones no card fits
 are listed after tier 6, so none of them is re-derived from scratch.
 
-Three cards came out of closing others: the layout half of **21**, **11f**, and card 0e's finding
+Three cards came out of closing others: **21a**, **11f**, and card 0e's finding
 that three of the phrases the comment convention lists are not history clauses at all. Card 9 also
 found a wrong answer the review missed -- four write tools reporting a project clean while the
 caller's errors sat in it.
@@ -141,9 +141,9 @@ And then the test review found the boundary exactly:
 So: "every result carries a revision" was guarded on 3 tools out of ~45 and review-only for the rest;
 it is now enumerated over the declared surface, and its other half is a compile-time constraint
 (card 0c). The comment conventions had no CI grep and now have one against a baseline (card 0e).
-What is still an arrangement nobody checks: the stdout rule, the one that corrupts the protocol, has
-no guard of its own; the tap's tier rule is prose; and the published layout is asserted against a
-layout the test stages itself rather than the one the deploy script writes. Those three are card 21.
+The published layout is one file every party reads or is tested against (card 21a). What is still an
+arrangement nobody checks: the stdout rule, the one that corrupts the protocol, has no guard of its
+own, and the tap's tier rule is prose. Those two are card 21.
 
 **About fifty inversions are proposed across the eight files**; the ones that had to come first were
 Tier 0, and are built (PR #295). The seven highest-leverage:
@@ -371,7 +371,8 @@ Highest leverage on adoption. Cheap relative to impact.
 | 18 | **Share fixtures on the Roslyn half.** 254 solution loads and 299 fixture copies over six fixtures, with a proven sharing model already in use next door. Issue #39 understates it by four times. | UIP-13 | #39 | L |
 | 19 | *(moved to card 0d -- it is worth having before the work starts, not after.)* | IPC-02, BRK-05 | new | -- |
 | 20 | **A correlation id on every internal hop**, into every log line. Today a failure cannot be traced across the four processes it crossed. | BRK-15, IPC-07 | new | M |
-| 21 | **Guard the remaining arrangements**, after cards 0c and 0e take the two urgent ones: a stdout test of its own, a shared layout manifest, and tap tier purity checked rather than described. **The layout half has got sharply more urgent** — PR #277 took the parties to the layout from two to five, two of them packaged content a user runs, so a layout change now fails at install time on somebody else's machine rather than in CI. Worth splitting out and pulling forward. | UIP-18, UIP-22, UIP-24 | new | M |
+| 21 | **Guard the remaining arrangements**, after cards 0c and 0e take the two urgent ones: a stdout test of its own, and tap tier purity checked rather than described. | UIP-18, UIP-24 | new | M |
+| ~~21a~~ | **#387.** Five parties each wrote the published layout down for themselves, two of them packaged content a user runs, so a layout change passed every test and failed at install time. They all read one committed layout, or are tested against it. | UIP-22 | — | — |
 
 ### Tier 5 — re-aim the UIs
 

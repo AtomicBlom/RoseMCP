@@ -229,12 +229,15 @@ public sealed class IdleEvictionTests
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		using var fixture = FixtureSolution.Copy("Siblings", "Repo.slnx");
+		var clock = new SteerableClock();
+		var idleAfter = TimeSpan.FromSeconds(15);
 		await using var manager = CreateManager(configure: options =>
 		{
 			// Also how long the stopped row stays, which has to outlast stopping the process and
-			// the rename that follows.
-			options.IdleEvictionAfter = TimeSpan.FromSeconds(15);
+			// the rename that follows. The clock is moved past the limit rather than waited past it.
+			options.IdleEvictionAfter = idleAfter;
 			options.EvictionSweepInterval = SweepInterval;
+			options.TimeProvider = clock;
 		});
 
 		var installer = fixture.Path("Siblings", "Repo.Installer.slnx");
@@ -251,6 +254,12 @@ public sealed class IdleEvictionTests
 				NoArguments,
 				retryIfWorkerDied: true,
 				cancellationToken);
+
+			// After both loads have filed their finish, which restarts the idle clock and would undo
+			// a jump made before it.
+			await WaitUntilAsync(
+				() => manager.Workers.All(worker => worker.LoadDuration is not null), TimeSpan.FromMinutes(2), cancellationToken);
+			clock.Jump(idleAfter);
 
 			await WaitUntilAsync(() => EvictionNote(manager) is not null, TimeSpan.FromSeconds(60), cancellationToken);
 

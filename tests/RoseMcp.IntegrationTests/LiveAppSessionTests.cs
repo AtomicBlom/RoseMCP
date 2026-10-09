@@ -306,7 +306,18 @@ public sealed class LiveAppSessionTests
 	[Test]
 	public async Task A_session_whose_host_dies_is_shown_ended_then_dropped()
 	{
-		await using var manager = CreateManager(configure: options => options.EndedSessionGrace = TimeSpan.FromSeconds(2));
+		var logs = new RecordingLoggerFactory();
+
+		// Held open until the test has seen the ended row, then let go. A grace of seconds is a window the
+		// test has to land a look inside, and a test process stalled under load for longer than that sees
+		// the session already gone -- the manager doing its job on time, and the test missing it. The
+		// manager reads the grace on every tick, so shortening it here is what a later tick acts on.
+		BrokerOptions? configured = null;
+		await using var manager = CreateManager(logs, options =>
+		{
+			options.EndedSessionGrace = TimeSpan.FromHours(1);
+			configured = options;
+		});
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProbeTarget();
@@ -323,24 +334,36 @@ public sealed class LiveAppSessionTests
 
 			// Listed as ended, with the reason where a person reads it, before it goes.
 			LiveAppSessionSummary? ended = null;
+			var killedUtc = DateTime.UtcNow;
 			await WaitUntilAsync(
 				() =>
 				{
 					ended = manager.Describe().SingleOrDefault(row => row.SessionId == session.SessionId);
 					return ended?.Recent.Any(activity => activity.Operation == LiveAppSessionManager.DropOperation) ?? false;
 				},
-				cancellationToken);
+				cancellationToken,
+				() => $"killed the host at {killedUtc:HH:mm:ss.fff}Z; row {ended?.State.ToString() ?? "gone"}, alive {session.IsAlive}, "
+					+ $"recorded as dropped {manager.FindDropped(session.SessionId) is not null}; the manager logged:{Environment.NewLine}"
+					+ string.Join(Environment.NewLine, logs.Lines.TakeLast(80)));
 
 			ended!.State.ShouldBe(LiveAppSessionState.Ended);
 			ended.Recent.First(activity => activity.Operation == LiveAppSessionManager.DropOperation)
 				.Message.ShouldNotBeNull().ShouldContain("stopped answering");
 			session.IsAlive.ShouldBeFalse();
 
-			await WaitUntilAsync(() => manager.Describe().All(row => row.SessionId != session.SessionId), cancellationToken);
+			configured!.EndedSessionGrace = TimeSpan.Zero;
+
+			// The row leaves the registry first and the teardown follows it -- the client disposed, then
+			// the session's activity history forgotten, last because disposing files a call of its own --
+			// so the drop is finished when the history is gone, which on a loaded machine is seconds later.
+			await WaitUntilAsync(
+				() => manager.Describe().All(row => row.SessionId != session.SessionId)
+					&& manager.Activities.Recent(session.SessionId).Count == 0,
+				cancellationToken,
+				() => string.Join(Environment.NewLine, logs.Lines.TakeLast(80)));
 
 			manager.Sessions.ShouldBeEmpty();
 			manager.Find(session.SessionId).ShouldBeNull();
-			manager.Activities.Recent(session.SessionId).ShouldBeEmpty();
 
 			// Ended without asking a host that was not there to detach.
 			session.DetachFailure.ShouldNotBeNull().ShouldContain("already stopped answering");
@@ -422,14 +445,20 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
-	/// <summary>Waits for a condition the manager's own poll makes true, failing after a generous bound.</summary>
-	private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken cancellationToken)
+	/// <summary>
+	/// Waits for a condition the manager's own poll makes true, failing after a generous bound -- and
+	/// saying, through <paramref name="describe"/>, what the state was when it gave up.
+	/// </summary>
+	private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken cancellationToken, Func<string>? describe = null)
 	{
 		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
 
 		while (!condition())
 		{
-			if (DateTime.UtcNow > deadline) throw new TimeoutException("The condition did not hold within 30 s.");
+			if (DateTime.UtcNow > deadline)
+			{
+				throw new TimeoutException($"The condition did not hold within 30 s. {describe?.Invoke()}");
+			}
 
 			await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
 		}

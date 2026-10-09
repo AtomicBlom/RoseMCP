@@ -43,7 +43,7 @@ internal static class ProbeTargetSession
 		return new LiveAppSessionManager(
 			Options.Create(options),
 			logs ?? NullLoggerFactory.Instance,
-			NullLogger<LiveAppSessionManager>.Instance);
+			logs?.CreateLogger<LiveAppSessionManager>() ?? NullLogger<LiveAppSessionManager>.Instance);
 	}
 
 	/// <summary>
@@ -167,7 +167,9 @@ internal static class ProbeTargetSession
 				Exception? exception,
 				Func<TState, Exception?, string> formatter)
 			{
-				var line = formatter(state, exception);
+				// Timed, so a test that fails on a wait can say when the work it waited for happened.
+				var line = $"{DateTime.UtcNow:HH:mm:ss.fff}Z {logLevel}: {formatter(state, exception)}"
+					+ (exception is null ? string.Empty : $" ({exception.GetType().Name}: {exception.Message})");
 
 				lock (lines) lines.Add(line);
 			}

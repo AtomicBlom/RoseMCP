@@ -33,12 +33,18 @@ public sealed class IdleEvictionTests
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		// Idle is decided on a clock the test moves. On the real clock a short limit is a race with the
+		// machine: a loaded test process stalls for longer than the limit between the load finishing and
+		// the warm half being asserted, and the worker is evicted -- correctly -- before anyone looks.
+		// The limit is also how long the stopped row stays, which the clock holds still until the test
+		// is done with it.
+		var clock = new SteerableClock();
 		await using var manager = CreateManager(configure: options =>
 		{
-			// Also how long the stopped row stays, which has to outlast stopping the process -- the
-			// sweep holds the gate while it does, and a status call waits for it.
-			options.IdleEvictionAfter = TimeSpan.FromSeconds(15);
+			options.IdleEvictionAfter = TimeSpan.FromMinutes(30);
 			options.EvictionSweepInterval = SweepInterval;
+			options.TimeProvider = clock;
 		});
 
 		var hints = WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath));
@@ -60,8 +66,9 @@ public sealed class IdleEvictionTests
 		warm.WorkspaceKey.ShouldBe(worker.Key);
 		warm.ExitReason.ShouldBeNull();
 		warm.State.ShouldBe(WorkspaceState.Loaded);
-		manager.List().IdleEvictionAfter.ShouldBe(TimeSpan.FromSeconds(15));
+		manager.List().IdleEvictionAfter.ShouldBe(TimeSpan.FromMinutes(30));
 
+		clock.Jump(TimeSpan.FromHours(1));
 		await WaitUntilAsync(() => EvictionNote(manager) is not null, TimeSpan.FromSeconds(60), cancellationToken);
 
 		worker.ExitReason.ShouldBe(WorkerExitReason.Evicted);
@@ -265,11 +272,15 @@ public sealed class IdleEvictionTests
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		// Idle is decided on a clock the test moves, so the worker is evicted when the test says and not
+		// during a stall of a loaded machine before the loaded half has been asserted.
+		var clock = new SteerableClock();
 		await using var manager = CreateManager(configure: options =>
 		{
-			// Also how long the stopped row stays, which the assertions below need to outlast.
-			options.IdleEvictionAfter = TimeSpan.FromSeconds(15);
+			options.IdleEvictionAfter = TimeSpan.FromMinutes(30);
 			options.EvictionSweepInterval = SweepInterval;
+			options.TimeProvider = clock;
 		});
 
 		await manager.CallAsync<WorkspaceStatusReport>(
@@ -285,6 +296,10 @@ public sealed class IdleEvictionTests
 		var whileLoaded = Should.Throw<McpException>(() => manager.WorkspaceFor(misread));
 		whileLoaded.Message.ShouldContain("which is loaded");
 
+		// After the load has filed its finish, which restarts the idle clock: a jump before it would be
+		// undone by the restart, and the worker would never be idle past the limit.
+		await WaitUntilAsync(() => worker.LoadDuration is not null, TimeSpan.FromSeconds(30), cancellationToken);
+		clock.Jump(TimeSpan.FromHours(1));
 		await WaitUntilAsync(() => EvictionNote(manager) is not null, TimeSpan.FromSeconds(60), cancellationToken);
 		worker.ExitReason.ShouldBe(WorkerExitReason.Evicted);
 

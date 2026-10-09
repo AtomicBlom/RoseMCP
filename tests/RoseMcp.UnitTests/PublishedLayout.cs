@@ -32,22 +32,8 @@ internal sealed record PublishedLayout(
 	public IReadOnlyList<string> BrokerFolders => [.. Components.Where(component => component.HostsBroker).Select(component => component.Folder)];
 
 	public static PublishedLayout Load() =>
-		JsonSerializer.Deserialize<PublishedLayout>(File.ReadAllText(RepositoryFile("tools", "published-layout.json")), Options)
+		JsonSerializer.Deserialize<PublishedLayout>(File.ReadAllText(Checkout.RepositoryFile("tools", "published-layout.json")), Options)
 			?? throw new InvalidOperationException("tools/published-layout.json is empty.");
-
-	/// <summary>A file in the checkout, found by walking up to the solution from the test's own output.</summary>
-	public static string RepositoryFile(params string[] segments)
-	{
-		for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
-		{
-			if (File.Exists(Path.Combine(directory.FullName, "RoseMcp.slnx")))
-			{
-				return Path.Combine([directory.FullName, .. segments]);
-			}
-		}
-
-		throw new InvalidOperationException($"No RoseMcp.slnx above {AppContext.BaseDirectory}.");
-	}
 
 	/// <summary>The component a project publishes, refused rather than defaulted when the layout has none.</summary>
 	public Component ComponentFor(string project) =>

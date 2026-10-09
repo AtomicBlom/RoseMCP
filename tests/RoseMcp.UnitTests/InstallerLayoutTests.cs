@@ -21,7 +21,7 @@ public sealed partial class InstallerLayoutTests
 {
 	private static readonly PublishedLayout Layout = PublishedLayout.Load();
 
-	private static readonly string Script = File.ReadAllText(PublishedLayout.RepositoryFile("installer", "rosemcp.iss"));
+	private static readonly string Script = File.ReadAllText(Checkout.RepositoryFile("installer", "rosemcp.iss"));
 
 	private static readonly IReadOnlyList<FilesEntry> Entries = ReadFilesEntries(Script);
 

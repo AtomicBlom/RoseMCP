@@ -28,15 +28,19 @@ it, so `tests/Foo.cs` would name different files in two calls from the same plac
 rule exists to remove.
 
 **Why the broker does it.** Only the broker knows where the caller is standing: a relay says so on
-every call, and a session with no relay is the broker's own directory. A worker answers for whoever
-asked and cannot know. So the shortening is a step on the broker's side of the hop, and the hop to the
+every call, and a stdio broker was started by its client where the client stands. A worker answers
+for whoever asked and cannot know. So the shortening is a step on the broker's side of the hop, and the hop to the
 worker stays absolute-only.
 
 **Why a path outside the directory stays absolute.** A path that climbs out with `..` is longer than
 the one it replaces, depends on the depth of the caller's directory, and is the shape a mistyped path
-takes. An absolute one is honoured wherever it points, which is all the caller needs of it. An http
-client with no relay in front of it is standing in the broker's own directory, which holds none of
-its files, so it gets absolute paths throughout.
+takes. An absolute one is honoured wherever it points, which is all the caller needs of it.
+
+**Why a caller that never says where it stands gets absolute paths.** An http client with no relay
+in front of it sends no directory, and the broker's own is the tray's or the server's, which is not
+where the caller is. A path made relative to it would name nothing when sent back, so the broker
+shortens only against a directory it knows is the caller's -- one a relay sent, or a stdio broker's
+own -- and such a client gets absolute paths throughout.
 
 **What it does not cover.** Only `rose_find_references` lists enough files for the root to matter.
 An outline says its file once per type and symbol info once per declaration. The write results,

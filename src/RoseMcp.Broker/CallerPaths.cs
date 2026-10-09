@@ -21,6 +21,14 @@ public sealed class CallerPaths(IOptions<BrokerOptions> options)
 	/// <summary>The directory this call's relative paths are measured from.</summary>
 	public string Origin => CallOrigin.Directory ?? _options.DefaultWorkspaceRoot;
 
+	/// <summary>
+	/// The directory the caller is known to stand in, or null where it is not known: a relayed session
+	/// says, a stdio broker's own directory is its client's, and an http session with no relay in front
+	/// of it says nothing. A result is made relative only to this, since a path relative to a directory
+	/// the caller is not in is a path that names nothing when it is sent back.
+	/// </summary>
+	public string? KnownOrigin => CallOrigin.Directory ?? (_options.DefaultRootIsTheCaller ? _options.DefaultWorkspaceRoot : null);
+
 	/// <summary>One path argument, absolute.</summary>
 	public RootedPath? Of(string? raw) => RootedPath.From(raw, Origin);
 

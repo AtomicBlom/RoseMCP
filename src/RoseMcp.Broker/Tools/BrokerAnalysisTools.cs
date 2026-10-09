@@ -123,7 +123,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["isGenerated"] = isGenerated,
 		}, cancellationToken, progress);
 
-		return ResultPaths.RelativeTo(found, paths.Origin);
+		return paths.KnownOrigin is { } origin ? ResultPaths.RelativeTo(found, origin) : found;
 	}
 
 	[McpServerTool(

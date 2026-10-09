@@ -22,6 +22,15 @@ public sealed class BrokerOptions
 	public string DefaultWorkspaceRoot { get; set; } = Environment.CurrentDirectory;
 
 	/// <summary>
+	/// Whether <see cref="DefaultWorkspaceRoot"/> is where the caller stands when a call does not say:
+	/// true for a stdio broker, whose client chose its working directory, and false for an http one,
+	/// whose own directory is the tray's or the server's and holds none of the caller's files. A result's
+	/// paths are made relative only to a directory known to be the caller's, so this is off unless the
+	/// host that knows says otherwise.
+	/// </summary>
+	public bool DefaultRootIsTheCaller { get; set; }
+
+	/// <summary>
 	/// How long a freshly started worker has to complete its MCP handshake.
 	/// <para>
 	/// Set explicitly because the SDK's own default is 60 seconds, and a worker begins loading its

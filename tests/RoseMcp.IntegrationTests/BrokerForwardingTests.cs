@@ -256,8 +256,11 @@ public sealed class BrokerForwardingTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var manager = CreateManager();
 		var origin = Path.GetDirectoryName(fixture.SolutionPath)!;
-		var tools = new BrokerAnalysisTools(manager, CreatePaths(origin));
+		var tools = new BrokerAnalysisTools(manager, CreatePaths());
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		// A relayed session, which says where it stands.
+		using var standing = CallOrigin.Use(origin);
 
 		var batch = await tools.FindReferencesAsync(
 			new Progress<ProgressNotificationValue>(),
@@ -282,6 +285,28 @@ public sealed class BrokerForwardingTests
 
 		described.Name.ShouldBe("Greet");
 		described.Kind.ShouldBe("Method");
+	}
+
+	/// <summary>
+	/// An http session with no relay in front of it never says where it stands, and the broker's own
+	/// directory is not where the caller is: a path made relative to it would name nothing when sent back,
+	/// so every path stays absolute.
+	/// </summary>
+	[Test]
+	public async Task A_caller_that_never_says_where_it_stands_gets_absolute_paths()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+		var tools = new BrokerAnalysisTools(manager, CreatePaths(Path.GetDirectoryName(fixture.SolutionPath)!));
+
+		var batch = await tools.FindReferencesAsync(
+			new Progress<ProgressNotificationValue>(),
+			symbols: ["Library.Greeter.Greet(string)"],
+			workspace: fixture.SolutionPath,
+			cancellationToken: TestContext.Current!.Execution.CancellationToken);
+
+		batch.RelativeTo.ShouldBeNull();
+		batch.Results.ShouldHaveSingleItem().Answer.ShouldNotBeNull().Files.ShouldAllBe(file => Path.IsPathFullyQualified(file.FilePath));
 	}
 
 	/// <summary>

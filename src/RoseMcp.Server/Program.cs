@@ -48,7 +48,13 @@ internal static class Program
 		ConfigureLogging(builder.Logging);
 
 		builder.Services
-			.AddRoseMcpBroker(broker => Apply(options, broker))
+			.AddRoseMcpBroker(broker =>
+			{
+				Apply(options, broker);
+
+				// A stdio client launched this process where it stands, so the working directory is the caller's.
+				broker.DefaultRootIsTheCaller = true;
+			})
 			.WithStdioServerTransport();
 
 		await builder.Build().RunAsync();

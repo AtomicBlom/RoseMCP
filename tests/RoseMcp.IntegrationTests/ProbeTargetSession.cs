@@ -197,11 +197,9 @@ internal static class ProbeTargetSession
 			throw new ShouldAssertException($"{reason} It came up earlier in this run, so this is a failure rather than a limit of this machine.");
 		}
 
-		Skip.Test(reason);
-
-		// Skip.Test throws, and the compiler cannot know that from an attribute the framework does not
-		// carry. Marking this method as not returning is what lets the callers read as guards.
-		throw new InvalidOperationException(reason);
+		// A machine that was set up for these tests and still never brought the app up is failed here too,
+		// by the same switch that fails a missing toolchain.
+		MachineLimit.Reached(reason);
 	}
 
 	/// <summary>An attach-by-pid target for the probe, which is how most of these sessions start.</summary>

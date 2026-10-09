@@ -203,9 +203,15 @@ for the holder either way.
 `tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/TestResults/logs/<run>` rather than the machine's
 own folder (`ROSEMCP_LOG_ROOT`), nothing prunes it during the run, and a test that fails, times out
 or is cancelled lists and attaches every log written while it ran -- the tap logs of live sandboxes
-included. CI uploads the lot as `integration-evidence` when the job fails. Read them before
-concluding anything: a failure that appears only under load is still a failure, because a developer
-running several apps and taps at once is under load.
+included. CI uploads the lot as `integration-evidence`, or `probe-app-evidence` from the job that
+runs the probe-app tests, when the job fails. Read them before concluding anything: a failure that
+appears only under load is still a failure, because a developer running several apps and taps at
+once is under load.
+
+**A missing toolchain skips a test, except where `ROSEMCP_TESTS_REQUIRE_TOOLCHAIN=1`.** CI sets it,
+so a skip there fails naming what was missing; leave it unset locally unless you mean to prove a
+machine has everything. Skip through `MachineLimit.Reached`, never the framework directly --
+`ProbeAppCategoryTests` fails on a direct skip, because the switch cannot reach one.
 
 Run a worker standalone against a fixture -- the fastest way to debug Roslyn behaviour without
 the broker in the way:

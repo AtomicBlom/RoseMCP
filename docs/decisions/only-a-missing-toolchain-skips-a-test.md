@@ -14,5 +14,12 @@ build, and from the outside it looks exactly like a machine that genuinely canno
 draws the same line for launches: a skip that is about this attempt rather than this machine is a
 failure.
 
+**Where even that skip is a failure.** On a machine that was set up to have every toolchain -- a CI
+runner whose steps installed them -- a missing one is that setup failing, not a fact about the
+machine. `ROSEMCP_TESTS_REQUIRE_TOOLCHAIN` says so: every skip in the integration suite goes through
+`MachineLimit.Reached`, which fails naming what was missing where it is set and skips where it is
+not. Both CI jobs that run integration tests set it, and nothing else should, because on a developer
+machine a skip for a toolchain nobody installed is the right answer.
+
 **A consequence worth knowing.** The integration suite builds the provider itself, so building it by
 hand while the suite runs races over the same outputs and breaks both. Do one at a time.

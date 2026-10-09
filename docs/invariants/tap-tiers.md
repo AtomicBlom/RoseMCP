@@ -71,4 +71,6 @@ changing the include order in either provider's `.cpp`.
 
   Exit 3 is a missing toolset rather than a break, which is what lets a machine without the C++
   workload skip rather than fail. CI compiles both providers for x86, x64 and arm64 on `main`, and
-  x64 only on a pull request.
+  x64 only on a pull request; its probe-apps job then injects the x64 builds into the three probe
+  apps and runs the tests against them, so a change that compiles but breaks the tap is a red job
+  rather than a finding at the next local run.

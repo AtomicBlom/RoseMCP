@@ -55,9 +55,11 @@ activate it under the debugger:
 Add-AppxPackage -Register bin\x64\Debug\AppX\AppxManifest.xml
 ```
 
-The integration tests stage that layout from the recipe on demand (`StageUwpProbeLayout`) and **skip**
+The integration tests stage that layout from the recipe on demand (`UwpProbeApp`) and **skip**
 when the MSBuild/UWP toolchain is not present, so the rest of the suite stays green on a machine
-without it.
+without it. Where `ROSEMCP_TESTS_REQUIRE_TOOLCHAIN` is set, as CI sets it, the same absence fails the
+test instead, naming what was missing: a machine set up for these tests that cannot run them is a
+broken setup, not a limit.
 
 ## Building the WinUI 3 app
 

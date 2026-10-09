@@ -41,12 +41,17 @@ public sealed class RelayFixture : IAsyncDisposable
 
 	/// <summary>
 	/// Starts both, with the session's working directory set to <paramref name="workingDirectory"/> --
-	/// which is the one fact a stdio process has and an http broker cannot get any other way.
+	/// which is the one fact a stdio process has and an http broker cannot get any other way. The
+	/// broker runs in <paramref name="brokerDirectory"/> where one is given, as a tray runs in whatever
+	/// directory it was started from.
 	/// </summary>
-	public static async Task<RelayFixture> StartAsync(string workingDirectory, CancellationToken cancellationToken)
+	public static async Task<RelayFixture> StartAsync(
+		string workingDirectory,
+		CancellationToken cancellationToken,
+		string? brokerDirectory = null)
 	{
 		var port = RoseServerProcess.FreePort();
-		var broker = RoseServerProcess.Start("--transport", "http", "--port", port.ToString());
+		var broker = RoseServerProcess.StartIn(brokerDirectory, "--transport", "http", "--port", port.ToString());
 
 		try
 		{

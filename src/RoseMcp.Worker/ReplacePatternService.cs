@@ -25,9 +25,6 @@ namespace RoseMcp.Worker;
 /// </summary>
 public static class ReplacePatternService
 {
-	/// <summary>The longest diff a result carries; beyond it, a caller narrows the scope to read one.</summary>
-	internal const int DiffCeiling = 16_000;
-
 	/// <summary>Rewrites what <paramref name="request"/>'s rules match across its scope, or previews it.</summary>
 	public static async Task<MutationResult<PatternRewriteResult>> ReplaceAsync(
 		WorkspaceSnapshot snapshot,
@@ -155,14 +152,14 @@ public static class ReplacePatternService
 
 		await edit.WriteAsync(solution, asked, cancellationToken);
 
-		var firstChanged = edit.Outcome.ChangedFiles.FirstOrDefault() ?? string.Empty;
+		var firstChanged = edit.Outcome.Paths.FirstOrDefault() ?? string.Empty;
 
 		progress?.Report("Compiling what changed", 90);
 
 		await edit.VerifyAsync(
 			firstChanged,
 			EditVerification.WithDependents(solution, [.. changedProjects]),
-			edit.Outcome.ChangedFiles,
+			edit.Outcome.Paths,
 			cancellationToken);
 
 		var summary = PatternReport.Build(
@@ -187,14 +184,6 @@ public static class ReplacePatternService
 
 		notices.AddRange(summary.Notices);
 
-		var diff = edit.Outcome.Diff;
-
-		if (diff.Length > DiffCeiling)
-		{
-			notices.Add($"The diff is {diff.Length:N0} characters and was left out. Narrow filePaths to one file or directory to read it.");
-			diff = string.Empty;
-		}
-
 		notices.AddRange(edit.Report());
 
 		var result = new PatternRewriteResult
@@ -211,14 +200,14 @@ public static class ReplacePatternService
 			Files = summary.Files,
 			FileCount = summary.FileCount,
 			FilesChanged = edit.Outcome.ChangedFiles.Count,
-			Diff = diff,
+			Diff = edit.Outcome.Diff,
 			// Every one: the broker reads the whole list to warn about a sibling solution compiling the same
 			// files, and only then caps what the caller is shown.
 			ChangedFiles = edit.Outcome.ChangedFiles,
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
 			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
-			TotalErrorCount = edit.Verification.TotalCount,
+			PreexistingErrorCount = edit.Verification.PreexistingCount,
 			ProjectsChecked = edit.Verification.Projects,
 			Notices = notices,
 		};

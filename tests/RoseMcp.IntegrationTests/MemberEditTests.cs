@@ -903,7 +903,7 @@ public sealed class MemberEditTests
 		result.Applied.ShouldBeTrue();
 		result.Verified.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		result.Members.ShouldBe(["Thrice"]);
+		result.Members.ShouldBeNull("the symbol already names the one member removed");
 
 		var text = await ReadAsync(fixture, "Regioned.cs");
 

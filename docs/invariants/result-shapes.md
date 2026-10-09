@@ -72,8 +72,10 @@ Read before adding a tool, adding a field to a result, or changing an error path
   same error, since its `usings` go only where a declaration changes. So `EditPipeline.VerifyAsync`
   takes the files the tool's own `usings` reaches, with no default for a new tool to inherit, and
   `MissingImports` names `usings` only for those. Anywhere else it names `rose_add_using` and every
-  file the name failed in, each by its whole path, since that is what `filePath` is matched against
-  and a name answered once for its first file leaves the others failing after the advice is taken.
+  file the name failed in, each by its path -- relative to the calling session's directory where it
+  lies under it, as the result names every path, which is where a path sent back is measured from --
+  since that is what `filePath` is matched against and a name answered once for its first file
+  leaves the others failing after the advice is taken.
 - **A name matching two symbols is refused, and the address a result hands back resolves.** These
   are the two halves of addressing code by name, and each fails by producing a well-formed answer
   about something else. A resolver keyed on a candidate's name, containing type and assembly
@@ -230,5 +232,27 @@ Read before adding a tool, adding a field to a result, or changing an error path
   <br>
   A write's `changedFiles` is the one list a narrowing must not reach early: `WorkspaceManager` reads
   all of it to say which sibling solution compiles the same files, so a worker that cut it would hide
-  a sibling whose files fell past the cut. Where a tool names fewer, as `rose_replace_pattern` does past
-  twenty, the broker cuts it after the manager has answered.
+  a sibling whose files fell past the cut. Every write names twenty at most, and the broker cuts the
+  list after the manager has answered -- and names the paths relative to the caller's directory only
+  after that too, since the sibling check reads them absolute.
+- **A write result says what the writer owns, once, and never the caller's input back.** What an
+  edit wrote is nearly always what its caller sent, so an applied write leaves its diff off unless
+  `includeDiff` asks, and says instead where each file changed and what it normalised (`changedFiles`:
+  lines, and line endings rewritten, which no diff can show). A preview keeps the diff, because a
+  preview is the diff; past sixteen thousand characters even that is left out, with a notice naming
+  where it still is -- `git diff` for an applied write, a narrower preview for one that is not. A path is
+  named once: a result about one file names it as the first changed file rather than in a field of its
+  own, relative to the calling session's directory where it lies under it, so it means one file
+  however it is sent back (see [solution-routing.md](solution-routing.md)). And a notice is said
+  only where it is true of this call and is not already a field: whether it was a preview is
+  `applied`, whether anything compiled is `verified`, the errors introduced, resolved and already there
+  are counts, and the dependents a narrowed scope skipped are a list. The one thing a count cannot
+  say is that part of the errors already there are analyzer errors, which `rose_diagnostics` leaves
+  out unless `includeAnalyzers=true`, so a count beside its zero reads as the two tools disagreeing:
+  a write says how many, where there are any. What holds for every call -- that
+  analyzers run where a write lands -- is in the descriptions. A line stating *which* compile ran is a
+  fact about the call and stays. A notice that fires on every call carries no information and teaches
+  the caller to skim the channel the rare ones arrive on; one guarded on the kind of edit rather than on
+  the case that makes it true ends up contradicting the field beside it. `WriteForCaller` and
+  `WritePaths` do the shaping in the broker for every write, so a writing tool added later is shaped
+  without knowing it is, and `WriteResultTests` fails a write result type `WritePaths` does not know.

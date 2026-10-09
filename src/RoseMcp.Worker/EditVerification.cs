@@ -73,7 +73,8 @@ public static class EditVerification
 			Ran = true,
 			Introduced = ordered,
 			ResolvedCount = resolved,
-			TotalCount = now.Count,
+			PreexistingCount = Math.Max(0, now.Count - introduced.Count),
+			PreexistingAnalyzerCount = await PreexistingAnalyzerCountAsync(diagnostics, after, projects, analyzed, now, introduced, cancellationToken),
 			Projects = projects,
 			AnalyzedProjects = analyzed,
 			Notices = [.. AnalyzerNotices(projects, analyzed), .. unread.Select(Describe)],
@@ -84,6 +85,34 @@ public static class EditVerification
 			Suggestions = await MissingImports.SuggestAsync(
 				new WorkspaceSnapshot { Solution = after, Revision = 0 }, ordered, usingsReach, cancellationToken),
 		};
+	}
+
+	/// <summary>
+	/// How many of the errors already there an analyzer reported rather than the compiler or a generator,
+	/// which is the part <c>rose_diagnostics</c> leaves out unless asked.
+	/// <para>
+	/// Told apart by asking the compiler alone for the same projects and taking the difference, rather than
+	/// by the id: a generator names its own ids too, and <c>rose_diagnostics</c> reports those by default.
+	/// The compiler's answer for <paramref name="after"/> is what the analyzer run just cached, so this costs
+	/// no second compile. Zero without asking where no project ran analyzers.
+	/// </para>
+	/// </summary>
+	private static async Task<int> PreexistingAnalyzerCountAsync(
+		DiagnosticsService diagnostics,
+		Solution after,
+		IReadOnlyList<string> projects,
+		IReadOnlyList<string> analyzed,
+		IReadOnlyList<DiagnosticEntry> now,
+		IReadOnlyList<DiagnosticEntry> introduced,
+		CancellationToken cancellationToken)
+	{
+		if (analyzed.Count == 0) return 0;
+
+		var compiler = (await ErrorsAsync(diagnostics, after, projects, [], cancellationToken)).ToHashSet();
+		var fromAnalyzers = now.Count(entry => !compiler.Contains(entry));
+		var introducedByAnalyzers = introduced.Count(entry => !compiler.Contains(entry));
+
+		return Math.Max(0, fromAnalyzers - introducedByAnalyzers);
 	}
 
 	/// <summary>
@@ -114,10 +143,16 @@ public static class EditVerification
 	}
 
 	/// <summary>
-	/// What the caller has to know about the analyzer half, because the answer is worth less without
-	/// it: a repository that escalates IDE0055 or IDE0005 to an error fails its build on a diagnostic
-	/// no compiler pass produces, and "compiles clean" would be a confident answer to a narrower
-	/// question than the one asked.
+	/// What the caller has to know about the analyzer half where it is not the usual answer: a repository
+	/// that escalates IDE0055 or IDE0005 to an error fails its build on a diagnostic no compiler pass
+	/// produces, and "compiles clean" would be a confident answer to a narrower question than the one
+	/// asked.
+	/// <para>
+	/// Silent in the usual case, where every project compiled is one the edit wrote to and so had its
+	/// analyzers: that is true of every such call, and the tool descriptions say it once. Said where
+	/// analyzers ran nowhere, and where some compiled projects had the compiler only, because which
+	/// projects those were is a fact about this call that no field carries.
+	/// </para>
 	/// </summary>
 	private static IEnumerable<string> AnalyzerNotices(
 		IReadOnlyList<string> projects,
@@ -132,11 +167,10 @@ public static class EditVerification
 		}
 
 		var rest = projects.Except(analyzed, StringComparer.Ordinal).ToArray();
+		if (rest.Length == 0) yield break;
 
-		yield return rest.Length == 0
-			? $"Analyzers ran in {string.Join(", ", analyzed)}, so a rule escalated to an error is included."
-			: $"Analyzers ran in {string.Join(", ", analyzed)}, where the edit wrote. "
-				+ $"{string.Join(", ", rest)} had the compiler only, so an analyzer rule broken there is not in this answer.";
+		yield return $"Analyzers ran only in {string.Join(", ", analyzed)}, where the edit wrote; "
+			+ $"{string.Join(", ", rest)} had the compiler only, so an analyzer rule broken there is not in this answer.";
 	}
 
 	/// <summary>

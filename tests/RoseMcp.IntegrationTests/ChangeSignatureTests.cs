@@ -32,7 +32,7 @@ public sealed class ChangeSignatureTests
 		result.Applied.ShouldBeTrue();
 		result.Verified.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
@@ -74,7 +74,7 @@ public sealed class ChangeSignatureTests
 		var result = await ChangeAsync(session, "Library.Wrapped.Join(string, string, string)", written);
 
 		result.Applied.ShouldBeTrue("the change is written; only its layout is under test");
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 
 		var text = await ReadAsync(fixture, "Wrapped.cs");
 
@@ -157,7 +157,7 @@ public sealed class ChangeSignatureTests
 		var result = await ChangeAsync(session, "Library.Grouped.Grouped(string, string, int)", written);
 
 		result.Applied.ShouldBeTrue("the change is written; only its layout is under test");
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 
 		var text = await ReadAsync(fixture, "Grouped.cs");
 
@@ -187,7 +187,7 @@ public sealed class ChangeSignatureTests
 			session, "Library.Arrowed.Spread", "string first, string second, string third, string fourth = \"\"");
 
 		result.Applied.ShouldBeTrue("the change is written; the body is what is under test");
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 
 		var text = await ReadAsync(fixture, "Arrowed.cs");
 
@@ -441,7 +441,7 @@ public sealed class ChangeSignatureTests
 
 		result.Applied.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 
 		var text = await ReadAsync(fixture, "Layers.cs");
 
@@ -575,7 +575,7 @@ public sealed class ChangeSignatureTests
 
 		result.Applied.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 	}
 
 	/// <summary>
@@ -637,8 +637,7 @@ public sealed class ChangeSignatureTests
 
 		result.Applied.ShouldBeFalse("a preview writes nothing");
 		(await ReadAsync(fixture, "Layers.cs")).ShouldBe(before);
-		string.Join(" ", result.Notices).ShouldContain("Preview only", Case.Sensitive);
-		result.Diff.ShouldContain("urgent", Case.Sensitive);
+		result.Diff.ShouldNotBeNull().ShouldContain("urgent", Case.Sensitive);
 	}
 
 	/// <summary>A member with no parameter list to change is told so rather than mangled.</summary>
@@ -756,7 +755,7 @@ public sealed class ChangeSignatureTests
 
 		result.Applied.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 		result.Accessibility.ShouldBe("internal");
 		result.Parameters.ShouldBeNull();
 		result.UpdatedCallSites.ShouldBeEmpty();
@@ -829,7 +828,7 @@ public sealed class ChangeSignatureTests
 
 		result.Applied.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 		result.UpdatedDeclarations.Count.ShouldBe(3);
 		result.Notices.ShouldContain(notice => notice.Contains("2 declaration(s) it overrides", StringComparison.Ordinal));
 
@@ -976,7 +975,7 @@ public sealed class ChangeSignatureTests
 		result.Applied.ShouldBeTrue();
 		result.Verified.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 
 		var text = await ReadAsync(fixture, "Constructed.cs");
 
@@ -999,7 +998,7 @@ public sealed class ChangeSignatureTests
 		result.Applied.ShouldBeTrue();
 		result.Verified.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 
 		var text = await ReadAsync(fixture, "Constructed.cs");
 
@@ -1208,7 +1207,7 @@ public sealed class ChangeSignatureTests
 			apply: false);
 
 		preview.Applied.ShouldBeFalse("a preview writes nothing");
-		preview.Diff.ShouldContain("+using System.Text;", Case.Sensitive);
+		preview.Diff.ShouldNotBeNull().ShouldContain("+using System.Text;", Case.Sensitive);
 		preview.IntroducedDiagnostics.ShouldBeEmpty();
 		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
 
@@ -1217,7 +1216,7 @@ public sealed class ChangeSignatureTests
 
 		result.Applied.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 		result.Notices.ShouldContain("Imported System.Text into Greeter.cs.");
 		result.Notices.ShouldNotContain(notice => notice.Contains(Overreach, StringComparison.Ordinal));
 

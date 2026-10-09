@@ -22,7 +22,8 @@ public sealed class MoveTypeTests
 
 		var target = fixture.Path("MultiType", "Shapes", "Circle.cs");
 
-		result.TargetPath.ShouldBe(target, StringCompareShould.IgnoreCase);
+		result.ChangedFiles[0].FilePath.ShouldBe(target, StringCompareShould.IgnoreCase);
+		result.ChangedFiles[0].Created.ShouldBe(true);
 		result.Applied.ShouldBeTrue();
 		File.Exists(target).ShouldBeTrue($"{target} was not written");
 
@@ -151,9 +152,8 @@ public sealed class MoveTypeTests
 			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current!.Execution.CancellationToken)).ShouldBe(before);
 
 		// The diff still describes both halves of the move that did not happen.
-		result.Diff.ShouldContain("+++ ", Case.Sensitive);
-		result.Diff.ShouldContain("record Circle", Case.Sensitive);
-		string.Join(" ", result.Notices).ShouldContain("Preview only", Case.Sensitive);
+		result.Diff.ShouldNotBeNull().ShouldContain("+++ ", Case.Sensitive);
+		result.Diff.ShouldNotBeNull().ShouldContain("record Circle", Case.Sensitive);
 	}
 
 	/// <summary>

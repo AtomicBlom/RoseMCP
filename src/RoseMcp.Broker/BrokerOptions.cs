@@ -25,8 +25,13 @@ public sealed class BrokerOptions
 	/// Whether <see cref="DefaultWorkspaceRoot"/> is where the caller stands when a call does not say:
 	/// true for a stdio broker, whose client chose its working directory, and false for an http one,
 	/// whose own directory is the tray's or the server's and holds none of the caller's files. A result's
-	/// paths are made relative only to a directory known to be the caller's, so this is off unless the
-	/// host that knows says otherwise.
+	/// paths, a read's and a write's, are made relative only to a directory known to be the caller's.
+	/// <para>
+	/// False unless the host that knows says otherwise, because the two mistakes cost different amounts.
+	/// A stdio host that forgets it answers with absolute paths, which are longer and still right; an
+	/// http host that inherited true would hand back paths relative to the tray's directory, which round-
+	/// trip through Rose and name a different file, or none, in the caller's own file tools.
+	/// </para>
 	/// </summary>
 	public bool DefaultRootIsTheCaller { get; set; }
 

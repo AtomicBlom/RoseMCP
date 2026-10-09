@@ -634,6 +634,5 @@ public sealed class MoveMemberTests
 		var said = string.Join(" ", result.Notices);
 
 		said.ShouldContain("System.Globalization", Case.Sensitive);
-		said.ShouldContain("This introduced", Case.Sensitive);
 	}
 }

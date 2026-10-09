@@ -32,14 +32,14 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   it do. It never reads the payload. Every pass takes that one value: `FormattingOptionsAsync` fills
   in the formatter's options wherever Roslyn wasn't told, and the text pass uses the same rules. See
   [the decision](../decisions/a-files-layout-comes-from-what-declares-it-then-from-the-file.md).
-- **A change a diff cannot show is said in words.** A unified diff compares the content of lines,
-  and a terminator is not content -- so rewriting a file's endings produces no hunk at all. That is
-  the change `rose_format` is called for most often, in exactly the repositories where it matters:
-  where IDE0055 is an error, an LF in a CRLF file is a failed build, and fixing it is the whole
-  reason the call was made. Reporting five changed files beside an empty diff reads precisely like a
-  call that did nothing. So `SolutionWriter` counts the lines that moved and every writing tool
-  passes the sentence on, rather than the alternatives: a whole-file hunk nobody can read, or
-  inventing a hunk header that is not a patch.
+- **A change a diff cannot show is said beside the file.** A unified diff compares the content of
+  lines, and a terminator is not content -- so rewriting a file's endings produces no hunk at all.
+  That is the change `rose_format` is called for most often, in exactly the repositories where it
+  matters: where IDE0055 is an error, an LF in a CRLF file is a failed build, and fixing it is the
+  whole reason the call was made. Reporting five changed files with nothing changed in them reads
+  precisely like a call that did nothing. So `SolutionWriter` counts the endings that moved and names
+  them as the file's `normalised`, on the same entry as the lines it changed, rather than the
+  alternatives: a whole-file hunk nobody can read, or inventing a hunk header that is not a patch.
 - **A write names every line it changed that nothing it was asked to do reaches.** Layout the
   formatter has no rule about is layout nothing checks. A body reflowed by an insertion, a value
   pulled up onto its declaration's line, a comment dropped from between two matched statements: each
@@ -60,7 +60,7 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   to is, since a documented member added in front of another begins with the same `/// <summary>`.
   Blank lines beside what was asked go with it for the same reason. It is a sentence rather than a
   refusal, because a line can change harmlessly, such as
-  trailing whitespace trimmed where the file asks for it, and only the caller holding the diff can
+  trailing whitespace trimmed where the file asks for it, and only the caller reading the lines can
   tell that from a reflow. It says nothing about what happens inside the spans: a replacement
   written at the wrong depth is still the replacement the caller asked for.
 - **`rose_format` says what it checked, never that a file is formatted.** It applies Roslyn's

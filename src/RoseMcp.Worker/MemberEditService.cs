@@ -112,29 +112,29 @@ public static class MemberEditService
 			notices.AddRange(imports.Unresolved);
 		}
 
+		var skipped = request.Verify && edit.Changed
+			? EditVerification.SkippedDependents(finished.Solution, path, written.Reaches, request.VerifyScope)
+			: [];
+
 		notices.AddRange(finished.Notices);
 		notices.AddRange(edit.Report());
-		notices.AddRange(Notices(request, edit.Verification, edit.Outcome));
+		notices.AddRange(Notices(request, edit.Verification, skipped));
 
 		var result = new MemberEditResult
 		{
 			Revision = snapshot.Revision,
 			Symbol = written.Symbol,
-			FilePath = written.Document.FilePath!,
 			Line = finished.Line,
-			Members = written.Members,
+			Members = MoreThanTheSymbol(written.Symbol, written.Members),
 			Applied = edit.Applied,
 			Diff = edit.Outcome.Diff,
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
 			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
-			TotalErrorCount = edit.Verification.TotalCount,
+			PreexistingErrorCount = edit.Verification.PreexistingCount,
 			ProjectsChecked = edit.Verification.Projects,
-			DependentsNotChecked = request.Verify && edit.Changed
-				? EditVerification.SkippedDependents(
-					finished.Solution, written.Document.FilePath!, written.Reaches, request.VerifyScope)
-				: [],
-			ChangedFiles = edit.Outcome.ChangedFiles,
+			DependentsNotChecked = skipped,
+			ChangedFiles = edit.Outcome.Leading(path),
 			Notices = notices,
 		};
 
@@ -1129,31 +1129,48 @@ public static class MemberEditService
 	private static IEnumerable<string> Notices(
 		MemberEditRequest request,
 		Verification verification,
-		WriteOutcome outcome)
+		IReadOnlyList<string> skipped)
 	{
 		if (!verification.Ran) yield break;
 
-		var compiled = string.Join(", ", verification.Projects);
-
+		// The advice, not the diagnostic again: the entry already says the name does not exist, and what
+		// no other field carries is what to do about it.
 		if (verification.Introduced.Any(entry => Unresolved.Contains(entry.Id, StringComparer.Ordinal))
 			&& verification.Suggestions.Count == 0)
 		{
 			var importer = request.Kind == MemberEditKind.Delete
-				? "rose_add_using imports what the code needs."
-				: "the usings argument on this tool imports what the code needs in the same call.";
+				? "rose_add_using imports it."
+				: "the usings argument on this tool imports it in the same call.";
 
-			yield return "A name that does not resolve is either something not written yet or a missing import, and "
-				+ "nothing of that name is reachable from here -- so it is the first. rose_resolve_name searches for "
-				+ $"one by name; {importer}";
+			yield return "Nothing of that name is reachable here, so it is not written yet rather than unimported. "
+				+ $"rose_resolve_name finds one that exists; {importer}";
 		}
 
-		// Said only where it can happen. A body cannot change a signature, and adding a member
-		// cannot break a caller that was already compiling against the ones that were there.
-		if (request.Kind == MemberEditKind.Replace)
+		// Said only where it is true of this edit: a dependent reached the result unchecked because the
+		// caller narrowed the scope. Guarded on the kind of edit alone, it would contradict the empty
+		// list beside it whenever the scope already covers every dependent, which auto always does.
+		if (skipped.Count > 0)
 		{
-			yield return $"Only {compiled} was compiled. A changed signature breaks call sites in the projects that "
-				+ "reference it, which this did not check -- rose_diagnostics with scope=solution does.";
+			yield return "dependentsNotChecked can see what this changed and were not compiled; verifyScope=dependents, "
+				+ "or rose_diagnostics on them, checks them.";
 		}
+	}
+
+	/// <summary>
+	/// The members written, or null where they are only the member <paramref name="symbol"/> already
+	/// names: a replacement of <c>Greeter.Count</c> writes <c>Count</c>, and saying so again is a field
+	/// spent repeating the one beside it.
+	/// </summary>
+	public static IReadOnlyList<string>? MoreThanTheSymbol(string symbol, IReadOnlyList<string> members)
+	{
+		if (members.Count == 0) return null;
+		if (members.Count > 1) return members;
+
+		var path = symbol.Split('(')[0];
+		var last = path[(path.LastIndexOf('.') + 1)..].Split('<')[0].Trim();
+		var isTheSymbol = string.Equals(members[0], last, StringComparison.Ordinal);
+
+		return isTheSymbol ? null : members;
 	}
 
 	/// <summary>

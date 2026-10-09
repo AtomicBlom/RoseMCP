@@ -19,8 +19,33 @@ public sealed record Verification
 	/// <summary>Errors that existed before and do not now.</summary>
 	public int ResolvedCount { get; init; }
 
-	/// <summary>Every error the checked projects report now, whoever caused it.</summary>
-	public int TotalCount { get; init; }
+	/// <summary>Errors the checked projects reported before the edit and still report, whoever caused them.</summary>
+	public int PreexistingCount { get; init; }
+
+	/// <summary>
+	/// How many of <see cref="PreexistingCount"/> an analyzer reported rather than the compiler or a
+	/// generator. Counted because the write ran analyzers where it wrote and <c>rose_diagnostics</c> leaves
+	/// them out unless asked, so without it a count of errors beside that tool's answer of none reads as
+	/// the two tools disagreeing.
+	/// </summary>
+	public int PreexistingAnalyzerCount { get; init; }
+
+	/// <summary>
+	/// The sentence for <see cref="PreexistingAnalyzerCount"/>, or null where it is zero: the one case the
+	/// count of errors already there needs explaining is when part of it is a kind another tool hides.
+	/// </summary>
+	public string? PreexistingAdvice()
+	{
+		if (PreexistingAnalyzerCount == 0) return null;
+
+		var what = PreexistingAnalyzerCount == 1 ? "is an analyzer error" : "are analyzer errors";
+
+		return $"{PreexistingAnalyzerCount} of the {PreexistingCount} errors already there {what}, which "
+			+ "rose_diagnostics leaves out unless includeAnalyzers=true.";
+	}
+
+	/// <summary>Whether the checked projects report no error at all now, this edit's or anyone else's.</summary>
+	public bool HasNoErrors => Introduced.Count == 0 && PreexistingCount == 0;
 
 	/// <summary>The projects that were compiled.</summary>
 	public IReadOnlyList<string> Projects { get; init; } = [];

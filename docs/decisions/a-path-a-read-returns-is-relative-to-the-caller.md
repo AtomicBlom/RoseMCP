@@ -42,7 +42,11 @@ where the caller is. A path made relative to it would name nothing when sent bac
 shortens only against a directory it knows is the caller's -- one a relay sent, or a stdio broker's
 own -- and such a client gets absolute paths throughout.
 
-**What it does not cover.** Only `rose_find_references` lists enough files for the root to matter.
-An outline says its file once per type and symbol info once per declaration. The write results,
-where the repetition costs most, can take this same step at the same place rather than changing the
-routing rule.
+**What it covers besides.** The write results take the same step at the same place rather than
+changing the routing rule: `WritePaths` names a write's changed files, diff headers, diagnostics and
+notices relative to the same directory, from the same `CallerPaths.KnownOrigin`, so a caller that
+never says where it stands gets absolute paths from a write too. A write names its paths with the
+platform's separator rather than forward slashes, because its notices and diff headers are prose a
+path appears inside, and taking the directory off the front of each is what keeps a sentence and the
+field beside it naming the file the same way. An outline says its file once per type and symbol info
+once per declaration, so neither lists enough files for the root to matter.

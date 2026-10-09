@@ -279,7 +279,8 @@ public sealed class Overreach
 		}
 
 		return $"{name}: {string.Join(" and ", parts)}. Nothing this was asked to do reaches them, so that is this "
-			+ "tool's doing rather than anything the code needed: check them in the diff before keeping the change. "
+			+ "tool's doing rather than anything the code needed: look at them before keeping the change, "
+			+ "which the file's git diff shows. "
 			+ "The lines are numbered as the file was before the edit.";
 	}
 

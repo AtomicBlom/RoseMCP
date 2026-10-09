@@ -5,8 +5,6 @@ public sealed record UsingResult : WorkspaceMutationResult
 {
 	public required long Revision { get; init; }
 
-	public required string FilePath { get; init; }
-
 	/// <summary>
 	/// Imports written into the file: a namespace by name, a static import as <c>static Type</c>, an
 	/// alias as <c>Alias = Target</c>.
@@ -20,10 +18,6 @@ public sealed record UsingResult : WorkspaceMutationResult
 	/// </summary>
 	public IReadOnlyList<string> AlreadyInScope { get; init; } = [];
 
-	public required bool Applied { get; init; }
-
-	public required string Diff { get; init; }
-
 	public required bool Verified { get; init; }
 
 	/// <summary>
@@ -35,7 +29,10 @@ public sealed record UsingResult : WorkspaceMutationResult
 	/// <summary>How many errors it made go away, which for this operation is the point.</summary>
 	public int ResolvedDiagnosticCount { get; init; }
 
-	public int TotalErrorCount { get; init; }
+	/// <summary>
+	/// Errors in the projects checked that were there before the import and still are.
+	/// </summary>
+	public int PreexistingErrorCount { get; init; }
 
 	public IReadOnlyList<string> ProjectsChecked { get; init; } = [];
 }

@@ -145,7 +145,7 @@ public static class ChangeSignatureService
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
 			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
-			TotalErrorCount = edit.Verification.TotalCount,
+			PreexistingErrorCount = edit.Verification.PreexistingCount,
 			ProjectsChecked = edit.Verification.Projects,
 			ChangedFiles = edit.Outcome.ChangedFiles,
 			Notices = notices,
@@ -1035,7 +1035,6 @@ public static class ChangeSignatureService
 		// First, because it is the only thing here that is nobody's work but this tool's.
 		foreach (var defect in Defects(applied, verification)) yield return defect;
 
-		if (!request.Apply) yield return "Preview only; nothing was written to disk.";
 		if (outcome.ChangedFiles.Count == 0) yield return "The signature already read exactly like that.";
 
 		if (access.Count > 0 && AccessibilityModifiers.Spelled(symbol.DeclaredAccessibility) is { } was)
@@ -1061,8 +1060,8 @@ public static class ChangeSignatureService
 			}
 		}
 
-		// What the diff could not show, which for a change reaching several files is worth saying
-		// before anything about what compiled.
+		// What the write did beyond what it was asked to, which for a change reaching several files is
+		// worth saying before anything about what compiled.
 		foreach (var notice in outcome.Notices) yield return notice;
 
 		foreach (var notice in ImportNotices(applied.Imports)) yield return notice;
@@ -1080,42 +1079,20 @@ public static class ChangeSignatureService
 				+ "compile reports it only where those are errors.";
 		}
 
-		if (unchanged.Count > 0)
-		{
-			yield return $"{unchanged.Count} use(s) were left as they were; each says why.";
-		}
-
-		if (!verification.Ran)
-		{
-			if (outcome.ChangedFiles.Count > 0)
-			{
-				yield return "Nothing was compiled, so this says nothing about what the change broke. Pass "
-					+ "verify=true, or ask rose_diagnostics with scope=solution.";
-			}
-
-			yield break;
-		}
+		if (!verification.Ran) yield break;
 
 		foreach (var notice in verification.Notices) yield return notice;
 
-		// What this change did, in prose, as every writing tool reports it. A result that silently
-		// stopped at twenty entries reads as a change that broke twenty things.
-		if (verification.Introduced.Count > 0)
+		// Only where the list was cut: a result that silently stopped at twenty entries reads as a change
+		// that broke twenty things, and one that did not stop says its count by its length.
+		if (verification.Introduced.Count > EditPipeline.Listed)
 		{
-			yield return verification.Introduced.Count > EditPipeline.Listed
-				? $"This introduced {verification.Introduced.Count} error(s) in the solution; the first "
-					+ $"{EditPipeline.Listed} are listed."
-				: $"This introduced {verification.Introduced.Count} error(s) in the solution.";
+			yield return $"This introduced {verification.Introduced.Count} errors; introducedDiagnostics lists the "
+				+ $"first {EditPipeline.Listed}.";
 		}
 
-		if (verification.TotalCount == 0) yield return verification.Clean("The whole solution");
-
-		var existing = verification.TotalCount - verification.Introduced.Count;
-
-		if (existing > 0)
-		{
-			yield return $"{existing} error(s) in the solution were there before this change.";
-		}
+		if (verification.HasNoErrors) yield return verification.Clean("The whole solution");
+		if (verification.PreexistingAdvice() is { } advice) yield return advice;
 
 		// A new or retyped parameter names a type, and the declaration's file is as likely to be
 		// missing the import for it as any other. This tool writes to files it was never pointed at,

@@ -58,7 +58,6 @@ public sealed class ReplacePatternTests
 		result.Unmatched.ShouldContain(group => group.Method.Contains(".Contains(", StringComparison.Ordinal));
 		result.Unmatched.ShouldNotContain(group => group.Method.Contains(".Single", StringComparison.Ordinal));
 		result.Notices.ShouldContain("3 unmatched call(s), to 3 method(s) on the rules' types that no rule is written for, are counted in sitesUnmatched and left out of unmatched and files.");
-		result.Notices.ShouldContain("Preview only; nothing was written to disk.");
 	}
 
 	/// <summary>
@@ -81,7 +80,7 @@ public sealed class ReplacePatternTests
 		result.Applied.ShouldBeTrue();
 		result.Verified.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 
 		var equality = await ReadAsync(fixture, "Tests", "Equality.cs");
 
@@ -131,7 +130,7 @@ public sealed class ReplacePatternTests
 		skipped.DiagnosticId.ShouldStartWith("CS", Case.Sensitive);
 		text.ShouldContain("\t\tAssert.Equal(1L, count);\r\n", Case.Sensitive);
 		text.ShouldContain("\t\tcount.ShouldBe(2);\r\n", Case.Sensitive);
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 	}
 
 	/// <summary>A namespace a replacement needs is imported where the file keeps its imports, and only there.</summary>
@@ -152,7 +151,7 @@ public sealed class ReplacePatternTests
 
 		var text = await ReadAsync(fixture, "NoGlobal", "Imports.cs");
 
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 		text.ShouldStartWith("using Shouldly;\r\nusing Xunit;\r\n", Case.Sensitive);
 		text.ShouldContain("count.ShouldBe(1);", Case.Sensitive);
 	}
@@ -185,7 +184,7 @@ public sealed class ReplacePatternTests
 
 		var text = await ReadAsync(fixture, "NoGlobal", "Blocked.cs");
 
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 		text.ShouldStartWith("namespace NoGlobal\r\n{\r\n\tusing Shouldly;\r\n\tusing Xunit;\r\n\r\n", Case.Sensitive, text);
 		text.ShouldNotContain("System.Text", Case.Sensitive, text);
 		text.ShouldContain("count.ShouldBe(1);", Case.Sensitive);
@@ -220,7 +219,7 @@ public sealed class ReplacePatternTests
 
 		var text = await ReadAsync(fixture, "NoGlobal", "Siblings.cs");
 
-		result.TotalErrorCount.ShouldBe(0);
+		result.PreexistingErrorCount.ShouldBe(0);
 		// Trimmed, because taking an import back out leaves the blank line it put above the first
 		// declaration, which is the removal's trivia and not what this is about.
 		text.TrimStart().ShouldStartWith("namespace First\r\n{\r\n\tusing Shouldly;\r\n", Case.Sensitive, text);
@@ -238,7 +237,7 @@ public sealed class ReplacePatternTests
 		var result = await PreviewAsync(session, [fixture.Path("Assertions", "Tests", "Equality.cs")], Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"));
 
 		result.Applied.ShouldBeFalse();
-		result.Diff.ShouldContain("count.ShouldBe(1);", Case.Sensitive);
+		result.Diff.ShouldNotBeNull().ShouldContain("count.ShouldBe(1);", Case.Sensitive);
 		(await ReadAsync(fixture, "Tests", "Equality.cs")).ShouldBe(before);
 	}
 

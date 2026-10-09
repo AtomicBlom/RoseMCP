@@ -1,5 +1,6 @@
 using System.Text.Json;
 
+using RoseMcp.Broker;
 using RoseMcp.Broker.Tools;
 using RoseMcp.Contracts;
 
@@ -80,10 +81,10 @@ public sealed class PatternReportTests
 		var changed = Enumerable.Range(0, Files).Select(file => Location(file, 1).FilePath).ToList();
 		changed.ShouldAllBe(path => path.Length >= 120 && path.Length <= 135, "the migration's paths ran to about 127 characters");
 
-		var result = PatternRewriteForCaller.Narrow(Result(summary, changed));
+		var result = WriteForCaller.Shape(WritePaths.Relative(Result(summary, changed), Path.GetDirectoryName(Workspace)!), includeDiff: false);
 
 		result.FilesChanged.ShouldBe(Files);
-		result.ChangedFiles.Count.ShouldBe(PatternRewriteForCaller.ChangedFileRows);
+		result.ChangedFiles.Count.ShouldBe(WriteForCaller.ChangedFileRows);
 
 		// Measured as the result goes out: the SDK's own options, which is what a caller is charged for.
 		var size = Size(result);
@@ -211,25 +212,28 @@ public sealed class PatternReportTests
 	[Test]
 	public void Names_changed_files_up_to_a_cap_and_says_when_it_cut()
 	{
-		var few = Enumerable.Range(0, PatternRewriteForCaller.ChangedFileRows).Select(file => Location(file, 1).FilePath).ToList();
-		var small = Result(Empty, few) with { Notices = ["Preview only; nothing was written to disk."] };
+		var few = Enumerable.Range(0, WriteForCaller.ChangedFileRows).Select(file => Location(file, 1).FilePath).ToList();
+		var small = Result(Empty, few) with { Notices = ["Rule 1 binds in no project in scope."] };
 
-		PatternRewriteForCaller.Narrow(small).ShouldBeSameAs(small);
+		WriteForCaller.Shape(small, includeDiff: false).ShouldBeSameAs(small);
 
 		var many = Enumerable.Range(0, 161).Select(file => Location(file, 1).FilePath).ToList();
-		var large = Result(Empty, many) with { Notices = ["Preview only; nothing was written to disk."] };
-		var narrowed = PatternRewriteForCaller.Narrow(large);
+		var large = Result(Empty, many) with { Notices = ["Rule 1 binds in no project in scope."] };
+		var narrowed = WriteForCaller.Shape(large, includeDiff: false);
 
-		narrowed.ChangedFiles.ShouldBe(many.Take(PatternRewriteForCaller.ChangedFileRows));
+		narrowed.ChangedFiles.Select(file => file.FilePath).ShouldBe(many.Take(WriteForCaller.ChangedFileRows));
 		narrowed.FilesChanged.ShouldBe(161);
 		narrowed.Notices.ShouldBe([
-			"Preview only; nothing was written to disk.",
-			$"changedFiles names {PatternRewriteForCaller.ChangedFileRows} of the 161 files this would write; filesChanged is the whole number, and files lists the ones with something to look at.",
+			"Rule 1 binds in no project in scope.",
+			$"changedFiles names {WriteForCaller.ChangedFileRows} of the 161 files this would write.",
 		]);
-		(narrowed with { ChangedFiles = many, Notices = large.Notices }).ShouldBe(large);
+		(narrowed with { ChangedFiles = large.ChangedFiles, Notices = large.Notices }).ShouldBe(large);
 
-		PatternRewriteForCaller.Narrow(large with { Applied = true }).Notices[^1].ShouldContain("files this wrote;", Case.Sensitive);
+		WriteForCaller.Shape(large with { Applied = true }, includeDiff: false).Notices[^1].ShouldContain("files this wrote.", Case.Sensitive);
 	}
+
+	/// <summary>The solution the migration ran in, which the broker names every path under relative to.</summary>
+	private const string Workspace = @"D:\Source\drawboard-projects\Drawboard.Projects.slnx";
 
 	/// <summary>What <paramref name="value"/> costs as it goes out: the SDK's own options, which is what a caller is charged for.</summary>
 	private static int Size<T>(T value) => JsonSerializer.Serialize(value, ModelContextProtocol.McpJsonUtilities.DefaultOptions).Length;
@@ -243,7 +247,7 @@ public sealed class PatternReportTests
 	/// </summary>
 	private static PatternRewriteResult Result(PatternSummary summary, IReadOnlyList<string> changed) => new()
 	{
-		Workspace = @"D:\Source\drawboard-projects\Drawboard.Projects.slnx",
+		Workspace = Workspace,
 		WorkspaceKey = "Drawboard.Projects-3d11d873",
 		Revision = 12,
 		Applied = false,
@@ -257,16 +261,14 @@ public sealed class PatternReportTests
 		Files = summary.Files,
 		FileCount = summary.FileCount,
 		FilesChanged = changed.Count,
-		Diff = string.Empty,
-		ChangedFiles = changed,
+		Diff = null,
+		ChangedFiles = [.. changed.Select(path => new ChangedFile { FilePath = path, Lines = "12-14" })],
 		Verified = true,
-		TotalErrorCount = 0,
+		PreexistingErrorCount = 0,
 		ProjectsChecked = ["Drawboard.Projects.Domain.Tests", "Drawboard.Projects.Api.Tests", "Drawboard.Projects.Infrastructure.Tests"],
 		Notices =
 		[
-			"Preview only; nothing was written to disk.",
 			.. summary.Notices,
-			"The diff is 1,204,331 characters and was left out. Narrow filePaths to one file or directory to read it.",
 		],
 	};
 

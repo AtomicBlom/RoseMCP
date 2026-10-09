@@ -5,8 +5,6 @@ public sealed record AddFileResult : WorkspaceMutationResult
 {
 	public required long Revision { get; init; }
 
-	public required string FilePath { get; init; }
-
 	/// <summary>
 	/// The project that compiles it, chosen by which project's directory contains the path. Reported
 	/// because it is a decision the caller did not make and cannot see from the file.
@@ -21,9 +19,6 @@ public sealed record AddFileResult : WorkspaceMutationResult
 
 	/// <summary>The types the file declares.</summary>
 	public required IReadOnlyList<string> Types { get; init; }
-
-	/// <summary>False when this was a preview; nothing was written.</summary>
-	public required bool Applied { get; init; }
 
 	/// <summary>
 	/// False when the owning project lists the files it compiles rather than globbing them, so the
@@ -46,12 +41,19 @@ public sealed record AddFileResult : WorkspaceMutationResult
 	/// <summary>Names nothing in scope could resolve, with why not.</summary>
 	public IReadOnlyList<string> Unresolved { get; init; } = [];
 
-	public required string Diff { get; init; }
-
 	/// <summary>Errors the new file introduced, whoever they are in.</summary>
 	public IReadOnlyList<DiagnosticEntry> IntroducedDiagnostics { get; init; } = [];
 
+	/// <summary>How many errors the new file made go away, which it does when it declares what they were missing.</summary>
+	public int ResolvedDiagnosticCount { get; init; }
+
 	public bool Verified { get; init; }
+
+	/// <summary>
+	/// Errors the checked projects report that were there before the file and still are, so a project
+	/// that was already failing is not read as clean because this file broke nothing.
+	/// </summary>
+	public int PreexistingErrorCount { get; init; }
 
 	public IReadOnlyList<string> ProjectsChecked { get; init; } = [];
 }

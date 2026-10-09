@@ -594,7 +594,7 @@ public sealed class BrokerForwardingTests
 	{
 		using var fixture = FixtureSolution.Copy("Siblings", "Repo.slnx");
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
-		var callers = PatternRewriteForCaller.ChangedFileRows + 1;
+		var callers = WriteForCaller.ChangedFileRows + 1;
 
 		await File.WriteAllTextAsync(
 			fixture.Path("Siblings", "Shared", "Text.cs"),
@@ -621,7 +621,7 @@ public sealed class BrokerForwardingTests
 
 		rewritten.Applied.ShouldBeTrue();
 		rewritten.FilesChanged.ShouldBe(callers);
-		rewritten.ChangedFiles.Count.ShouldBe(PatternRewriteForCaller.ChangedFileRows);
+		rewritten.ChangedFiles.Count.ShouldBe(WriteForCaller.ChangedFileRows);
 
 		rewritten.Notices.ShouldContain(
 			notice => notice.StartsWith($"Repo.Installer.slnx also compiles {callers} of the file(s) this changed", StringComparison.Ordinal),
@@ -668,6 +668,119 @@ public sealed class BrokerForwardingTests
 
 		(await File.ReadAllTextAsync(elsewhere.Path("Simple", "Core", "Calculator.cs"))).ShouldNotContain(
 			"System.Text", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A path a write result returns means one file however it comes back. The session stands in one
+	/// checkout and edits another by naming it: the result names the file absolutely, since it lies
+	/// outside the session's directory, and sent back with the key or without one it edits that file --
+	/// never the one at the same relative place in the checkout the session stands in, which exists.
+	/// <para>
+	/// Through a real server, because what decides it is the broker's own pipeline: the origin the call
+	/// filter sets, and the shaping the manager does after the worker answers.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_path_a_result_returns_names_the_file_it_came_from_however_it_is_sent_back()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var here = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var standing = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		using var server = RoseServerProcess.StartIn(Path.GetDirectoryName(standing.SolutionPath)!);
+		await server.InitializeAsync(cancellationToken);
+
+		var (key, file) = await CommentAsync(
+			server, $"\"workspace\":{JsonSerializer.Serialize(here.SolutionPath)}", "first pass", cancellationToken);
+
+		// A file outside the session's directory is named absolutely.
+		file.ShouldBe(here.Path("Simple", "Core", "Calculator.cs"), StringCompareShould.IgnoreCase);
+
+		await CommentAsync(server, $"\"filePath\":{JsonSerializer.Serialize(file)}", "second pass", cancellationToken);
+		await CommentAsync(
+			server,
+			$"\"workspaceKey\":{JsonSerializer.Serialize(key)},\"filePath\":{JsonSerializer.Serialize(file)}",
+			"third pass",
+			cancellationToken);
+
+		(await File.ReadAllTextAsync(here.Path("Simple", "Core", "Calculator.cs"), cancellationToken)).ShouldContain(
+			"third pass", Case.Sensitive);
+		(await File.ReadAllTextAsync(standing.Path("Simple", "Core", "Calculator.cs"), cancellationToken)).ShouldNotContain(
+			"pass.", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A solution in a subfolder of the session's directory gives paths that start at the session's
+	/// directory, and each comes back to the same file with or without the key. Measured from the key's
+	/// workspace instead, <c>Simple/Core/Calculator.cs</c> would mean <c>Simple/Simple/Core/Calculator.cs</c>.
+	/// </summary>
+	[Test]
+	public async Task A_solution_below_the_session_gives_paths_the_session_resolves()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		using var server = RoseServerProcess.StartIn(fixture.Path());
+		await server.InitializeAsync(cancellationToken);
+
+		var (key, file) = await CommentAsync(
+			server, $"\"workspace\":{JsonSerializer.Serialize(fixture.SolutionPath)}", "first pass", cancellationToken);
+
+		file.ShouldBe(Path.Combine("Simple", "Core", "Calculator.cs"));
+
+		await CommentAsync(server, $"\"filePath\":{JsonSerializer.Serialize(file)}", "second pass", cancellationToken);
+		await CommentAsync(
+			server,
+			$"\"workspaceKey\":{JsonSerializer.Serialize(key)},\"filePath\":{JsonSerializer.Serialize(file)}",
+			"third pass",
+			cancellationToken);
+
+		(await File.ReadAllTextAsync(fixture.Path("Simple", "Core", "Calculator.cs"), cancellationToken)).ShouldContain(
+			"third pass", Case.Sensitive);
+
+		// A read takes the same rule: a path the caller wrote from where it stands means that file with a
+		// key beside it, rather than the same path under the keyed solution's own directory.
+		using var read = await server.CallToolAsync(
+			ToolNames.Diagnostics,
+			$$"""
+			{"workspaceKey":{{JsonSerializer.Serialize(key)}},"filePath":{{JsonSerializer.Serialize(Path.Combine("Simple", "Core", "Calculator.cs"))}}}
+			""",
+			cancellationToken);
+
+		var diagnosed = read.RootElement.GetProperty("result");
+		var refused = diagnosed.TryGetProperty("isError", out var isError) && isError.GetBoolean();
+		refused.ShouldBeFalse(diagnosed.GetRawText());
+		diagnosed.GetProperty("structuredContent").GetProperty("workspaceKey").GetString().ShouldBe(key);
+	}
+
+	/// <summary>
+	/// Rewrites <c>Core.Calculator.Multiply</c>'s documentation through <paramref name="server"/>, naming the
+	/// workspace or file by <paramref name="naming"/>, and returns the key and the first changed file the
+	/// result gave back. A failed call fails the test with what the server said.
+	/// </summary>
+	private static async Task<(string Key, string File)> CommentAsync(
+		RoseServerProcess server,
+		string naming,
+		string comment,
+		CancellationToken cancellationToken)
+	{
+		using var reply = await server.CallToolAsync(
+			ToolNames.ReplaceDocComment,
+			$$"""
+			{{{naming}},"symbol":"Core.Calculator.Multiply","comment":{{JsonSerializer.Serialize($"Multiplies, {comment}.")}}}
+			""",
+			cancellationToken);
+
+		var result = reply.RootElement.GetProperty("result");
+		var failed = result.TryGetProperty("isError", out var isError) && isError.GetBoolean();
+		failed.ShouldBeFalse(result.GetRawText());
+
+		var written = result.GetProperty("structuredContent");
+		written.TryGetProperty("diff", out _).ShouldBeFalse("an applied write leaves its diff off unless asked");
+
+		return (
+			written.GetProperty("workspaceKey").GetString().ShouldNotBeNull(),
+			written.GetProperty("changedFiles")[0].GetProperty("filePath").GetString().ShouldNotBeNull());
 	}
 
 	/// <summary>

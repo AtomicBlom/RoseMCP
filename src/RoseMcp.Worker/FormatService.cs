@@ -125,12 +125,9 @@ public static class FormatService
 		var outcome = await SolutionWriter.ApplyAsync(
 			snapshot.Solution, solution, request.Apply, noteSelfWrite, cancellationToken);
 
-		// This tool needs these more than any other does. Rewriting line endings is the commonest
-		// thing it is called for and the one change a unified diff cannot render, so without this a
-		// successful call to fix a file full of LF reports changed files and an empty diff.
-		notices.AddRange(outcome.Notices);
-
-		if (!request.Apply) notices.Add("Preview only; nothing was written to disk.");
+		// Line endings, which are the commonest thing this is called to fix and the one change a unified
+		// diff cannot render, are each changed file's normalised; so a call that fixes a file full of LF
+		// says so beside the file rather than reporting it changed with nothing to show.
 		if (outcome.ChangedFiles.Count == 0 && missing.Count == 0)
 		{
 			notices.Add(Unchanged(literalEndings.Count > 0, wrappedLists.Count > 0));

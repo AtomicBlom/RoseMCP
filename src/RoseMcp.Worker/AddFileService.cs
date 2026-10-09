@@ -137,7 +137,6 @@ public static class AddFileService
 		var result = new AddFileResult
 		{
 			Revision = snapshot.Revision,
-			FilePath = path,
 			Project = project.Name,
 			Namespace = space,
 			Types = [.. TypeNames(unit)],
@@ -149,6 +148,8 @@ public static class AddFileService
 			Diff = edit.Outcome.Diff,
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
+			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
+			PreexistingErrorCount = edit.Verification.PreexistingCount,
 			ProjectsChecked = edit.Verification.Projects,
 			ChangedFiles = edit.Outcome.ChangedFiles,
 			Notices = notices,

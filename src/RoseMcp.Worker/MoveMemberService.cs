@@ -100,20 +100,18 @@ public static class MoveMemberService
 		{
 			Revision = snapshot.Revision,
 			Symbol = source.Signature,
-			FilePath = TargetPath(target),
 			Line = 0,
-			Members = [source.Symbol.Name],
 			Applied = edit.Applied,
 			Diff = edit.Outcome.Diff,
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
 			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
-			TotalErrorCount = edit.Verification.TotalCount,
+			PreexistingErrorCount = edit.Verification.PreexistingCount,
 			ProjectsChecked = edit.Verification.Projects,
 			DependentsNotChecked = request.Verify && edit.Changed
 				? EditVerification.SkippedDependents(moved, path, source.Symbol, request.VerifyScope)
 				: [],
-			ChangedFiles = edit.Outcome.ChangedFiles,
+			ChangedFiles = edit.Outcome.Leading(TargetPath(target)),
 			Notices = notices,
 		};
 

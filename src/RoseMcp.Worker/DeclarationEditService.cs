@@ -192,20 +192,18 @@ public static class DeclarationEditService
 		{
 			Revision = snapshot.Revision,
 			Symbol = target.Signature,
-			FilePath = path,
 			Line = LineOf(target),
-			Members = [target.Declaration is BaseTypeDeclarationSyntax type ? type.Identifier.Text : target.Signature],
 			Applied = edit.Applied,
 			Diff = edit.Outcome.Diff,
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
 			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
-			TotalErrorCount = edit.Verification.TotalCount,
+			PreexistingErrorCount = edit.Verification.PreexistingCount,
 			ProjectsChecked = edit.Verification.Projects,
 			DependentsNotChecked = request.Verify && edit.Changed
 				? EditVerification.SkippedDependents(finished, path, reaches, request.VerifyScope)
 				: [],
-			ChangedFiles = edit.Outcome.ChangedFiles,
+			ChangedFiles = edit.Outcome.Leading(path),
 			Notices = notices,
 		};
 

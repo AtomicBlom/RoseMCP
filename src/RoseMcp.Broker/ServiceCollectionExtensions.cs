@@ -57,35 +57,35 @@ public static class ServiceCollectionExtensions
 		  where a type could be split: rose_find_split_options
 		- what a symbol is, and its code: rose_symbol_info with includeSource
 		- usages: rose_find_references; implementors and overrides: rose_find_implementations
-		- does it compile: rose_diagnostics -- a warm compilation, not a substitute for a build
-		- start a file: rose_add_file, which picks the project and the namespace the folder implies
+		- does it compile: rose_diagnostics
+		- start a file: rose_add_file, which picks its project and namespace
 		- change a member: rose_replace_member, rose_add_member, rose_delete_member; just its body:
-		  rose_replace_body, with find and replace for a change too small to re-emit one for; just
+		  rose_replace_body, or its find and replace for part of one; just
 		  the prose or the attributes: rose_replace_doc_comment, rose_set_attribute
 		- rename: rose_rename_symbol; add, remove or retype a parameter across every override,
 		  implementation and call site: rose_change_signature; move a member between types:
 		  rose_move_member; split a file: rose_move_type_to_file
-		- imports: pass usings on the write, or rose_add_using for code that arrived another way;
+		- imports: pass usings on the write, or rose_add_using for code written another way;
 		  which namespace a name needs: rose_resolve_name
 		- one mechanical change at every call a pattern matches: rose_replace_pattern
 		- analyzer fixes: rose_list_code_fixes then rose_apply_code_fix; formatting: rose_format
 		- what depends on what: rose_project_graph; is bin/ this code: rose_build_freshness
-		- source-generated code is not on disk at all: rose_list_generated_documents,
-		  rose_read_generated_document
+		- generated code is not on disk: rose_list_generated_documents, rose_read_generated_document
 
 		Every write is addressed by name rather than by line, parsed before the file is opened,
 		formatted to the repository's own .editorconfig, then compiled -- so the result says what the
-		edit broke and there is no build in the loop. Grep matches comments and strings, and misses
-		overrides and implementations.
+		edit broke and there is no build in the loop. It gives each changed file's lines, not your code
+		back; includeDiff adds the diff. Grep matches comments and strings, and misses overrides and
+		implementations.
 
 		No setup call: every tool finds the enclosing solution from a path or your session's directory,
-		which a relative path is measured from too. The first call loads it; rose_workspace_open starts
-		a large one early without waiting, and rose_workspace_list says what is already warm. Every
-		result names the workspace that answered and carries a revision, and a directory holding several
-		solutions refuses and lists them rather than guessing. Edits by other tools are absorbed on the
-		next call; only a rebuilt analyzer or generator needs rose_workspace_reload. If answers look
-		wrong, ask rose_workspace_status -- thousands of errors about System.Object means the
-		solution loaded under an MSBuild configuration it does not declare.
+		which a relative path is measured from too, whatever workspaceKey comes with it. The first call
+		loads it; rose_workspace_open starts a large one early without waiting, and rose_workspace_list
+		says what is already warm. Every result names the workspace that answered and carries a
+		revision, and a directory holding several solutions refuses and lists them rather than guessing.
+		Edits by other tools are absorbed on the next call; only a rebuilt analyzer or generator needs
+		rose_workspace_reload. If answers look wrong, ask rose_workspace_status -- thousands of errors
+		about System.Object means the solution loaded under an MSBuild configuration it does not declare.
 		""";
 
 	/// <summary>

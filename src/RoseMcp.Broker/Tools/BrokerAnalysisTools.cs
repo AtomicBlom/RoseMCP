@@ -308,6 +308,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.RenameOverloadsArgument)] bool renameOverloads = false,
 		[Description(ToolDescriptions.RenameInCommentsArgument)] bool renameInComments = false,
 		[Description(ToolDescriptions.RenameInStringsArgument)] bool renameInStrings = false,
@@ -327,7 +328,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["renameInComments"] = renameInComments,
 			["renameInStrings"] = renameInStrings,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.FindImplementations,
@@ -396,6 +397,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.FixScopeArgument)] string scope = "document",
 		[Description(ToolDescriptions.FixTitleArgument)] string? fixTitle = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
@@ -408,7 +410,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["fixTitle"] = fixTitle,
 			["apply"] = apply,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.FormatDocuments,
@@ -423,6 +425,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.FormatFilePathsArgument)] string[] filePaths,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.RemoveUnusedUsingsArgument)] bool removeUnusedUsings = false,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
@@ -434,7 +437,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["apply"] = apply,
 			["removeUnusedUsings"] = removeUnusedUsings,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.MoveTypeToFile,
@@ -456,6 +459,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.MovedTypeArgument)] string symbol,
 		[Description(ToolDescriptions.TargetPathArgument)] string? targetPath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
@@ -467,7 +471,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["targetPath"] = targetPath,
 			["apply"] = apply,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.ReplaceMember,
@@ -486,6 +490,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
@@ -502,7 +507,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.ReplaceBody,
@@ -525,6 +530,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
@@ -545,7 +551,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.AddMember,
@@ -566,6 +572,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
@@ -584,7 +591,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.ChangeSignature,
@@ -605,6 +612,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifySolutionArgument)] bool verify = true,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
@@ -621,12 +629,8 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["apply"] = apply,
 			["verify"] = verify,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
-	/// <remarks>
-	/// Narrowed after the manager has answered, since the manager reads every changed file for its
-	/// sibling-solution notice before anything here may drop one. See <see cref="PatternRewriteForCaller"/>.
-	/// </remarks>
 	[McpServerTool(
 		Name = ToolNames.ReplacePattern,
 		Title = "Rewrite a code pattern everywhere",
@@ -636,18 +640,19 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.ReplacePattern)]
-	public async Task<PatternRewriteResult> ReplacePatternAsync(
+	public Task<PatternRewriteResult> ReplacePatternAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.RulesArgument)] PatternRule[] rules,
 		[Description(ToolDescriptions.PatternUsingsArgument)] string[]? usings = null,
 		[Description(ToolDescriptions.PatternFilePathsArgument)] string[]? filePaths = null,
 		[Description(ToolDescriptions.PatternApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		PatternRewriteForCaller.Narrow(await ForwardAsync<PatternRewriteResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Each(filePaths ?? [])), ToolNames.ReplacePattern, new()
+		ForwardAsync<PatternRewriteResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Each(filePaths ?? [])), ToolNames.ReplacePattern, new()
 		{
 			["rules"] = rules,
 			["usings"] = usings,
@@ -655,7 +660,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["apply"] = apply,
 			["verify"] = verify,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false));
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.BuildFreshness,
@@ -691,6 +696,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		string filePath,
 		[Description(ToolDescriptions.NamespacesArgument)] string[] namespaces,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
@@ -703,7 +709,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["apply"] = apply,
 			["verify"] = verify,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.MoveMember,
@@ -722,6 +728,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
@@ -738,7 +745,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.DeleteMember,
@@ -755,6 +762,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
@@ -769,7 +777,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.AddFile,
@@ -789,6 +797,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.NewFileProjectArgument)] string? project = null,
 		[Description(ToolDescriptions.ResolveUsingsArgument)] bool resolveUsings = true,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
@@ -806,7 +815,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.ReplaceDocComment,
@@ -824,6 +833,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
@@ -837,7 +847,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["apply"] = apply,
 			["verify"] = verify,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
 	[McpServerTool(
 		Name = ToolNames.SetAttribute,
@@ -857,6 +867,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.IncludeDiffArgument)] bool includeDiff = false,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
@@ -874,14 +885,23 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["verify"] = verify,
 			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, includeDiff, retryIfWorkerDied: false);
 
-	private Task<T> ForwardAsync<T>(
+	/// <summary>
+	/// Sends a call to the worker that owns its workspace, and shapes a write's result for the caller.
+	/// <para>
+	/// The shaping is here rather than at each write tool for the reason the path rooting is: every
+	/// forwarded call passes through, so a write added later has its diff left off and its lists cut
+	/// without its author doing anything. <paramref name="includeDiff"/> is the one thing a tool says.
+	/// </para>
+	/// </summary>
+	private async Task<T> ForwardAsync<T>(
 		WorkspaceHints hints,
 		string tool,
 		Dictionary<string, object?> arguments,
 		CancellationToken cancellationToken,
 		IProgress<ProgressNotificationValue> progress,
+		bool includeDiff = false,
 		bool retryIfWorkerDied = true)
 		where T : WorkspaceScopedResult
 	{
@@ -890,7 +910,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			.Where(pair => pair.Value is not null)
 			.ToDictionary(pair => pair.Key, pair => Rooted(pair.Key, pair.Value));
 
-		return workspaces.CallAsync<T>(hints, tool, supplied, retryIfWorkerDied, cancellationToken, progress);
+		var result = await workspaces.CallAsync<T>(hints, tool, supplied, retryIfWorkerDied, cancellationToken, progress);
+
+		return result is WorkspaceMutationResult write ? (T)(object)WriteForCaller.Shape(write, includeDiff) : result;
 	}
 
 	/// <summary>

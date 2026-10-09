@@ -14,9 +14,6 @@ public sealed record PatternRewriteResult : WorkspaceMutationResult
 {
 	public required long Revision { get; init; }
 
-	/// <summary>False when this was a preview, or when nothing matched; nothing was written.</summary>
-	public required bool Applied { get; init; }
-
 	/// <summary>Every site a rule matched, rewritten or not.</summary>
 	public required int SitesMatched { get; init; }
 
@@ -64,9 +61,6 @@ public sealed record PatternRewriteResult : WorkspaceMutationResult
 	/// </summary>
 	public required int FilesChanged { get; init; }
 
-	/// <summary>The unified diff, while it is small enough to read; empty otherwise, with a notice saying so.</summary>
-	public required string Diff { get; init; }
-
 	/// <summary>Whether the changed projects were compiled afterwards.</summary>
 	public bool Verified { get; init; }
 
@@ -76,8 +70,10 @@ public sealed record PatternRewriteResult : WorkspaceMutationResult
 	/// <summary>How many errors the change made go away.</summary>
 	public int ResolvedDiagnosticCount { get; init; }
 
-	/// <summary>Every error in the projects checked, after the change.</summary>
-	public int TotalErrorCount { get; init; }
+	/// <summary>
+	/// Errors in the projects checked that were there before the change and still are.
+	/// </summary>
+	public int PreexistingErrorCount { get; init; }
 
 	/// <summary>The projects that were compiled to verify it.</summary>
 	public IReadOnlyList<string> ProjectsChecked { get; init; } = [];

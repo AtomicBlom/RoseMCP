@@ -20,10 +20,6 @@ public sealed record SignatureChangeResult : WorkspaceMutationResult
 	/// </summary>
 	public string? Accessibility { get; init; }
 
-	public required bool Applied { get; init; }
-
-	public required string Diff { get; init; }
-
 	/// <summary>
 	/// Every declaration the change was applied to: the member named, its base declaration, and
 	/// everything overriding or implementing it. More than one is the normal case for a virtual or
@@ -55,7 +51,8 @@ public sealed record SignatureChangeResult : WorkspaceMutationResult
 
 	public int ResolvedDiagnosticCount { get; init; }
 
-	public int TotalErrorCount { get; init; }
+	/// <summary>Errors in the solution that were there before the change and still are.</summary>
+	public int PreexistingErrorCount { get; init; }
 
 	public IReadOnlyList<string> ProjectsChecked { get; init; } = [];
 }

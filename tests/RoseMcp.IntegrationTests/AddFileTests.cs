@@ -728,6 +728,6 @@ public sealed class AddFileTests
 		var said = string.Join(" ", result.Notices);
 
 		said.ShouldNotContain("compiles clean", Case.Sensitive);
-		said.ShouldContain("were there before this edit", Case.Sensitive);
+		result.PreexistingErrorCount.ShouldBeGreaterThan(0, "the error the earlier edit introduced is still there");
 	}
 }

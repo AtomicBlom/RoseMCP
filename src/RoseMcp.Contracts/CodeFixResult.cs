@@ -17,10 +17,4 @@ public sealed record CodeFixResult : WorkspaceMutationResult
 
 	/// <summary>How many occurrences of the diagnostic were found in that scope.</summary>
 	public required int Occurrences { get; init; }
-
-
-	/// <summary>False when this was a preview; nothing was written.</summary>
-	public required bool Applied { get; init; }
-
-	public required string Diff { get; init; }
 }

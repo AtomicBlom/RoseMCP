@@ -54,8 +54,8 @@ public static class ToolDescriptions
 	/// only to decide whether to narrow it.
 	/// </summary>
 	public const string VerifyScopeArgument =
-		"How much to compile: auto, file, dependents, or solution. Defaults to auto. Narrowing it to "
-			+ "file is faster and the result names the dependents nobody looked at.";
+		"How much to compile: auto (the default), file, dependents, or solution. file is fastest, and "
+			+ "names the dependents it left out.";
 
 	/// <summary>
 	/// The workspace argument, on nearly every tool. It was 258 characters and appeared thirty times
@@ -65,8 +65,8 @@ public static class ToolDescriptions
 	/// only moment it is worth reading.
 	/// </summary>
 	public const string WorkspaceArgument =
-		"Solution, project or file path that picks the workspace. Usually omitted: inferred from the "
-			+ "other arguments or the working directory.";
+		"Solution, project or file path picking the workspace. Usually omitted: inferred from other "
+			+ "arguments or the working directory.";
 
 	/// <summary>
 	/// The key every result carries, accepted wherever <see cref="WorkspaceArgument"/> is. Short for
@@ -74,7 +74,7 @@ public static class ToolDescriptions
 	/// workspace is loaded, and what to do when it does not, is in the error that says so.
 	/// </summary>
 	public const string WorkspaceKeyArgument =
-		"Instead of workspace, the workspaceKey an earlier result carried.";
+		"Instead of workspace, the key a result carried.";
 
 	/// <summary>Which live-app session, on every tool that works against one.</summary>
 	public const string SessionArgument = "The session id returned by rose_debug_attach.";
@@ -89,16 +89,23 @@ public static class ToolDescriptions
 	/// </para>
 	/// </summary>
 	public const string ApplyArgument =
-		"Write the change. False returns the diff without touching disk. Defaults to true.";
+		"Write the change; false previews it as a diff.";
+
+	/// <summary>
+	/// Shared by every writing tool. An applied write says where each file changed rather than echoing what
+	/// the caller sent, so the diff is opt-in there; a preview carries it regardless.
+	/// </summary>
+	public const string IncludeDiffArgument =
+		"Also return an applied write's diff.";
 
 	public const string ExpectedRevisionArgument =
-		"Fail rather than apply if the workspace has moved past this revision.";
+		"Refuse if the workspace has moved past this revision.";
 
 	public const string VerifyArgument =
-		"Compile afterwards and report what the change broke and what it resolved. Defaults to true.";
+		"Compile afterwards, with analyzers where it wrote, and report what the change broke and resolved.";
 
 	public const string VerifySolutionArgument =
-		"Compile the whole solution afterwards and report what the change broke. Defaults to true.";
+		"Compile the whole solution afterwards and report what the change broke.";
 
 	public const string MemberArgument =
 		"The member, as Namespace.Type.Member. Add a parameter list to pick an overload.";
@@ -135,15 +142,15 @@ public static class ToolDescriptions
 		"Lowest severity to report: hidden, info, warning, or error. Defaults to warning.";
 
 	public const string IncludeAnalyzersArgument =
-		"Run analyzers as well as the compiler. Much slower over a whole solution; off by default.";
+		"Run analyzers as well as the compiler, as a write does where it wrote. Much slower over a whole solution.";
 
-	public const string MaxDiagnosticsArgument = "Most diagnostics to list; past it, their shape instead. Defaults to 200.";
+	public const string MaxDiagnosticsArgument = "Most diagnostics to list; past it, their shape instead.";
 
 	public const string DiagnosticIdFilterArgument = "Only diagnostics with this id, as CS0103.";
 
 	public const string DiagnosticIsGeneratedArgument = "true: only diagnostics in generated code; false: only the rest.";
 
-	public const string MaxReferencesArgument = "Most references to list across the symbols; past it, their shape instead. Defaults to 200.";
+	public const string MaxReferencesArgument = "Most references to list across the symbols; past it, their shape instead.";
 
 	public const string DefinitionsOnlyArgument =
 		"Return where it is declared, how many uses there are and their shape, without listing them.";
@@ -161,11 +168,11 @@ public static class ToolDescriptions
 	public const string IncludePreviewsArgument =
 		"Give each location its line of source. On by default; off is much smaller.";
 
-	public const string MaxImplementationsArgument = "Maximum matches to return. Defaults to 200.";
+	public const string MaxImplementationsArgument = "Maximum matches to return.";
 
 	public const string SearchQueryArgument = "Name or abbreviation to search for.";
 
-	public const string MaxSearchMatchesArgument = "Most matches to list, closest first; past it, the shape of the rest too. Defaults to 50.";
+	public const string MaxSearchMatchesArgument = "Most matches to list, closest first; past it, the shape of the rest too.";
 
 	public const string SearchKindArgument = "Only matches of this kind: NamedType, Method, Property, Field, Event or Namespace.";
 
@@ -189,7 +196,7 @@ public static class ToolDescriptions
 	public const string ArityArgument =
 		"How many type arguments the use site supplies, where the name is not written with them.";
 
-	public const string MaxCandidatesArgument = "Maximum candidates to return. Defaults to 20.";
+	public const string MaxCandidatesArgument = "Maximum candidates to return.";
 
 	public const string HintNameArgument =
 		"Hint name of the generated document, for example Widget.Greeting.g.cs.";
@@ -259,7 +266,7 @@ public static class ToolDescriptions
 		"Which project compiles it, where the path is inside more than one project's directory.";
 
 	public const string ResolveUsingsArgument =
-		"Work out the namespaces the code needs and add the ones with a single answer. Defaults to true.";
+		"Work out the namespaces the code needs and add the ones with a single answer.";
 
 	public const string CommentArgument =
 		"The comment: plain text taken as the summary, or the whole thing as XML.";
@@ -290,7 +297,7 @@ public static class ToolDescriptions
 		"Only members whose name contains this, ignoring case.";
 
 	public const string MaxOutlineMembersArgument =
-		"Maximum members to list, across every type. Defaults to 200.";
+		"Maximum members to list, across every type.";
 
 	/// <summary>
 	/// rose_symbol_info's cap, its own rather than the outline's because the outline's spans every type
@@ -298,7 +305,7 @@ public static class ToolDescriptions
 	/// name contains this" is the same sentence whichever tool narrows by it.
 	/// </summary>
 	public const string MaxSymbolMembersArgument =
-		"Maximum members to list, across the symbols. Defaults to 200.";
+		"Maximum members to list, across the symbols.";
 
 	/// <summary>
 	/// Its own rather than the outline's, which names outlining. The type argument is shared, because
@@ -746,7 +753,7 @@ public static class ToolDescriptions
 		member, are applied and listed rather than refused -- pass apply=false first and look before
 		committing to it. Also reports XAML that still names the old identifier and does not change it,
 		since markup is text to the compiler and a broken binding builds and runs. A symbol from
-		metadata is refused: there is no source to write. Returns a unified diff of every file changed.
+		metadata is refused: there is no source to write.
 		""";
 
 	public const string MoveTypeToFile = """
@@ -754,17 +761,17 @@ public static class ToolDescriptions
 		declaration goes across with its doc comments and attributes, indented and spaced exactly as
 		it was, and using directives the split makes unnecessary are dropped from both files -- which
 		is what stops the result from failing a build that treats unused usings as errors. Use this
-		rather than reading a file and writing two. Returns a unified diff of both files; pass
-		apply=false to preview. Declines rather than guessing when the type is the only one in its
-		file, when the target already exists, or when preprocessor directives are involved.
+		rather than reading a file and writing two; pass apply=false to preview the diff. Declines
+		rather than guessing when the type is the only one in its file, when the target already
+		exists, or when preprocessor directives are involved.
 		""";
 
 	public const string FormatDocuments = """
 		Formats C# files to their .editorconfig: indentation, braces, line endings, trailing
 		whitespace and final newline. Call this after writing or editing a C# file
 		by any other means: hand-written C# routinely lands with spaces where the repository wants
-		tabs and LF where it wants CRLF, a failed build wherever IDE0055 is an error. Returns a
-		unified diff; apply=false checks without writing. It applies dotnet format's whitespace
+		tabs and LF where it wants CRLF, a failed build wherever IDE0055 is an error. apply=false checks
+		without writing, and returns the diff. It applies dotnet format's whitespace
 		check (IDE0055), which has no rule for where a line wraps or how deep a wrapped line sits,
 		so clean does not vouch for those. A wrapped list whose items begin at different depths is reported, as is a
 		multi-line literal whose endings dotnet format will reject; neither is rewritten.
@@ -813,7 +820,7 @@ public static class ToolDescriptions
 	/// </summary>
 	public const string PatternApplyArgument =
 		"Write the change. False returns the same summary without touching disk, with the diff while it "
-			+ "is small enough to read. Defaults to true.";
+			+ "is small enough to read.";
 
 	public const string ListCodeFixes = """
 		What the solution's own analyzers offer to fix in one file: the diagnostic, the titles of the

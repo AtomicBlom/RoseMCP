@@ -7,11 +7,4 @@ public sealed record FormatResult : WorkspaceMutationResult
 
 	/// <summary>How many of the requested files were found and formatted.</summary>
 	public required int FilesInspected { get; init; }
-
-
-	/// <summary>False when this was a preview; nothing was written.</summary>
-	public required bool Applied { get; init; }
-
-	/// <summary>Unified diff of every file that changed, so the caller can see the edit.</summary>
-	public required string Diff { get; init; }
 }

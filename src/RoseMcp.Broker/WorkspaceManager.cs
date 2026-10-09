@@ -286,11 +286,16 @@ public sealed class WorkspaceManager(
 	}
 
 	/// <summary>
-	/// Stamps a result with the workspace that produced it.
+	/// Stamps a result with the workspace that produced it, and names a write's paths as the caller measures them.
 	/// <para>
 	/// Here rather than in the worker because the worker was told which solution to own and never
 	/// chose it -- the choice is the thing worth reporting, and this is where it was made. One place
 	/// also means a tool added later is attributed without anyone remembering to do it.
+	/// </para>
+	/// <para>
+	/// A write's paths are made relative to the calling session's directory in the same step, after the
+	/// sibling-solution notice, which reads them absolute: the step that names the answering workspace is
+	/// the one place every write passes through.
 	/// </para>
 	/// </summary>
 	private T Attribute<T>(T result, WorkspaceWorker worker)
@@ -301,7 +306,9 @@ public sealed class WorkspaceManager(
 		var attributed = scoped with { Workspace = worker.SolutionPath, WorkspaceKey = worker.Key };
 
 		return (T)(object)(attributed is WorkspaceMutationResult mutation
-			? mutation with { Notices = [.. mutation.Notices, .. SharedFileNotices(mutation, worker)] }
+			? WritePaths.Relative(
+				mutation with { Notices = [.. mutation.Notices, .. SharedFileNotices(mutation, worker)] },
+				paths.KnownOrigin)
 			: attributed);
 	}
 
@@ -320,7 +327,8 @@ public sealed class WorkspaceManager(
 		IReadOnlyList<SolutionOverlap> overlaps;
 		try
 		{
-			overlaps = SolutionResolver.SiblingsSharing(worker.SolutionPath, mutation.ChangedFiles);
+			overlaps = SolutionResolver.SiblingsSharing(
+				worker.SolutionPath, [.. mutation.ChangedFiles.Select(file => file.FilePath)]);
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{

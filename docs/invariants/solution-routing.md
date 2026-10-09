@@ -67,24 +67,45 @@ Read before changing how a call picks its workspace: `SolutionResolver`, `Worksp
   and to pass `workspace`: the worker can only describe its own solution, and only the broker chose
   it. It names only solutions that compile the path, and says nothing where none does, because
   advice naming one that does not sends the caller to the same refusal from the other side.
-- **A relative path is measured from the calling session's directory, and from nowhere else.** The
-  broker's own directory is no answer: in http mode it is the tray's install directory, and in stdio
-  mode it is whichever checkout the process was started in. Six worktrees of one repository is the
-  ordinary case here and every one of them holds the same relative paths, so `tests/Foo.cs` measured
-  from the wrong checkout names a real file, resolves there by containment, and wins the ranking
-  outright -- and the edit that follows applies, verifies and reports success into a repository whose
-  own sessions are free to commit it, with the caller's `git status` clean throughout. It is the one
-  failure on this surface that the working copy the caller can see does not show. `RootedPath` is
+- **A relative path is measured from the calling session's directory, and from nowhere else -- with
+  a `workspaceKey` or without one.** The broker's own directory is no answer: in http mode it is the
+  tray's install directory, and in stdio mode it is whichever checkout the process was started in.
+  Six worktrees of one repository is the ordinary case here and every one of them holds the same
+  relative paths, so `tests/Foo.cs` measured from the wrong checkout names a real file, resolves
+  there by containment, and wins the ranking outright -- and the edit that follows applies, verifies
+  and reports success into a repository whose own sessions are free to commit it, with the caller's
+  `git status` clean throughout. It is the one failure on this surface that the working copy the
+  caller can see does not show. `RootedPath` is
   what stops it recurring: there is no way to make one without naming the directory a relative path
   is measured from, and `WorkspaceHints` carries nothing else, so the resolution cannot ask the file
   system about a relative path. An absolute path is honoured wherever it points, including into
-  another checkout -- inferring a path was the failure and accepting one never was. A workspace key
-  changes which worker answers and not where a relative path is measured from. A result's paths are
-  absolute, or relative to that same directory -- `rose_find_references` shortens every file under it
-  and names it once as `relativeTo` -- so a relative path a caller sends is one it wrote or was handed
-  from where it stands, and the session's directory is what it means either way. Measuring it from the
-  key's workspace instead would break the round trip for every caller not running in its solution's
-  own directory. See [the decision](../decisions/a-path-a-read-returns-is-relative-to-the-caller.md).
+  another checkout -- inferring a path was the failure and accepting one never was.
+  <br>
+  A key changes which worker answers and not where a relative path is measured from, and a result
+  names its paths relative to that same directory -- the calling session's, where a path lies under
+  it: `rose_find_references` names it once as `relativeTo`, and a write's changed files, diff headers,
+  diagnostics and notices follow it too. A path a result returns has to mean one file however it
+  comes back: with the key, without it, or through the caller's own file tools, which know nothing of
+  keys. A result relative to the answering workspace instead names a different file the moment it is
+  sent back without the key, from a session standing in another worktree of the same repository: the
+  file at the same place there, which exists, and the same silent write into the wrong checkout as
+  above. Measuring a keyed call's relative paths from the key's workspace to repair that breaks the
+  other way, since a path the caller wrote itself means something else as soon as a key comes with it
+  -- `src/App/Foo.cs` from `repo` about a solution in `repo/src` would mean `repo/src/src/App/Foo.cs`.
+  `ResultPaths` (reads) and `WritePaths` (writes, in `WorkspaceManager`) do the naming, both from
+  `CallerPaths.KnownOrigin`. See [the decision](../decisions/a-path-a-read-returns-is-relative-to-the-caller.md).
+  <br>
+  What does not lie under the session's directory stays absolute rather than ascending with `..`: a
+  workspace the caller named in another checkout, a file a project links from elsewhere, another
+  drive, a document a generator produced (its path names nothing on disk; it is read back by its hint
+  name), and the live-app surface, whose module paths, install location and host log belong to no
+  workspace at all. So does every path of an http call that did not say where it comes from
+  (`KnownOrigin` is null): relative to the tray's directory, a path round-trips through Rose and names
+  a different file, or none, in the caller's own file tools. A stdio host's directory is its one
+  client's, so the stdio host alone sets `BrokerOptions.DefaultRootIsTheCaller` and there it counts
+  as known. False is the default because a host that forgets the setting then costs longer paths
+  rather than wrong ones; `RelayTests` holds the http host to it for writes and `BrokerForwardingTests`
+  for `rose_find_references`. The other reads still carry absolute paths.
 - **The hop to a worker or a live-app host is absolute-only, and they refuse a relative path.** A
   worker resolves one against its own working directory, which is its solution's root: the right
   answer for the call it was given and the wrong one for a call it should never have received, since

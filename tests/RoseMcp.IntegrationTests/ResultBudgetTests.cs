@@ -3,6 +3,7 @@ using System.Text.Json;
 using ModelContextProtocol;
 
 using RoseMcp.Broker;
+using RoseMcp.Broker.Tools;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -24,8 +25,9 @@ namespace RoseMcp.IntegrationTests;
 /// <para>
 /// Measured over the record as the tool returns it, serialised with the MCP layer's own options --
 /// which leave out nulls, so a field a result does not fill costs nothing here, as it costs nothing
-/// on the wire. Attribution is added by the broker, so a real result carries about 150 bytes this
-/// does not -- once per result, not per item.
+/// on the wire. Attribution is added by the broker, so a real read result carries about 150 bytes
+/// this does not -- once per result, not per item. The write is measured after the broker's
+/// shaping, attribution included, because that shaping is most of what makes it small.
 /// </para>
 /// </summary>
 public sealed class ResultBudgetTests
@@ -66,12 +68,13 @@ public sealed class ResultBudgetTests
 	private const int PerBatchEntry = 75;
 
 	/// <summary>
-	/// A whole write result for adding a doc comment, which costs 1,499 -- the floor for an edit that
-	/// introduces no diagnostic at all; one that does costs several times more. Most of it is the doc
-	/// comment the caller composed, read back in the diff. An edit loop pays this per edit, which
-	/// makes it the result whose size matters most.
+	/// A whole write result for adding a doc comment, as the caller is shown it, which costs 503: the
+	/// symbol, where the file changed, which projects compiled clean, and the attribution. With the diff
+	/// carried -- the doc comment the caller had just composed, read back -- and every path absolute, it
+	/// costs about three times that. An edit loop pays this per edit, which makes it the result whose size
+	/// matters most.
 	/// </summary>
-	private const int PerWriteResult = 1550;
+	private const int PerWriteResult = 550;
 
 	/// <summary>
 	/// The read shapes, measured against one loaded fixture, because a load is the expensive part of
@@ -223,8 +226,8 @@ public sealed class ResultBudgetTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		// A doc comment and nothing else, the cheapest edit there is: the caller composed
-		// every character of it and pays to read it back in the diff.
+		// A doc comment and nothing else, the cheapest edit there is: the caller composed every
+		// character of it, and reading it back in a diff would teach them nothing.
 		var result = await MemberEdits.ReplaceAsync(
 			session,
 			"Library.Greeter.Count",
@@ -232,7 +235,18 @@ public sealed class ResultBudgetTests
 
 		result.Applied.ShouldBeTrue($"the edit should apply; notices were '{string.Join(" | ", result.Notices)}'");
 
-		AssertWithin(PerWriteResult, Size(result), 1, "a write result for a one-line edit");
+		// Attributed and shaped the way the broker does it, for a session standing in the solution's
+		// directory, since that is what the caller reads.
+		var shown = WriteForCaller.Shape(
+			WritePaths.Relative(
+				result with { Workspace = fixture.SolutionPath, WorkspaceKey = RoseMcp.Solutions.WorkspaceKey.For(fixture.SolutionPath) },
+				Path.GetDirectoryName(fixture.SolutionPath)!),
+			includeDiff: false);
+
+		shown.Diff.ShouldBeNull("an applied write leaves the diff off unless asked");
+		shown.ChangedFiles.ShouldHaveSingleItem().FilePath.ShouldNotStartWith(fixture.Path(), Case.Insensitive);
+
+		AssertWithin(PerWriteResult, Size(shown), 1, $"a write result for a one-line edit ({Size(result)} as the worker sent it)");
 	}
 
 	/// <summary>

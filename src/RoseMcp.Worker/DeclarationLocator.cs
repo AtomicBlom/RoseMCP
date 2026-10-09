@@ -141,6 +141,7 @@ public static class DeclarationLocator
 		var found = new List<DeclarationTarget>();
 		var generated = 0;
 		var elsewhere = 0;
+		string? topLevel = null;
 
 		foreach (var symbol in matching.SelectMany(Parts))
 		{
@@ -149,7 +150,14 @@ public static class DeclarationLocator
 				cancellationToken.ThrowIfCancellationRequested();
 
 				var node = await reference.GetSyntaxAsync(cancellationToken);
-				if (node.FirstAncestorOrSelf<MemberDeclarationSyntax>() is not { } declaration) continue;
+				if (node.FirstAncestorOrSelf<MemberDeclarationSyntax>() is not { } declaration)
+				{
+					// The class the compiler writes around top-level statements is declared by the file itself,
+					// which is no declaration a write can go to or a read can show.
+					if (node is CompilationUnitSyntax) topLevel ??= Path.GetFileName(reference.SyntaxTree.FilePath);
+
+					continue;
+				}
 
 				// No document behind the tree means generated code: there is no file to edit, and the
 				// generator would produce the same thing again on the next compilation.
@@ -193,6 +201,7 @@ public static class DeclarationLocator
 			Declarations = distinct,
 			Matching = matching,
 			Generated = generated,
+			TopLevel = topLevel,
 			Elsewhere = elsewhere,
 			FilePath = filePath,
 			TypesOnly = typesOnly,
@@ -258,6 +267,9 @@ public static class DeclarationLocator
 
 		public required int Generated { get; init; }
 
+		/// <summary>The file whose top-level statements declare what the name reached, where that is all that declares it.</summary>
+		public required string? TopLevel { get; init; }
+
 		public required int Elsewhere { get; init; }
 
 		public required string? FilePath { get; init; }
@@ -265,7 +277,7 @@ public static class DeclarationLocator
 		public required bool TypesOnly { get; init; }
 
 		public ArgumentException NotFound() =>
-			DeclarationLocator.NotFound(Resolution, Matching, Generated, Elsewhere, FilePath, TypesOnly);
+			DeclarationLocator.NotFound(Resolution, Matching, Generated, Elsewhere, FilePath, TypesOnly, TopLevel);
 
 		public ArgumentException Ambiguous() => DeclarationLocator.Ambiguous(Resolution.Address, Declarations, FilePath);
 	}
@@ -298,7 +310,8 @@ public static class DeclarationLocator
 		int generated,
 		int elsewhere,
 		string? filePath,
-		bool typesOnly)
+		bool typesOnly,
+		string? topLevel)
 	{
 		var address = resolution.Address;
 
@@ -351,6 +364,15 @@ public static class DeclarationLocator
 			return new ArgumentException(
 				$"{Quote(address.Requested)} is declared in this solution, but not in {Path.GetFileName(filePath)}. "
 					+ "Leave filePath out and the declaration decides which file it is in.");
+		}
+
+		if (topLevel is not null)
+		{
+			return new ArgumentException(
+				$"{Quote(address.Requested)} is the class the compiler writes around the top-level statements in "
+					+ $"{topLevel}, so there is no declaration of it to read or write. The types declared beside the "
+					+ "statements are reached by their own names, and its local functions and variables by a "
+					+ "position in the file.");
 		}
 
 		var places = generated > 1 ? $" ({generated} of them)" : string.Empty;

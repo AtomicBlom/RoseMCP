@@ -240,8 +240,8 @@ jobs:
       # A hang inside one test is bounded sooner, by the ten-minute ceiling each test has (TestDeadline),
       # and fails that test by name. What these limits are for is the whole run, and the step's is
       # scaled from a runner rather than from a developer box. Timed locally, three at a time, where the
-      # wall time is a third of the test time, the suite takes 2330 s of test time; a subset of it
-      # taking 1893 s took 19 minutes on a runner, so the whole is about 24 minutes there. 35 leaves
+      # wall time is a third of the test time, the suite takes 2581 s of test time; a subset of it
+      # taking 2058 s took 19 minutes on a runner, so the whole is about 24 minutes there. 35 leaves
       # about half as much again, for a slow runner and for the tests still to come.
       - name: Integration tests, excluding the ones that need a probe app
         timeout-minutes: 35

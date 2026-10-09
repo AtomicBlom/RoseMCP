@@ -94,6 +94,10 @@ internal static class Program
 					Version = HostVersion.Of(typeof(Program).Assembly),
 				})
 				.WithStdioServerTransport()
+
+				// First, and here rather than in the tray: this is the outermost Rose process a relayed
+				// call reaches, so the id it mints is the one the tray and the worker repeat.
+				.WithCallCorrelation()
 				.WithListToolsHandler((_, token) => relay.ListToolsAsync(token))
 				.WithCallToolHandler((context, token) => relay.CallToolAsync(context.Params!, context.Server, token))
 

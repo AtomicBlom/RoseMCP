@@ -15,6 +15,22 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   solution name. Twenty sessions are kept per component, pruned at startup -- Serilog's own
   retention cannot do it, since it only prunes within one rolling base name and every session
   here has its own.
+- **A call is one id in every process it crosses, and only while it lasts.** The outermost Rose
+  process to see a tool call mints a `CallCorrelation` id -- the stdio relay, else the broker, else a
+  child driven directly -- and every later process takes the one it was sent. The first call filter
+  in each pipeline sets it; `CancellableToolCall` sends it on in `_meta["rosemcp/correlationId"]`,
+  read from the ambient, so a hop added later carries it without asking; the file sink writes it on
+  every line, a dash outside any call. A line can then be matched across files by one search rather
+  than by timestamp and tool name, which fails the moment two sessions ask one worker the same thing.
+  An incoming id is accepted only in the shape a Rose process mints -- lowercase hex -- and anything
+  else is replaced, because whatever is read here is written verbatim into every line of the call.
+  The id ends when its call does: whatever inherited the call's execution context stops reporting it
+  then, so a loop started by the first call of the day does not file its lines under that call until
+  the process exits. Work that is not the call's at all -- a poll loop, a sweep, a child's transport,
+  whose read loop carries every later call's replies -- is started through `Detached`, inheriting no
+  ambient of the call that started it. Each child names the log file it writes (`WorkerInfo.LogPath`,
+  `LiveAppInfo.HostLogPath`), so the row that shows it can open the right file rather than a folder
+  of twenty. See [the decision](../decisions/a-call-is-traced-by-an-id-minted-where-it-enters-rose.md).
 - **A stdio session relays to a tray when one is running.** `TrayRelay` forwards both listing and
   calling, declaring no tools of its own, so the surface cannot drift from the tray's. It sends the
   directory its client started it in as `_meta["rosemcp/originDirectory"]` and changes nothing else.

@@ -60,6 +60,15 @@ internal static class Program
 			})
 			.WithStdioServerTransport()
 			.WithToolsFromAssembly(typeof(Program).Assembly, ToolJson.Readable(McpJsonUtilities.DefaultOptions))
+
+			// First, so every line written for a call carries the id the broker sent with it -- the
+			// one search that finds the same call in the broker's file and this one.
+			.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
+			{
+				using var correlation = CallCorrelation.Begin(context.Params?.Meta);
+
+				return await next(context, cancellationToken);
+			}))
 			.WithAbsolutePathArguments()
 			.WithToolErrorMessages(options.SolutionPath);
 

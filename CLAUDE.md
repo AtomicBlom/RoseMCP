@@ -24,7 +24,7 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 | `RoseMcp.Contracts` | DTOs and tool-name constants shared by broker and worker. No package references at all, which is what lets every host reference it. |
 | `RoseMcp.Solutions` | Reads solution files and `rosemcp.json` without MSBuild or Roslyn, so the broker can decide *which* solution a call means without depending on the thing that loads one. Derives the short workspace key. |
 | `RoseMcp.Settings` | What a person has chosen about how RoseMCP behaves, per machine rather than per session or per solution. |
-| `RoseMcp.Logging` | The file sink, referenced only by the launchable hosts so Serilog stays off the DTO assembly and the tests. |
+| `RoseMcp.Logging` | The file sink, and `CallCorrelation`: the id a call carries across every hop, which the sink writes on every line. Referenced by the launchable hosts and by the broker, which sends the id on, so Serilog stays off the DTO assembly. |
 | `RoseMcp.Symbols` | Reads a module's metadata and its portable PDB: method tokens, local names at an instruction, the line an IL offset came from, and which compiled methods make up a body somebody is reading. Knows nothing about a debugger; it reads files. |
 | `RoseMcp.Broker` | `WorkspaceManager`, worker supervision, the tool layer, the activity log, and `AddRoseMcpBroker()`. One registration path, used by both hosts. |
 | `RoseMcp.Server` | Console host. `--transport stdio` (default) or `--transport http`. |

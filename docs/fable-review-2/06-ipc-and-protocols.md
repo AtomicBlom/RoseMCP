@@ -20,7 +20,7 @@ choice -- gRPC or a hand-rolled JSON-RPC would be the reflex -- and it pays for 
 over, because the worker and the live-app host are *also* standalone MCP servers that a person can
 drive with any MCP client, the tests exploit exactly that, and progress and cancellation arrive for
 free on a protocol the broker was already speaking outward. What it costs is real and mostly
-unpriced here: results are JSON with no binary path, there is no correlation id, cancellation had to
+unpriced here: results are JSON with no binary path, cancellation had to
 be re-implemented by hand because the SDK does not send `notifications/cancelled`
 (`CancellableToolCall`), and one SDK's quirks now show up in four processes. Where the design shows
 its age was the XAML tap pipe, the only boundary where the framing was invented rather than adopted
@@ -45,7 +45,7 @@ change.
 | 7 | LiveApp host -> UWP resume stub | named pipe, newline-delimited text | two-message handshake, fail-safe | Appropriate with fixes (IPC-06) |
 | 8 | Worker <-> XAML stub generator | a generated source document carrying JSON on a marked comment | one-way report, per compilation | Appropriate -- the only channel Roslyn offers |
 | 9 | Tray -> Inspector | process start; args, then WinAppSDK activation redirection | one-shot launch + hand-over | Appropriate with fixes (IPC-04) |
-| 10 | Logs | per-component rolling files on disk | one-way, out of band | Appropriate with fixes (IPC-07, BRK-15) |
+| 10 | Logs | per-component rolling files on disk | one-way, out of band | Appropriate |
 | 11 | Tray window <-> broker | in-process object graph (`WorkspaceManager`, `ActivityLog`) | direct reads, polled by the window | Appropriate -- deliberately not IPC |
 | 12 | Serialization everywhere | System.Text.Json, three option sets | DTOs in `RoseMcp.Contracts` | Appropriate with fixes (IPC-02, IPC-05) |
 
@@ -122,8 +122,7 @@ system's: nothing has to notice, the handle closes.
 reports *its own* version rather than the tray's, which is the right call and the only place in the
 repository where the meaning of a version on the wire was thought about.
 
-**Observability.** Everything to stderr and to `Logs/Server/`. No request id in any log line
-(BRK-15).
+**Observability.** Everything to stderr and to `Logs/Server/`.
 
 **Verdict: appropriate.** This is the boundary the product is for; there is no alternative to weigh.
 
@@ -153,7 +152,7 @@ because the relay does not declare tools. That is a real benefit of forwarding `
 relay cannot advertise a surface the tray lacks. The reverse -- new Server relaying to old Tray --
 degrades correctly for the same reason.
 
-**Observability.** `_endpoint` is in every log line; nothing correlates a relay line to a tray line.
+**Observability.** `_endpoint` is in every log line.
 
 **Verdict: appropriate with fixes.** MCP-over-http here is right for the reason the class summary
 gives: delegating needs no new protocol, because the destination already speaks the one the source
@@ -186,8 +185,7 @@ honours `ROSEMCP_WORKER` -- a code-execution setting, as `security-model.md` say
 which are its unit tests. Nothing reads `McpClient.ServerInfo`. See IPC-02.
 
 **Observability.** `Forwarding {Tool} to {WorkspaceKey} for {Origin}` at Information
-(`WorkspaceWorker.CallAsync:184-189`), and a separate log file per worker naming its solution. No id
-ties the two (BRK-15).
+(`WorkspaceWorker.CallAsync:184-189`), and a separate log file per worker naming its solution.
 
 **Verdict: appropriate with fixes.** The alternative worth naming is gRPC: it would give a schema,
 generated clients, streaming and version negotiation. It would cost the thing that actually earns its
@@ -370,15 +368,8 @@ name. A worker's file names its solution both readably and as a hash, because si
 repository is the ordinary case here. Serilog is the sink and nothing more -- every call site keeps
 its `ILogger<T>`, and `SelfLog` goes to stderr so a logging failure cannot corrupt stdio.
 
-**As a channel, what it lacks.** Three things, in order of cost: no correlation id across the
-broker/worker hop (BRK-15); no way for a reader of a workspace to find the worker's log file, though a
-reader of a debug session gets `LiveAppInfo.HostLogPath` for exactly that reason (IPC-07); and no
-shared notion of a session, so with the tray serving several agents "which call was this" is
-unanswerable from the files.
-
-**Verdict: appropriate with fixes.** Files are right -- a broker that shipped logs over its own IPC
-would lose them exactly when the IPC is what failed. The gaps are all "add a field", not "change the
-mechanism".
+**Verdict: appropriate.** Files are right -- a broker that shipped logs over its own IPC would lose
+them exactly when the IPC is what failed.
 
 ### 11. In-process: the tray window and the `ActivityLog`
 
@@ -543,24 +534,9 @@ its own. A provider is refused unless it greets with a key minted for its sessio
 - **Suggested change:** `NamedPipeServerStreamAcl.Create` with a current-user-only DACL, and
   `Guid.NewGuid()` for the name. Both are one line, and `XamlProviderPipe.Listen` is the template.
 
-### IPC-07 A worker's log file is never named to anyone, though a live-app host's is
-- **Severity:** Low
-- **Effort:** S
-- **Where:** `src/RoseMcp.Contracts/WorkspaceSummary.cs` (no log path);
-  `src/RoseMcp.Contracts/LiveAppInfo.cs:70-74` (`HostLogPath`, with the reason);
-  `src/RoseMcp.Logging/RoseFileLogging.cs:20-26` (`Destination`)
-- **What:** `LiveAppInfo` carries `HostLogPath` precisely so "a reader looking at a session can open
-  the log that explains it rather than guessing which of twenty files in the folder is the one".
-  `WorkerInfo` and `WorkspaceSummary` carry nothing equivalent, although the worker has
-  `RoseFileLogging.Destination` sitting in a static and `rose_worker_info` already exists as the
-  cheap self-report the broker calls on connect.
-- **Why it matters:** A worker's file name is `{solution}-{hash}-{timestamp}.log`, and twenty
-  sessions are kept, so picking the right one for a worker that started forty minutes ago is exactly
-  the guessing the live-app field exists to remove. The tray window has a workspace row and nothing
-  to open.
-- **Suggested change:** Add `LogPath` to `WorkerInfo`, populate it from `RoseFileLogging.Destination`,
-  surface it on `WorkspaceSummary`, and make the tray's workspace row open it -- the session row
-  already does the same thing.
+### ~~IPC-07 A worker's log file is never named to anyone, though a live-app host's is~~
+**#385.** A debug session named the log file that explained it and a workspace did not, so finding a
+worker's log meant guessing among twenty. A workspace names its worker's log, and the tray opens it.
 
 ### IPC-08 Only one of the two child-session types notices its child exiting
 - **Severity:** Low
@@ -633,13 +609,9 @@ its own. A provider is refused unless it greets with a key minted for its sessio
    a third child added later cannot connect without passing through one of them if the client is
    only ever constructed inside that helper. `HostVersion` stops being a value nobody reads.
 
-3. **Rule today:** a call can be traced across a hop by reading two timestamps and hoping.
-   **Mechanism:** a correlation id minted at the outermost boundary, carried in `_meta` next to
-   `rosemcp/originDirectory` -- `CancellableToolCall.Meta` is the one place that writes `_meta`, so
-   one line there puts it on every internal hop -- and pushed into a logging scope at both ends, so
-   every line in every file carries it without any call site remembering. `CallOrigin` is the
-   pattern to copy: an ambient value set by the filter, read where it is needed. This is BRK-15's
-   suggestion made structural rather than per-log-line.
+3. ~~A call can be traced across a hop by reading two timestamps and hoping.~~ **#385.** The id is
+   added where every hop is built and written by the sink on every line, so no call site has to
+   remember it.
 
 4. **Rule today:** "loopback plus a token" is the policy, spelled out four times (`ServerOptions`,
    `LoopbackOrigin`, `Program.RequireToken`, `OperatorApi`'s branch) with two loopback lists and two

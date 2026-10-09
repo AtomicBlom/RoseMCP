@@ -125,6 +125,12 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	public long? ManagedHeapBytes { get; private set; }
 
 	/// <summary>
+	/// The log file the worker said it writes, learned on connect. Kept after the worker stops, since a
+	/// worker that crashed is the one whose log somebody wants to open.
+	/// </summary>
+	public string? LogPath { get; private set; }
+
+	/// <summary>
 	/// The last status report to pass through, whoever asked for it. The broker asks on connect, so
 	/// one arrives the moment the load finishes; every rose_workspace_status a client makes after
 	/// that replaces it. Kept because the configuration, the project count and the reasons a
@@ -240,12 +246,13 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		logger.LogInformation("Starting a worker for {SolutionPath}.", solutionPath);
 
 		// The handshake budget is set rather than inherited: the SDK defaults to 60 seconds, which a
-		// cold worker loses to its own design-time build when several start at once.
-		var client = await McpClient.CreateAsync(
+		// cold worker loses to its own design-time build when several start at once. Detached, because
+		// the call that starts a worker is one of many its transport will carry.
+		var client = await Detached.Run(() => McpClient.CreateAsync(
 			transport,
 			ChildHostHandshake.Options(options.WorkerHandshakeTimeout),
 			loggerFactory,
-			cancellationToken);
+			cancellationToken));
 
 		var worker = new WorkspaceWorker(solutionPath, client, activities, logger, options.TimeProvider)
 		{
@@ -286,6 +293,8 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		// measurable from the files already being written rather than from anybody's recollection. The
 		// origin directory is the closest thing to a session identity a worker call has -- it is a
 		// working directory in practice -- and it is null for a client with no relay in front of it.
+		// Which call this is needs no field: the line carries the call's correlation id, and so does
+		// every line the worker writes for it.
 		_logger.LogInformation(
 			"Forwarding {Tool} to {WorkspaceKey} for {Origin}.",
 			tool,
@@ -459,6 +468,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			var info = await SendAsync<WorkerInfo>(ToolNames.WorkerInfo, EmptyArguments, progress: null, cancellationToken);
 			ProcessId = info.ProcessId;
 			ManagedHeapBytes = info.ManagedHeapBytes;
+			LogPath = info.LogPath ?? LogPath;
 
 			WatchForExit(info.ProcessId);
 		}
@@ -525,7 +535,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	{
 		if (!IsAlive || Interlocked.CompareExchange(ref _refreshingHeap, 1, 0) != 0) return;
 
-		_ = Task.Run(async () =>
+		_ = Detached.Run(async () =>
 		{
 			try
 			{
@@ -581,6 +591,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			WorkingSetBytes = workingSet,
 			PrivateMemoryBytes = privateMemory,
 			ManagedHeapBytes = IsAlive ? ManagedHeapBytes : null,
+			WorkerLogPath = LogPath,
 			BuildConfiguration = status?.BuildConfiguration,
 			ProjectCount = status?.ProjectCount,
 			FailedProjects = status is null

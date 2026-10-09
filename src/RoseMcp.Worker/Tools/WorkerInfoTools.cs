@@ -3,6 +3,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 
 using RoseMcp.Contracts;
+using RoseMcp.Logging;
 
 namespace RoseMcp.Worker.Tools;
 
@@ -17,11 +18,12 @@ public sealed class WorkerInfoTools(WorkerOptions options)
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("Process id and managed heap size for this worker. Does not load anything.")]
+	[Description("Process id, managed heap size and log file for this worker. Does not load anything.")]
 	public WorkerInfo Info() => new()
 	{
 		ProcessId = Environment.ProcessId,
 		SolutionPath = options.SolutionPath,
 		ManagedHeapBytes = GC.GetTotalMemory(forceFullCollection: false),
+		LogPath = RoseFileLogging.Destination,
 	};
 }

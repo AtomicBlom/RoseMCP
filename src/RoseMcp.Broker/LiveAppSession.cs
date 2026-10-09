@@ -129,7 +129,8 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 		logger.LogInformation("Starting a live-app host for {Target} as {Architecture}.", target.Description, architecture);
 
-		var client = await McpClient.CreateAsync(transport, ChildHostHandshake.Options(), loggerFactory, cancellationToken);
+		// Detached, because the call that starts a host is one of many its transport will carry.
+		var client = await Detached.Run(() => McpClient.CreateAsync(transport, ChildHostHandshake.Options(), loggerFactory, cancellationToken));
 
 		// A host published per architecture under its own runtime folder is the one most likely to be
 		// a different build from the broker, since an install can half update and a repository holds

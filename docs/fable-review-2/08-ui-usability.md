@@ -748,11 +748,11 @@ at all.
   tray's own folder "because the question that brings someone here is usually which of them has the
   answer" -- an accurate description of the problem and a statement that the window is not solving it.
 - **Why it matters:** Every dead end in the tray terminates at an Explorer window containing several
-  Serilog files from several processes, with no correlation id between them (noted as BRK-15 in the
-  broker review). The person then greps. That is the point at which a status window has stopped being
+  Serilog files from several processes. The person then greps. That is the point at which a status window has stopped being
   a product and become a shortcut to the file system.
-- **Suggested change:** Pick the file, not the folder, wherever one is known -- the worker's own log
-  path is knowable per workspace, and the session already names `HostLogPath`. Beyond that, the real
+- **Suggested change:** Pick the file, not the folder, wherever one is known -- a workspace row and a
+  session row each have a button that opens their own file, and a workspace's health message points
+  there. Beyond that, the real
   fix is USE-04: if the activity list held a few hundred entries with their errors, most trips to the
   log folder stop happening.
 

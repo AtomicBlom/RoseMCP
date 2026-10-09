@@ -180,6 +180,12 @@ public sealed class WorkspaceRow : Observable
 		private set => Set(ref _recentHeader, value);
 	}
 
+	/// <summary>
+	/// The worker's log file, for the button that shows it. Read only when the button is clicked, so it
+	/// raises no change.
+	/// </summary>
+	public string? WorkerLogPath { get; private set; }
+
 	public void Update(WorkspaceSummary summary)
 	{
 		var tone = ToneOf(summary);
@@ -205,6 +211,8 @@ public sealed class WorkspaceRow : Observable
 		HasRunning = Running.Count > 0;
 		HasRecent = Recent.Count > 0;
 		RecentHeader = DescribeRecent(summary.Recent);
+
+		WorkerLogPath = summary.WorkerLogPath;
 	}
 
 	/// <summary>
@@ -290,13 +298,13 @@ public sealed class WorkspaceRow : Observable
 				true,
 				InfoBarSeverity.Error,
 				"The worker crashed",
-				"The next call on this solution starts a fresh one. Its log, under Open log folder, says why."),
+				"The next call on this solution starts a fresh one. Its log, behind the log button on this row, says why."),
 
 			WorkspaceState.Faulted => (
 				true,
 				InfoBarSeverity.Error,
 				"The solution did not load",
-				reasons.Length > 0 ? reasons : "No reason was reported. The worker's log, under Open log folder, has the details."),
+				reasons.Length > 0 ? reasons : "No reason was reported. The worker's log, behind the log button on this row, has the details."),
 
 			WorkspaceState.Degraded => (true, InfoBarSeverity.Warning, "Answers may be incomplete", reasons),
 

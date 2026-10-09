@@ -216,8 +216,7 @@ choice, and it pays three times over, because the worker and the live-app host a
 MCP servers a person can drive with any client, the tests exploit exactly that, and progress and
 cancellation arrive on a protocol the broker already speaks outward.
 
-The costs are real and mostly unpriced: JSON with no binary path, no correlation id on any internal
-hop, cancellation re-implemented by hand because the SDK never sends it, and one SDK's quirks
+The costs are real and mostly unpriced: JSON with no binary path, cancellation re-implemented by hand because the SDK never sends it, and one SDK's quirks
 load-bearing in four processes.
 
 Polling for the inspector is **correct**, and the premise that it might not be was wrong: the event
@@ -370,9 +369,14 @@ Highest leverage on adoption. Cheap relative to impact.
 | 17 | *(moved to card 0a -- the accidental inclusion turned out to be proof that debugger tests run fine on a hosted runner, so it is widened deliberately rather than reverted.)* | UIP-14 | new | -- |
 | 18 | **Share fixtures on the Roslyn half: the tests that write.** A test that only reads shares one load per fixture (#39). The tests that write still copy and load a fixture each, which is most of the loads left. What remains is a copy that keeps its restore output for all but the generator tests, then a pool of loaded workspaces handed out the way the live-app slots are, with a hand-back check. The broker-process classes (`BrokerForwardingTests`, `IdleEvictionTests`, `WorkspaceRoutingTests`) start real workers rather than load through a test session, and are their own question. | UIP-13 | #39 | L |
 | 19 | *(moved to card 0d -- it is worth having before the work starts, not after.)* | IPC-02, BRK-05 | new | -- |
+<<<<<<< HEAD
 | 20 | **A correlation id on every internal hop**, into every log line. Today a failure cannot be traced across the four processes it crossed. | BRK-15, IPC-07 | new | M |
 | 21 | **Guard the remaining arrangements**, after cards 0c and 0e take the two urgent ones: a stdout test of its own, and tap tier purity checked rather than described. | UIP-18, UIP-24 | new | M |
 | ~~21a~~ | **#387.** Five parties each wrote the published layout down for themselves, two of them packaged content a user runs, so a layout change passed every test and failed at install time. They all read one committed layout, or are tested against it. | UIP-22 | — | — |
+=======
+| ~~20~~ | **#385.** A call could not be traced across the processes it crossed, and nothing said which file was a workspace's worker log. Every log line carries the id of the call it was written for, the same in every process, and a workspace names its worker's log. | BRK-15, IPC-07 | — | — |
+| 21 | **Guard the remaining arrangements**, after cards 0c and 0e take the two urgent ones: a stdout test of its own, a shared layout manifest, and tap tier purity checked rather than described. **The layout half has got sharply more urgent** — PR #277 took the parties to the layout from two to five, two of them packaged content a user runs, so a layout change now fails at install time on somebody else's machine rather than in CI. Worth splitting out and pulling forward. | UIP-18, UIP-22, UIP-24 | new | M |
+>>>>>>> 47cb215 (Every log line names the call it was written for, the same id in every process the call crossed, and a workspace names its worker's log [rosemcp-385])
 
 ### Tier 5 — re-aim the UIs
 

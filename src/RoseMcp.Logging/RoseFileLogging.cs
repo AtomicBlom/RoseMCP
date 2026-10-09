@@ -19,6 +19,16 @@ namespace RoseMcp.Logging;
 public static class RoseFileLogging
 {
 	/// <summary>
+	/// One line per event: when, how bad, which call it was written for, who wrote it, and what it says.
+	/// <para>
+	/// The call's id sits before the source so that every line has one in the same column -- a dash
+	/// outside any call -- and a search for an id finds the call in every process's file without a
+	/// pattern that has to know what else is on the line. See <see cref="CallCorrelation"/>.
+	/// </para>
+	/// </summary>
+	private const string OutputTemplate =
+		"{Utc:yyyy-MM-dd HH:mm:ss.fff}Z [{Level:u3}] {CorrelationId} {SourceContext}: {Message:lj}{NewLine}{Exception}";
+	/// <summary>
 	/// The file this process is writing to, for a UI that offers to open it. Set once during
 	/// startup and never again, which is what makes a static safe here: a process configures its
 	/// logging exactly once, before anything is running that could read this.
@@ -63,10 +73,10 @@ public static class RoseFileLogging
 				// independent minimums is how a level someone raised fails to change anything.
 				.MinimumLevel.Is(LogEventLevel.Verbose)
 				.Enrich.With<UtcTimestamp>()
+				.Enrich.With<Correlation>()
 				.WriteTo.File(
 					path,
-					outputTemplate:
-						"{Utc:yyyy-MM-dd HH:mm:ss.fff}Z [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}",
+					outputTemplate: OutputTemplate,
 					fileSizeLimitBytes: RoseLogFile.DefaultFileSizeLimitBytes,
 					rollOnFileSizeLimit: true,
 					retainedFileCountLimit: RoseLogFile.DefaultPartsPerSession,
@@ -99,4 +109,21 @@ internal sealed class UtcTimestamp : ILogEventEnricher
 {
 	public void Enrich(LogEvent logEvent, ILogEventPropertyFactory factory) =>
 		logEvent.AddPropertyIfAbsent(new LogEventProperty("Utc", new ScalarValue(logEvent.Timestamp.UtcDateTime)));
+}
+
+/// <summary>
+/// Puts the id of the call in flight on the event, or a dash outside one.
+/// <para>
+/// Read when the event is written, on the thread writing it, which is what makes an ambient work
+/// here: the file sink is synchronous, so the execution context in force is the one that logged.
+/// </para>
+/// </summary>
+internal sealed class Correlation : ILogEventEnricher
+{
+	private static readonly LogEventProperty Outside = new("CorrelationId", new ScalarValue("-"));
+
+	public void Enrich(LogEvent logEvent, ILogEventPropertyFactory factory) =>
+		logEvent.AddPropertyIfAbsent(CallCorrelation.Id is { } id
+			? new LogEventProperty("CorrelationId", new ScalarValue(id))
+			: Outside);
 }

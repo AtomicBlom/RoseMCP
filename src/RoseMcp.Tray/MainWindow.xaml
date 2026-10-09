@@ -240,6 +240,10 @@
 													ToolTipService.ToolTip="Show the solution in Explorer">
 													<FontIcon Glyph="&#xE8B7;" FontSize="16" />
 												</Button>
+												<Button Style="{StaticResource IconButtonStyle}" Click="OnOpenWorkerLog" Tag="{x:Bind SolutionPath}"
+													ToolTipService.ToolTip="Show this workspace's worker log in Explorer.">
+													<FontIcon Glyph="&#xE8A5;" FontSize="16" />
+												</Button>
 												<Button Style="{StaticResource IconButtonStyle}" Click="OnReload" Tag="{x:Bind SolutionPath}"
 													ToolTipService.ToolTip="Reload: restart the worker and load the solution again. The only way to pick up a rebuilt analyzer or source generator.">
 													<FontIcon Glyph="&#xE72C;" FontSize="16" />

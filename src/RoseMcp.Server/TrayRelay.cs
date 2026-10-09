@@ -304,8 +304,12 @@ public sealed class TrayRelay : IAsyncDisposable
 
 				var transport = new HttpClientTransport(new HttpClientTransportOptions { Endpoint = endpoint });
 
-				return await McpClient.CreateAsync(
-					transport, loggerFactory: loggerFactory, cancellationToken: attempt.Token);
+				var token = attempt.Token;
+
+				// A reconnect happens inside whichever call found the tray gone, and the connection it
+				// opens serves every call after that one.
+				return await Detached.Run(() => McpClient.CreateAsync(
+					transport, loggerFactory: loggerFactory, cancellationToken: token));
 			}
 			catch when (DateTime.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
 			{

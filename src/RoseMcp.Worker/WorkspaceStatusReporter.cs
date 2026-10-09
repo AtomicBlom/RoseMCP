@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 
@@ -14,7 +16,7 @@ namespace RoseMcp.Worker;
 /// solution was first opened. After an hour of edits those are not the same thing.
 /// </para>
 /// </summary>
-public static class WorkspaceStatusReporter
+public static partial class WorkspaceStatusReporter
 {
 	public static async Task<WorkspaceStatusReport> DescribeAsync(
 		Solution solution,
@@ -53,7 +55,7 @@ public static class WorkspaceStatusReporter
 			EvaluationFailures = evaluationFailures,
 			BuildConfiguration = build?.Describe(),
 			AvailableConfigurations = build?.Available.Configurations ?? [],
-			Notices = [.. NoticesFor(build, solution, evaluationFailures, cancellationToken)],
+			Notices = [.. NoticesFor(build, solution, workspaceDiagnostics, evaluationFailures, cancellationToken)],
 			Restore = restore,
 			LoadSeconds = loadSeconds,
 		};
@@ -469,16 +471,30 @@ public static class WorkspaceStatusReporter
 	/// It is still worth saying, because the thing it warns about does not present as a build
 	/// failure. It presents as a test failing for a reason that has nothing to do with the change.
 	/// </para>
+	/// <para>
+	/// A reference left unresolved because its project has not been built is a notice for the same
+	/// reason: the projects still load, and the remedy is a build rather than anything about trust.
+	/// </para>
 	/// </summary>
 	private static IEnumerable<string> NoticesFor(
 		BuildProperties? build,
 		Solution solution,
+		IReadOnlyList<WorkspaceDiagnostic> workspaceDiagnostics,
 		IReadOnlyList<ProjectEvaluationFailure> evaluationFailures,
 		CancellationToken cancellationToken)
 	{
 		if (build?.Notice is { } notice) yield return notice;
 
 		if (EvaluationNotice(evaluationFailures) is { } unevaluated) yield return unevaluated;
+
+		ProjectOutput[] outputs =
+		[
+			.. solution.Projects.Select(project =>
+				new ProjectOutput(project.Name, project.FilePath ?? string.Empty, project.OutputFilePath ?? string.Empty)),
+		];
+
+		var messages = workspaceDiagnostics.Select(diagnostic => diagnostic.Message).ToArray();
+		if (UnbuiltReferenceNotice(build, messages, outputs, File.Exists) is { } unbuilt) yield return unbuilt;
 
 		var stale = BuildFreshness.Of(solution, project: null, cancellationToken)
 			.Count(project => project.Stale);
@@ -498,6 +514,133 @@ public static class WorkspaceStatusReporter
 		BuildProperties? build,
 		IReadOnlyList<WorkspaceDiagnostic> diagnostics) =>
 		build?.SuspectWrongPlatform(diagnostics.Select(diagnostic => diagnostic.Message));
+
+	/// <summary>A project's identity and the file its build writes, which is what an unresolved reference names.</summary>
+	/// <param name="Name">The project's name.</param>
+	/// <param name="FilePath">The project file.</param>
+	/// <param name="OutputFilePath">The assembly or metadata file its build writes; empty where Roslyn does not know it.</param>
+	public readonly record struct ProjectOutput(string Name, string FilePath, string OutputFilePath);
+
+	/// <summary>
+	/// The notice for references the design-time build could not resolve because the in-solution project that
+	/// writes them has not been built, naming each such project, what wanted it, and the build that fixes it;
+	/// null when no load diagnostic is that.
+	/// <para>
+	/// MSBuild says only "Cannot resolve Assembly or Windows Metadata file", with a path. That is accurate and
+	/// says nothing about what to do, and on a fresh clone or worktree it is the first thing status shows for
+	/// a WinUI or UWP solution, whose design-time build looks for a referenced project's output on disk rather
+	/// than in the solution. The path is the referenced project's own output, so the remedy is known exactly:
+	/// build that project, then reload. A path no project in the solution writes is some other failure -- a
+	/// package or SDK reference -- and is left to the raw diagnostic, since naming a project to build for it
+	/// would be wrong advice.
+	/// </para>
+	/// <para>
+	/// A notice rather than a degraded reason: the projects still load, and the remedy is a build rather than
+	/// anything about whether to trust the answers. Where every path named has been built since the load, it
+	/// says that a reload is all that is left.
+	/// </para>
+	/// <para>
+	/// Nothing where the platform this server chose is already suspected. A wrong platform names every
+	/// in-solution output under it as unresolved, and its own reason already says nothing has been built for
+	/// it; telling the caller to build those projects as well would send them to build for the platform that
+	/// is the mistake.
+	/// </para>
+	/// </summary>
+	/// <param name="build">The properties the solution loaded under, which say whether the platform is suspect.</param>
+	/// <param name="diagnosticMessages">The load diagnostics, as MSBuild worded them.</param>
+	/// <param name="projects">Every project in the solution, with the file its build writes.</param>
+	/// <param name="exists">Whether a file is on disk now.</param>
+	public static string? UnbuiltReferenceNotice(
+		BuildProperties? build,
+		IReadOnlyList<string> diagnosticMessages,
+		IReadOnlyList<ProjectOutput> projects,
+		Func<string, bool> exists)
+	{
+		if (build?.SuspectWrongPlatform(diagnosticMessages) is not null) return null;
+
+		var unbuilt = new Dictionary<string, (ProjectOutput Producer, SortedSet<string> Wanting, List<string> Paths)>(
+			StringComparer.OrdinalIgnoreCase);
+
+		foreach (var message in diagnosticMessages)
+		{
+			var unresolved = UnresolvedReference().Match(message);
+			if (!unresolved.Success) continue;
+
+			var path = unresolved.Groups["path"].Value;
+			if (Producer(path, projects) is not { } producer) continue;
+
+			if (!unbuilt.TryGetValue(producer.FilePath, out var entry))
+			{
+				entry = (producer, new SortedSet<string>(StringComparer.OrdinalIgnoreCase), []);
+				unbuilt[producer.FilePath] = entry;
+			}
+
+			entry.Paths.Add(path);
+
+			var wanting = ProcessedProject().Match(message);
+			if (wanting.Success) entry.Wanting.Add(Path.GetFileNameWithoutExtension(wanting.Groups["project"].Value));
+		}
+
+		if (unbuilt.Count == 0) return null;
+
+		var named = string.Join(", ", unbuilt.Values.Select(entry => entry.Wanting.Count == 0
+			? ProjectName(entry.Producer)
+			: $"{ProjectName(entry.Producer)} (wanted by {string.Join(", ", entry.Wanting)})"));
+
+		var one = unbuilt.Count == 1;
+		var builtSince = unbuilt.Values.All(entry => entry.Paths.All(exists));
+		if (builtSince)
+		{
+			return $"The design-time build could not resolve the output of {named}, which had not been built when the "
+				+ $"solution loaded. {(one ? "It has" : "They have")} been built since, so rose_workspace_reload clears this.";
+		}
+
+		var builds = string.Join(" and ", unbuilt.Values.Select(entry => $"dotnet build \"{entry.Producer.FilePath}\""));
+
+		return $"The design-time build could not resolve the output of {named}, because {(one ? "it has" : "they have")} "
+			+ "not been built: a WinUI or UWP project's design-time build looks for a referenced project's output on disk "
+			+ $"rather than in the solution. Build {(one ? "it" : "them")} first with {builds}, then rose_workspace_reload.";
+	}
+
+	/// <summary>
+	/// The project whose build writes a file, matched by the whole path where it can be and otherwise by file
+	/// name, since a design-time build under other global properties can look for the same assembly under a
+	/// different output folder.
+	/// </summary>
+	private static ProjectOutput? Producer(string path, IReadOnlyList<ProjectOutput> projects)
+	{
+		var writers = projects.Where(project => project.OutputFilePath.Length > 0).ToArray();
+
+		foreach (var project in writers)
+		{
+			if (SamePath(project.OutputFilePath, path)) return project;
+		}
+
+		var fileName = Path.GetFileName(path);
+
+		foreach (var project in writers)
+		{
+			if (Path.GetFileName(project.OutputFilePath).Equals(fileName, StringComparison.OrdinalIgnoreCase)) return project;
+		}
+
+		return null;
+	}
+
+	private static bool SamePath(string one, string other) =>
+		string.Equals(
+			one.Replace('/', '\\'),
+			other.Replace('/', '\\'),
+			StringComparison.OrdinalIgnoreCase);
+
+	/// <summary>A project as a caller names it: its file's name, so the targets of a multi-targeted project read as one.</summary>
+	private static string ProjectName(ProjectOutput project) =>
+		project.FilePath.Length > 0 ? Path.GetFileNameWithoutExtension(project.FilePath) : project.Name;
+
+	[GeneratedRegex(@"Cannot resolve Assembly or Windows Metadata file '(?<path>[^']+)'", RegexOptions.CultureInvariant)]
+	private static partial Regex UnresolvedReference();
+
+	[GeneratedRegex(@"processing the file '(?<project>[^']+)'", RegexOptions.CultureInvariant)]
+	private static partial Regex ProcessedProject();
 
 	private static IReadOnlyList<string> CollectDegradedReasons(
 		IReadOnlyList<WorkspaceDiagnostic> workspaceDiagnostics,

@@ -242,7 +242,19 @@ public sealed class LiveAppDebugTools(
 		var session = sessions.Find(sessionId);
 
 		var closed = await sessions.CloseAsync(sessionId, cancellationToken);
-		if (!closed) return new LiveSessionDetached { SessionId = sessionId, Detached = false };
+		if (!closed)
+		{
+			// A session whose host died was dropped, and is said to be, so a caller holding its id does not
+			// read the answer as a wrong id. Only the caller that started it is told.
+			var dropped = sessions.FindDropped(sessionId);
+
+			return new LiveSessionDetached
+			{
+				SessionId = sessionId,
+				Detached = false,
+				Detail = dropped?.Explain(sessions.UtcNow, StartAgain),
+			};
+		}
 
 		if (session?.DetachFailure is { Length: > 0 } failure)
 		{
@@ -643,12 +655,31 @@ public sealed class LiveAppDebugTools(
 			await session.ResolveElementAsync(element, cancellationToken), cancellationToken);
 	}
 
+	/// <summary>
+	/// The caller's session with that id, or a refusal saying why there is none: that its host died and
+	/// it was dropped, where this caller started it and that is so, and otherwise that no such session is
+	/// open for this caller.
+	/// </summary>
+	/// <exception cref="McpException">No open session of this caller's has that id.</exception>
 	private LiveAppSession Require(string sessionId)
-		=> sessions.Find(sessionId)
-			?? throw new McpException(
-				$"No debug session '{sessionId}' is open for this client. rose_debug_list names the ones there "
-					+ "are. A session another client of this broker started belongs to it and is not reachable "
-					+ "from here.");
+	{
+		if (sessions.Find(sessionId) is { } session) return session;
+
+		if (sessions.FindDropped(sessionId) is { } dropped)
+		{
+			throw new McpException(dropped.Explain(sessions.UtcNow, StartAgain));
+		}
+
+		throw new McpException(
+			$"No debug session '{sessionId}' is open for this client. rose_debug_list names the ones there "
+				+ "are. A session another client of this broker started belongs to it and is not reachable "
+				+ "from here.");
+	}
+
+	/// <summary>What a caller whose session was dropped does to debug the target again.</summary>
+	private const string StartAgain =
+		$"Start a new session with {ToolNames.DebugAttach}, {ToolNames.DebugLaunch} or {ToolNames.DebugLaunchUwp} "
+			+ "to debug the target again.";
 
 	private static string DescribeProcess(int processId)
 	{

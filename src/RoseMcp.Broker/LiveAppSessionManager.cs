@@ -34,6 +34,9 @@ public sealed class LiveAppSessionManager(
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly BrokerOptions _options = options.Value;
 
+	/// <summary>Sessions dropped because their host died, so a later call naming one is told why.</summary>
+	private readonly DroppedSessions _dropped = new();
+
 	/// <summary>
 	/// How often every session's self-report is re-read. It is the tray's own idle cadence, and it is
 	/// what makes a summary's staleness bounded rather than unknown: nothing else asks a host how it
@@ -129,6 +132,19 @@ public sealed class LiveAppSessionManager(
 		_sessions.TryGetValue(sessionId, out var session) ? session : null;
 
 	/// <summary>
+	/// The session with that id that was dropped because its host died, if the caller started it, or
+	/// null. For a refusal that would otherwise say only that no such session is open -- which, for a
+	/// session the caller did start, reads as a wrong id or someone else's session.
+	/// </summary>
+	public DroppedSession? FindDropped(string sessionId) => _dropped.Find(sessionId, CallSession.Id);
+
+	/// <summary>
+	/// The session with that id that was dropped because its host died, whoever started it. The
+	/// operator counterpart to <see cref="FindDropped"/>, for the reason <see cref="ForOperator"/> is.
+	/// </summary>
+	public DroppedSession? DroppedForOperator(string sessionId) => _dropped.ForOperator(sessionId);
+
+	/// <summary>
 	/// Stops a session and forgets it, whoever started it. The operator counterpart to
 	/// <see cref="CloseAsync"/>, for a person detaching a debugger from their own machine.
 	/// </summary>
@@ -195,15 +211,26 @@ public sealed class LiveAppSessionManager(
 
 	/// <summary>
 	/// Takes a session out of the registry and ends its host, having already established that the
-	/// caller may. Shared by both closes so the teardown cannot differ between them: the gate is what
-	/// makes removing the session atomic with disposing the host it names.
+	/// caller may. Shared by both closes and by dropping an ended session, so the teardown cannot differ
+	/// between them: the gate is what makes removing the session atomic with disposing the host it names.
+	/// <para>
+	/// A drop passes when the host was found gone, and the session is remembered as dropped under the
+	/// same gate it leaves the registry under -- so there is no moment at which a call naming it finds
+	/// neither the session nor the reason it went.
+	/// </para>
 	/// </summary>
-	private async Task<bool> RemoveAsync(string sessionId, CancellationToken cancellationToken)
+	private async Task<bool> RemoveAsync(string sessionId, CancellationToken cancellationToken, DateTime? hostGoneUtc = null)
 	{
 		await _gate.WaitAsync(cancellationToken);
 		try
 		{
 			if (!_sessions.TryRemove(sessionId, out var session)) return false;
+
+			if (hostGoneUtc is { } gone)
+			{
+				_dropped.Record(new DroppedSession(
+					sessionId, session.Owner, session.Target.Description ?? session.Target.Kind.ToString(), gone));
+			}
 
 			await session.DisposeAsync();
 			Activities.Forget(sessionId);
@@ -297,8 +324,9 @@ public sealed class LiveAppSessionManager(
 	/// <para>
 	/// Marking files the reason on the session's own row, which stays listed as ended for the grace
 	/// period, so the tray, an inspector and <c>rose_debug_list</c> say why before the row goes. The
-	/// note goes with the session -- there is no row left to carry it, and a session id is never
-	/// reused -- so the drop itself is said in the broker's log.
+	/// note goes with the session, so the drop itself is said in the broker's log, and the session is
+	/// remembered as dropped, so a later call naming it is told its host died rather than that no such
+	/// session is open.
 	/// </para>
 	/// <para>
 	/// A session with a poll still settling is left to the next tick, so its client is never disposed
@@ -327,7 +355,7 @@ public sealed class LiveAppSessionManager(
 			var polling = _refreshes.TryGetValue(session.SessionId, out var running) && !running.IsCompleted;
 			if (polling) continue;
 
-			if (!await RemoveAsync(session.SessionId, cancellationToken)) continue;
+			if (!await RemoveAsync(session.SessionId, cancellationToken, session.EndedSeenUtc ?? now)) continue;
 
 			logger.LogInformation(
 				"Dropped live-app session {SessionId} for {Target}: its host stopped answering {Ago} ago.",
@@ -370,8 +398,11 @@ public sealed class LiveAppSessionManager(
 			WorkerEviction.Duration(grace));
 	}
 
-	/// <summary>Now, on the clock an ended session's grace is read from.</summary>
-	private DateTime UtcNow => _options.TimeProvider.GetUtcNow().UtcDateTime;
+	/// <summary>
+	/// Now, on the clock an ended session's grace is read from -- and the one a refusal reads to say
+	/// how long ago a dropped session's host went.
+	/// </summary>
+	public DateTime UtcNow => _options.TimeProvider.GetUtcNow().UtcDateTime;
 
 	/// <summary>How a session found ended is labelled in the activity log, beside the calls it served.</summary>
 	public const string DropOperation = "drop session";

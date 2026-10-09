@@ -344,6 +344,23 @@ public sealed class LiveAppSessionTests
 
 			// Ended without asking a host that was not there to detach.
 			session.DetachFailure.ShouldNotBeNull().ShouldContain("already stopped answering");
+
+			// The id still names something to the caller that holds it: the next call hears that the host
+			// died, not that the id is wrong or belongs to somebody else.
+			var tools = new RoseMcp.Broker.Tools.LiveAppDebugTools(
+				manager,
+				NoInspector.WithoutAnEndpoint,
+				new CallerPaths(Microsoft.Extensions.Options.Options.Create(new BrokerOptions())));
+
+			var refused = await Should.ThrowAsync<ModelContextProtocol.McpException>(
+				() => tools.EventsAsync(session.SessionId, cancellationToken: cancellationToken));
+			refused.Message.ShouldContain("host stopped answering");
+			refused.Message.ShouldContain(ToolNames.DebugAttach);
+			refused.Message.ShouldNotContain("belongs to it");
+
+			var detached = await tools.DetachAsync(session.SessionId, cancellationToken);
+			detached.Detached.ShouldBeFalse();
+			detached.Detail.ShouldNotBeNull().ShouldContain("host stopped answering");
 		}
 		finally
 		{

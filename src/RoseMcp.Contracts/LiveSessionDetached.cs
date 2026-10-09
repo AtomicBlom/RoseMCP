@@ -31,4 +31,11 @@ public sealed record LiveSessionDetached
 	/// left running with nothing attached to it.
 	/// </summary>
 	public required bool Detached { get; init; }
+
+	/// <summary>
+	/// Why nothing was detached, where the broker knows: the session's host died and the session was
+	/// dropped, which a caller holding its id needs to hear rather than read as a wrong id. Null when the
+	/// detach happened, and when there was no session of this caller's by that id to say anything about.
+	/// </summary>
+	public string? Detail { get; init; }
 }

@@ -111,7 +111,9 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   the next process it starts, so sampling it would show somebody else's memory as the solution's.
   The manager stops the sweep, and waits for it, before it disposes the gate the sweep
   takes. The same holds for a key: `workspaceKey` still names a stopped row, whose path is known,
-  but a refusal naming the workspace a key belongs to calls it loaded only while its worker serves.
+  but a refusal naming the workspace a key belongs to calls it loaded only while its worker serves,
+  and promises a reload only while its solution file exists -- a removed worktree's row outlives
+  the file, and loading it again would only fail.
 - **A live-app session whose host has died is dropped by the session manager, and only that one.**
   A poll that finds the host's transport gone marks the session ended; nothing else would ever
   remove it -- no caller closes a session it can no longer reach -- so the registry would carry it
@@ -119,7 +121,9 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   `Ended`, with the reason filed on its row, for `BrokerOptions.EndedSessionGrace`, so the tray, an
   inspector and `rose_debug_list` show why before it goes; then it is taken out through the same
   teardown and gate as a close, its client disposed, and the drop said in the broker's log, since
-  the row that would carry it is gone. A dead host is not polled again and not asked to detach --
+  the row that would carry it is gone. Under that same gate it is remembered as dropped -- the
+  latest few, scoped to the client that started each -- so the next call naming it hears that its
+  host died rather than that no such session is open, which reads as a wrong id or someone else's. A dead host is not polled again and not asked to detach --
   the debugger went with it. A host that is alive and reports its *target* as exited is a different
   thing and is kept: its event log is still readable, and closing it is the caller's act. The drop
   runs on the poll loop itself, before the tick's polls start, so a dropped session is never polled

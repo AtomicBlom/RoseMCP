@@ -81,6 +81,51 @@ public sealed class DegradedReadNoticeTests
 	public void A_reason_with_no_full_stop_is_ended_with_one() =>
 		DegradedNotice(["Restore failed"])!.ShouldContain("Restore failed. Ask rose_workspace_status", Case.Sensitive);
 
+	/// <summary>
+	/// An evaluation reason's opening sentence quotes every distinct message MSBuild gave, so a solution
+	/// failing several ways would put each of them on every read. The why is cut, and status has the rest.
+	/// </summary>
+	[Test]
+	public void A_why_quoting_many_long_messages_is_cut_to_the_ceiling()
+	{
+		var failures = Enumerable.Range(0, 3)
+			.Select(index => new ProjectEvaluationFailure
+			{
+				Project = Path.Combine(Path.GetTempPath(), $"P{index}", $"P{index}.csproj"),
+				Message = $"The imported project \"C:\\Program Files\\dotnet\\sdk\\10.0.100\\Sdks\\Missing{index}.Sdk\\Sdk\\Sdk.props\" "
+					+ "was not found. Confirm that the expression in the Import declaration is correct, and that the file exists on disk.",
+				NamesSdk = true,
+			})
+			.ToArray();
+		var reason = EvaluationReason(failures, projectCount: 6, new HashSet<string>())!;
+
+		var notice = DegradedNotice([reason])!;
+
+		notice.Length.ShouldBeLessThanOrEqualTo(Frame + MaxDegradedWhy);
+		notice.ShouldContain("3 projects that name an SDK could not be evaluated", Case.Sensitive);
+		notice.ShouldContain("... Ask rose_workspace_status for every reason and its fix.", Case.Sensitive);
+		notice.ShouldNotContain("Missing2", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A quote a message leaves open hides every full stop after it, so the opening sentence is the whole
+	/// reason, remedy and all. The ceiling holds regardless.
+	/// </summary>
+	[Test]
+	public void A_why_with_an_unbalanced_quote_is_cut_too()
+	{
+		var reason = "Restore failed for \"Core, so nothing resolved. " + string.Concat(Enumerable.Repeat("Run dotnet restore and read its output. ", 20));
+
+		var notice = DegradedNotice([reason])!;
+
+		notice.Length.ShouldBeLessThanOrEqualTo(Frame + MaxDegradedWhy);
+		notice.ShouldContain("Restore failed for \"Core, so nothing resolved.", Case.Sensitive);
+		notice.ShouldContain("... Ask rose_workspace_status", Case.Sensitive);
+	}
+
+	/// <summary>What the notice says around its why, the same on every notice of one reason.</summary>
+	private static readonly int Frame = DegradedNotice(["."])!.Length - 1;
+
 	/// <summary>Noted first, since it decides how the rest is read, and noted once however often it is noted.</summary>
 	[Test]
 	public void A_snapshot_leads_with_the_notice_and_takes_it_once()

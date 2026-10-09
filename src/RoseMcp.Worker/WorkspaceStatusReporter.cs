@@ -309,6 +309,12 @@ public static partial class WorkspaceStatusReporter
 	/// reason's opening sentence is the why, since every reason leads with what is wrong and ends with the
 	/// remedy.
 	/// </para>
+	/// <para>
+	/// The why is held to <see cref="MaxDegradedWhy"/> characters. An opening sentence can quote what MSBuild
+	/// said for every project that failed, and a quote or bracket left open in one of those messages leaves no
+	/// full stop to find, so unbounded the line would grow with the solution's failures on every read and every
+	/// batch -- the volume that gets a notice read past.
+	/// </para>
 	/// </summary>
 	/// <param name="reasons">Why the workspace is degraded, as status would list them; empty when it is not.</param>
 	public static string? DegradedNotice(IReadOnlyList<string> reasons)
@@ -318,7 +324,30 @@ public static partial class WorkspaceStatusReporter
 		var others = reasons.Count == 1 ? string.Empty : $" {Count(reasons.Count - 1, "more reason", "more reasons")} besides.";
 
 		return "This workspace is degraded, so this answer can be missing what it could not see rather than reporting it: "
-			+ $"{FirstSentence(reasons[0])}{others} Ask rose_workspace_status for every reason and its fix.";
+			+ $"{Bounded(FirstSentence(reasons[0]), MaxDegradedWhy)}{others} Ask rose_workspace_status for every reason and its fix.";
+	}
+
+	/// <summary>
+	/// The most of a reason a read's degraded notice repeats. Enough for every reason's opening sentence that
+	/// names its cause and a few of its projects, which is what the folded reasons are written to fit; past
+	/// it, the sentence is quoting MSBuild, and status has the quote.
+	/// </summary>
+	public const int MaxDegradedWhy = 240;
+
+	/// <summary>
+	/// <paramref name="text"/> cut to at most <paramref name="max"/> characters at a word boundary, an ellipsis
+	/// saying it was cut, or the text itself where it fits.
+	/// </summary>
+	private static string Bounded(string text, int max)
+	{
+		if (text.Length <= max) return text;
+
+		const string Ellipsis = "...";
+		var room = max - Ellipsis.Length;
+		var space = text.LastIndexOf(' ', room);
+		var cut = space > room / 2 ? space : room;
+
+		return $"{text[..cut].TrimEnd(' ', ',', ';', ':')}{Ellipsis}";
 	}
 
 	/// <summary>

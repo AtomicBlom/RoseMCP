@@ -191,9 +191,9 @@ Read before adding a tool, adding a field to a result, or changing an error path
   nothing, and a generator that did not load writes nothing for the compiler to complain about. So
   `diagnostics: []` from a degraded workspace is not the fact it is from a healthy one, and without a
   notice the two read the same -- an agent treats the zero as a gate and moves on. The snapshot a read
-  is handed leads its notices with the first reason's opening sentence, a count of the others and a
-  pointer to `rose_workspace_status`; every read passes the snapshot's notices on, and a batch says them
-  once rather than on every entry. The reasons in full, each with its fix, are status's: the notice rides
+  is handed leads its notices with the first reason's opening sentence, cut to a ceiling since one can
+  quote every message MSBuild gave, a count of the others and a pointer to `rose_workspace_status`;
+  every read passes the snapshot's notices on, and a batch says them once rather than on every entry. The reasons in full, each with its fix, are status's: the notice rides
   on every read, and every reason on every read would be read past. It is decided in the worker, in
   `WorkspaceHost.ReadAsync`, rather than beside attribution in the broker, because the broker holds only
   the last status a client asked for, which cannot see a reload the worker made on its own or an

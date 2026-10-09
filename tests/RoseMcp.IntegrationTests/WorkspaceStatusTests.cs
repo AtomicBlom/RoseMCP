@@ -93,22 +93,7 @@ public sealed class WorkspaceStatusTests
 		var token = TestContext.Current!.Execution.CancellationToken;
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 
-		await File.WriteAllTextAsync(fixture.Path("Simple", "Core", "Core.csproj"), """
-			<Project>
-			  <PropertyGroup>
-			    <InWorkerEvaluation>true</InWorkerEvaluation>
-			    <InWorkerEvaluation Condition="'$(DesignTimeBuild)' == 'true' or '$(MSBuildIsRestoring)' == 'true' or '$(ExcludeRestorePackageImports)' == 'true'">false</InWorkerEvaluation>
-			  </PropertyGroup>
-			  <Import Project="Sdk.props" Sdk="RoseMcp.Fixture.Missing.Sdk" Condition="'$(InWorkerEvaluation)' == 'true'" />
-			  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" Condition="'$(InWorkerEvaluation)' != 'true'" />
-			  <PropertyGroup>
-			    <TargetFramework>net10.0</TargetFramework>
-			    <Nullable>enable</Nullable>
-			    <ImplicitUsings>enable</ImplicitUsings>
-			  </PropertyGroup>
-			  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" Condition="'$(InWorkerEvaluation)' != 'true'" />
-			</Project>
-			""", token);
+		await File.WriteAllTextAsync(fixture.Path("Simple", "Core", "Core.csproj"), UnevaluableHere, token);
 
 		var loader = new SolutionLoader(
 			new RestoreRunner(NullLogger<RestoreRunner>.Instance),
@@ -222,6 +207,59 @@ public sealed class WorkspaceStatusTests
 			token);
 		seenByWrite.ShouldNotContain(candidate => candidate.StartsWith(Degraded, StringComparison.Ordinal));
 	}
+
+	/// <summary>
+	/// A load that is degraded on its own says so on the first read, before any status call has described it,
+	/// and stops saying so once a reload fixes it -- even though a status call described the broken load in
+	/// between, since that description belongs to a load that is gone.
+	/// </summary>
+	[Test]
+	public async Task A_read_says_what_its_own_load_found_and_forgets_it_when_a_reload_fixes_it()
+	{
+		const string Degraded = "This workspace is degraded";
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		var core = fixture.Path("Simple", "Core", "Core.csproj");
+		var healthy = await File.ReadAllTextAsync(core, token);
+
+		await File.WriteAllTextAsync(core, UnevaluableHere, token);
+		await using var host = Host(fixture);
+		await host.StartAsync(token);
+
+		var first = await host.ReadAsync(token);
+		first.Notices[0].ShouldStartWith(Degraded, Case.Sensitive);
+		first.Notices[0].ShouldContain("1 project that names an SDK could not be evaluated", Case.Sensitive);
+
+		(await host.GetStatusAsync(token)).State.ShouldBe(WorkspaceState.Degraded);
+
+		await File.WriteAllTextAsync(core, healthy, token);
+
+		var repaired = await host.ReadAsync(token);
+		repaired.Notices.ShouldContain(notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
+		repaired.Notices.ShouldNotContain(notice => notice.StartsWith(Degraded, StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// A project the design-time build loads and this worker's own MSBuild cannot evaluate: it chooses an SDK
+	/// that does not exist only where neither the design-time build's nor restore's property is set, which is
+	/// exactly the worker's own evaluation.
+	/// </summary>
+	private const string UnevaluableHere = """
+		<Project>
+		  <PropertyGroup>
+		    <InWorkerEvaluation>true</InWorkerEvaluation>
+		    <InWorkerEvaluation Condition="'$(DesignTimeBuild)' == 'true' or '$(MSBuildIsRestoring)' == 'true' or '$(ExcludeRestorePackageImports)' == 'true'">false</InWorkerEvaluation>
+		  </PropertyGroup>
+		  <Import Project="Sdk.props" Sdk="RoseMcp.Fixture.Missing.Sdk" Condition="'$(InWorkerEvaluation)' == 'true'" />
+		  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" Condition="'$(InWorkerEvaluation)' != 'true'" />
+		  <PropertyGroup>
+		    <TargetFramework>net10.0</TargetFramework>
+		    <Nullable>enable</Nullable>
+		    <ImplicitUsings>enable</ImplicitUsings>
+		  </PropertyGroup>
+		  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" Condition="'$(InWorkerEvaluation)' != 'true'" />
+		</Project>
+		""";
 
 	private static WorkspaceHost Host(FixtureSolution fixture) => new(
 		new WorkerOptions { SolutionPath = fixture.SolutionPath },

@@ -73,12 +73,20 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public int? HostProcessId => _info?.HostProcessId;
 
 	/// <summary>
-	/// Whether the host is still there to answer: false once a poll has found its transport gone, and
-	/// once the session has been disposed. Never true again after that, which is what lets the manager
-	/// act on it without asking twice. A host that is alive and reports its target as exited is still
-	/// alive here -- its event log can still be read.
+	/// Whether the host is still there to answer: false once the client's session with it has completed
+	/// -- the host's process ended or its pipe closed -- once a call has failed on a closed transport,
+	/// and once the session has been disposed. Never true again after that, which is what lets the
+	/// manager act on it without asking twice. A host that is alive and reports its target as exited is
+	/// still alive here -- its event log can still be read.
+	/// <para>
+	/// The client's completion is read rather than inferred from how a call failed, because the failure
+	/// depends on timing: a call in flight when the host dies fails with an I/O error, but one sent after
+	/// the client has already seen the pipe close is refused with an <see cref="InvalidOperationException"/>
+	/// saying the transport is not connected. Under load the second is the usual case, and a predicate
+	/// over exception types takes it for a slow host and keeps the dead session forever.
+	/// </para>
 	/// </summary>
-	public bool IsAlive => _alive;
+	public bool IsAlive => _alive && !_client.Completion.IsCompleted;
 
 	/// <summary>
 	/// When <see cref="LiveAppSessionManager"/> first found the host gone, on its own clock, or null
@@ -147,7 +155,8 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// <summary>
 	/// Re-reads the host's self-report. Cheap; the host loads nothing to answer it.
 	/// <para>
-	/// Only a transport failure marks the session dead. A poll that timed out or was cancelled says
+	/// Only a closed transport marks the session dead -- a failure saying so, or the client's session
+	/// having completed, whatever the failure looked like (see <see cref="IsAlive"/>). A poll that timed out or was cancelled says
 	/// the host was slow, not that it is gone, and treating the two alike would report a busy host as
 	/// ended -- which is worse than a stale answer, because the summary already says how stale it is.
 	/// </para>
@@ -159,7 +168,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 			_info = await SendAsync<LiveAppInfo>(ToolNames.LiveAppInfo, cancellationToken);
 			_infoUtc = DateTime.UtcNow;
 		}
-		catch (Exception exception) when (IsTransportFailure(exception))
+		catch (Exception exception) when (IsTransportFailure(exception) || _client.Completion.IsCompleted)
 		{
 			_alive = false;
 			_logger.LogDebug(exception, "Could not read live-app info for {Target}.", Target.Description);
@@ -196,7 +205,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public LiveAppSessionSummary Describe()
 	{
 		var info = _info;
-		var state = !_alive
+		var state = !IsAlive
 			? LiveAppSessionState.Ended
 			: info?.State ?? LiveAppSessionState.Starting;
 
@@ -814,7 +823,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 	public async ValueTask DisposeAsync()
 	{
-		var hostGone = !_alive;
+		var hostGone = !IsAlive;
 		_alive = false;
 
 		if (hostGone)

@@ -368,6 +368,60 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// A host that dies between polls is known dead without a poll having to catch it dying. The
+	/// session is driven with no manager, so nothing polls it: the host is killed, and the session has to
+	/// see it from its client's own view of the pipe.
+	/// <para>
+	/// The case under load, and the one that matters: a poll in flight when the host dies fails with an
+	/// I/O error, but every poll after the client has seen the pipe close is refused as "the transport is
+	/// not connected" -- which reads, by exception type, like a slow host. A busy machine delays the poll
+	/// past the moment the client notices, and judged by exception type the session is kept, polled and
+	/// listed as running forever.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_host_that_dies_between_polls_is_known_dead()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		var session = await LiveAppSession.StartAsync(
+			"session-between-polls",
+			AttachTo(child.Id),
+			ExpectedArchitecture,
+			LiveAppHostLauncher.ResolveHostPath(ExpectedArchitecture, new BrokerOptions()),
+			new ActivityLog(),
+			Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance,
+			cancellationToken);
+
+		try
+		{
+			session.IsAlive.ShouldBeTrue();
+			var hostProcessId = session.HostProcessId.ShouldNotBeNull();
+
+			using (var host = Process.GetProcessById(hostProcessId))
+			{
+				host.Kill(entireProcessTree: false);
+				await host.WaitForExitAsync(cancellationToken);
+			}
+
+			await WaitUntilAsync(() => !session.IsAlive, cancellationToken);
+
+			// A poll after the client has seen the pipe close is refused rather than failed, and must not
+			// make the session look merely slow.
+			await session.RefreshInfoAsync(cancellationToken);
+
+			session.IsAlive.ShouldBeFalse();
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ended);
+		}
+		finally
+		{
+			await session.DisposeAsync();
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
 	/// <summary>Waits for a condition the manager's own poll makes true, failing after a generous bound.</summary>
 	private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken cancellationToken)
 	{

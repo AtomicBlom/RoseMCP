@@ -84,10 +84,10 @@ Things a refactor must carry across intact.
   and refuses any site it cannot bind (`CallSiteBinding.cs:73-110`); `CallSiteRewriter` moves the
   caller's own `ArgumentSyntax` nodes rather than regenerating them (`CallSiteRewriter.cs:81-96`);
   `ChangeSignatureService.Defects` names a mapping failure as the tool's own fault
-  (`ChangeSignatureService.cs:663-678`). That last one is the model for WRK-07.
+  (`ChangeSignatureService.cs:663-678`).
 - **Error conversion is a registration, not a habit.** `WithToolErrorMessages` is a call-tool filter
-  added once in `Program.cs:59`; no tool can forget it. The intent is right even though the filter
-  itself is too permissive (WRK-07).
+  added once in `Program.cs:59`; no tool can forget it, and it tells a refusal from a leaked framework
+  exception by where each was thrown, so no throw site has to remember to say which it is.
 - **Result shapes are structural.** Every workspace result has `required long Revision` (checked
   across all 24 `*Result`/`*Report`/`*List` records in Contracts) and inherits `Workspace`/`WorkspaceKey`
   from `WorkspaceScopedResult`; writes inherit `ChangedFiles`/`Notices` from `WorkspaceMutationResult`.
@@ -183,25 +183,11 @@ resolving a name and every write that worked out its own imports failed in most 
 naming an argument the caller never sent. A symbol is mapped into the asking compilation before it is
 asked about.
 
-### WRK-07 The boundary cannot tell a deliberate refusal from a leaked framework exception
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `ToolErrorReporting.cs:52-55` (`Explainable`), refusals thrown as plain
-  `ArgumentException`/`InvalidOperationException` throughout (`DeclarationLocator.cs:239`,
-  `MemberEditService.cs:195`, `SymbolLocator.cs:96` `ArgumentOutOfRangeException`)
-- **What:** The filter forwards any non-cancellation exception with a message. Rose's own refusals
-  and Roslyn's or the BCL's `ArgumentException`s are the same CLR type, so `(Parameter 'symbol')`
-  (WRK-06) and `(Parameter 'line')` reach the caller reading exactly like a considered refusal.
-  `ChangeSignatureService.Defects` (`:663-678`) shows the project knows the distinction matters, but
-  only for one class of failure.
-- **Why it matters:** The result-shapes invariant says an error says what went wrong. A leaked
-  framework message says something went wrong *elsewhere*, in vocabulary the caller cannot act on,
-  and it is indistinguishable from advice.
-- **Suggested change:** A `Refusal : Exception` base (or `ToolRefusal`) for every deliberate throw;
-  the filter forwards a `Refusal` verbatim and wraps anything else as "rose_x hit an internal error
-  (report it): {message}". Enforce with a banned-API or Roslyn analyzer in `src/RoseMcp.Worker`
-  forbidding `throw new ArgumentException`/`InvalidOperationException` outside the `Refusal`
-  hierarchy. See inversion 4.
+### ~~WRK-07 The boundary cannot tell a deliberate refusal from a leaked framework exception~~
+**#431.** A framework's exception reached the caller reading exactly like a refusal Rose wrote. The
+boundary tells them apart by where each was thrown, and says whose failure a leaked one is.
+**Declined:** a refusal base type enforced by a banned-API analyzer. A marker every throw site has to
+remember calls the one that forgot a fault, and where an exception was thrown needs nothing remembered.
 
 ### ~~WRK-08 The shadow-copy loader flattens every analyzer into one `AssemblyLoadContext`~~
 **#269.** Every analyzer shared one load context, so of two assemblies sharing a name the last to
@@ -427,10 +413,8 @@ one helper, and a test refuses a tool given the means to go round it.
 3. **Rule today:** whatever writes C# ends formatted, indented for where it goes, with the file's
    endings, and reports what a diff cannot show. **Mechanism:** the pipeline type of WRK-01; a service
    implements only `Rewrite`, so it has no access to text, `IndentAt`, or `Whitespace.Dominant`.
-4. **Rule today:** an error says what went wrong; refusals carry advice. **Mechanism:** a `Refusal`
-   exception hierarchy plus a banned-API analyzer (`BannedSymbols.txt` in the worker project) that
-   forbids `new ArgumentException(...)`/`new InvalidOperationException(...)` outside it; the boundary
-   filter wraps anything that is not a `Refusal` as an internal error (WRK-07).
+4. ~~An error says what went wrong (WRK-07).~~ **#431.** The boundary tells a refusal from a leak by
+   where it was thrown, so it needs neither a refusal hierarchy nor an analyzer to hold one.
 5. ~~A name resolves one way (WRK-04, WRK-05).~~ **#418.** One resolver answers for every tool, and
    a test refuses any other type that looks a name up.
 6. **Rule today:** analyzers are shadow-copied (tested) and two versions of one generator must both

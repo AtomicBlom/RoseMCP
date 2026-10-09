@@ -142,10 +142,10 @@ revision 1). Sizes are the raw JSON as it arrived.
 | T3a | `rose_symbol_info symbol=ModelContextProtocol.Server.McpServer.SessionId` | error | -- | **failed**: "Nothing is declared at ... 'SessionId' is declared as RoseMcp.Broker.LiveAppSession.SessionId, [4 more]" |
 | T3b | `rose_symbol_info symbol=System.Collections.Generic.List` | error | -- | **failed**: the suggestions were four unrelated methods named `List` in Rose's own source |
 | T3c | `rose_symbol_info symbol=ModelContextProtocol.Server.McpServerTool` | type + full XML doc | **~9.2 KB** | worked, at the price of the entire raw `<member>` blob |
-| T4a | `rose_resolve_name name=ToolErrorReporting` (no `filePath`) | error | -- | **failed**: `Parameter 'symbol' must be a symbol from this compilation or some referenced assembly. (Parameter 'symbol')` -- #121 reproduced, on a tool that has no `symbol` argument |
+| T4a | `rose_resolve_name name=ToolErrorReporting` (no `filePath`) | error | -- | ~~**failed**: `Parameter 'symbol' must be a symbol from this compilation or some referenced assembly. (Parameter 'symbol')` -- #121 reproduced, on a tool that has no `symbol` argument~~ **#306, #431.** |
 | T4b | `rose_resolve_name name=ToolErrorReporting filePath=src/RoseMcp.Broker/WorkspaceManager.cs` | 1 candidate + "in scope already, so the error is something else" | 700 B | **excellent** |
 | T5 | `rose_find_references symbol=RoseMcp.Contracts.ToolNames.WorkspaceStatus includePreviews=false` | 16 hits, `truncated:false` | 4.1 KB | worked; flat list, absolute path repeated 17 times |
-| T6 | same, `definitionsOnly=true` | `references: []`, `totalCount:16`, **`truncated:true`** | 600 B | misleading -- see AGT-05 |
+| T6 | same, `definitionsOnly=true` | `references: []`, `totalCount:16`, **`truncated:true`** | 600 B | ~~misleading -- see AGT-05~~ **#378.** |
 | T7 | `rose_search_symbols query=ToolErrorReporting` | 3 matches, each with an `address` | 1.6 KB | **excellent**; the address is the next call's argument |
 | T8 | `rose_symbol_info symbol=RoseMcp.Broker.WorkspaceManagr.CallAsync` (typo) | error naming both real `CallAsync` declarations | -- | **excellent**; the fix is in the message |
 | T9 | `rose_outline symbol=... workspace=C:\Windows\System32` | "No solution or project found at or above 'C:\Windows\System32'. Pass the path to a .sln, .slnx, or .csproj." | -- | **excellent** |
@@ -167,18 +167,10 @@ summary's first sentence, rendered, and the help says so.
 **#418.** Whether a read could reach a referenced assembly turned on the last segment of the name. A
 read asks metadata whenever source has nothing at the address, and says when it did.
 
-### AGT-04 A leaked Roslyn exception names an argument the tool does not have
-- **The provenance half is done (#306).** A symbol is mapped into the asking compilation before it is
-  asked about, so this throw no longer happens. What is left is the general guard, which is card 13:
-  no message naming a CLR parameter should reach a caller, whatever produced it.
-- **Severity:** High
-- **Effort:** S, for what remains
-- **Where:** `src/RoseMcp.Worker/NameResolver.cs:197`; transcript T4a; issues #121, #212
-- **What:** `rose_resolve_name name=ToolErrorReporting`, with no `filePath`, returns
-  `Parameter 'symbol' must be a symbol from this compilation or some referenced assembly. (Parameter 'symbol')`.
-  `rose_resolve_name` declares `name`, `filePath`, `arity`, `maxResults` and `workspace`. There is no `symbol`. The throw is `compilation.IsSymbolAccessibleWithin(symbol, compilation.Assembly)` at `NameResolver.cs:197`, asked of a compilation the candidate did not come from -- filed as #121. It is the same sentence #212 reports out of `rose_replace_member`, where it means "a name in your *code* did not resolve" and names the one argument that was correct. With a `filePath` the same call succeeds and gives a genuinely excellent answer (T4b), so the failure is in the shape of the call, not in the question.
-- **Why it matters:** This is the worst error on the surface and it is on the tool whose entire job is unsticking a caller who is already stuck. Every honest reading of it is wrong and expensive -- re-derive the address, reload the workspace, check the project -- and #212 records a retry spent on each. It also breaks the assembly's own stated rule ("Every other refusal on this surface says what was wrong with what the caller sent and what to send instead", `ToolArgumentShape.cs:11-13`) in the one place a caller has no other move.
-- **Suggested change:** Add the general guard at the boundary: **no message naming a CLR parameter may reach a caller**, because the caller's vocabulary is the tool's schema. A filter that rewrites any message containing `(Parameter '` into one naming the tool's own arguments, plus a test over all three `ToolErrorReporting` copies, closes the class rather than this instance.
+### ~~AGT-04 A leaked Roslyn exception names an argument the tool does not have~~
+**#306, #431.** A Roslyn exception reached callers naming a parameter the tool did not have, and read
+as advice about their arguments. No refusal at any boundary carries a CLR parameter name, and an
+exception that escaped a framework says whose failure it is.
 
 ### ~~AGT-05 `definitionsOnly=true` reports `truncated: true` over an empty list~~
 **#378.** Asking for the count alone reported the list as truncated, which no retry could change.
@@ -283,8 +275,8 @@ that a file is formatted.
 - **Effort:** S
 - **Where:** `src/RoseMcp.Broker/ToolErrorReporting.cs:67-74`, `src/RoseMcp.Worker/ToolErrorReporting.cs:67-74`, `src/RoseMcp.LiveApp/ToolErrorReporting.cs:68-75`
 - **What:** `Named` is byte-identical in all three; `Explainable` is identical in two and inlined in the third's `when` clause. The live-app copy's doc defends it: "Nine lines in two places beats a dependency on the MCP hosting package from the type library." It is now three places and about 25 lines, and the genuinely host-specific part is two lines (the worker appends its solution path).
-- **Why it matters:** This is the class the repository has already been bitten by -- `ToolDescriptions` exists because two copies of the same text drifted. A rule like AGT-04's has to be added in three files, and the third is the one that gets missed.
-- **Suggested change:** The decision to keep MCP types out of `Contracts` is right; the split is in the wrong place. Move the pure part to `Contracts` as `ToolFailure.Message(JsonElement inputSchema, IEnumerable<KeyValuePair<string, JsonElement>>? arguments, Exception exception, string? suffix)` -- all values, no MCP types, exactly the shape `ToolArgumentShape.Mismatch` already takes -- and leave each host the six-line filter that reads them off its own `RequestContext`. Then the rule has one home and a test.
+- **Why it matters:** This is the class the repository has already been bitten by -- `ToolDescriptions` exists because two copies of the same text drifted. A rule added at the boundary has to be added in three files, and the third is the one that gets missed.
+- **Suggested change:** The decision to keep MCP types out of `Contracts` is right; the split is in the wrong place. `ToolFailure.Message(exception, tool)` in `Contracts` already decides whether an exception is a refusal or a leak, and `ToolArgumentShape.Refusal` composes the message; what is still copied is the glue between them -- `Named`, `Explainable` and the call that joins the two. Fold that into one `Contracts` function over values (the schema, the arguments, the exception, the tool name and a suffix), and leave each host the six-line filter that reads them off its own `RequestContext`. Then the rule has one home and a test.
 
 ### AGT-20 Two agents on one stdio broker share every workspace and every debug session, with nothing to tell them apart
 - **Severity:** Medium
@@ -439,9 +431,9 @@ by how often it decides a call, not by severity.
    (AGT-21).
 2. ~~**The name the caller wrote cannot be addressed** (AGT-03, #210, #233, #239).~~ **#418.** The
    four instances named here resolve by name.
-3. **The error does not say what to do** (AGT-04, #121, #212, #210). A leaked
-   `(Parameter 'symbol')`, advice to make the call that just failed. Each costs one to three round trips, and the agent's next move after two
-   failed round trips is always the tool it already trusts.
+3. ~~**The error does not say what to do** (AGT-04, #121, #212, #210).~~ **#431.** No refusal
+   names a CLR parameter, and an exception that escaped a framework says so rather than reading as
+   advice.
 4. ~~**The write is not trusted** (AGT-17, #195, #197, #217).~~ **#333, #427.** A write names the
    lines it changed that it was not asked to, and `rose_format` no longer calls a file clean beyond
    what it checked.
@@ -461,14 +453,10 @@ answer. Every loss is about cost, reach or explanation.
 **1. ~~Compact has to be measured, not intended.~~** **#295, #374.** The read and write shapes are
 held to a ceiling per item, and the location record is split into the two shapes it is used as.
 
-**2. No CLR vocabulary reaches a caller.**
-*Rule today:* "convert at the MCP boundary, never at the throw site" (`CLAUDE.md`), which converts
-the *exception* and leaves whatever text Roslyn put in it.
-*Mechanism:* the boundary filter rewrites, rather than forwards, any message containing
-`(Parameter '` or a `Microsoft.CodeAnalysis.` type name -- into the tool's own argument names, or
-into "an internal error in <tool>; this is a bug, please file it" with the detail in the log. One
-test over all three `ToolErrorReporting` copies (which AGT-19 would make one). #121, #198 and #212
-are all this class, and nothing today can notice the fourth.
+**2. ~~No CLR vocabulary reaches a caller.~~** **#431.** Every boundary takes CLR parameter names
+out and says when an exception escaped a framework, and one test holds all three boundaries to it.
+**Declined:** rewriting type names in a message. A leaked exception's are now marked as the
+framework's words, and a refusal Rose wrote is its own words.
 
 **3. ~~An unknown argument is a caller error the tool can see.~~** **#249.**
 
@@ -540,9 +528,9 @@ already loaded (revision 1) and reported `Degraded` for the reasons the brief's 
 | `rose_symbol_info` `ModelContextProtocol.Server.McpServerTool` | What the SDK says about tool errors | Worked, and was the authority for the `isError`-versus-thrown question in this review -- ~~but as raw XML (AGT-11).~~ **#374.** The summary is prose. Rose answered a question about its own dependency that I had no other way to ask, which is a real win despite the size. |
 | `rose_symbol_info` `RoseMcp.Broker.WorkspaceManagr.CallAsync` (typo) | Grade the near-miss error | **Excellent.** The fix was in the message. |
 | `rose_find_references` `ToolNames.WorkspaceStatus` | 16 call sites by containing member | Worked. Beat grep on precision: grep for `WorkspaceStatus` also matches `WorkspaceStatusReport`, `WorkspaceStatusReporter` and the tool name in strings. ~~Lost on shape (AGT-06).~~ **#378, #374.** Listed by file, each path relative to the caller. |
-| `rose_find_references` same, `definitionsOnly=true` | Just the count | Worked, but `truncated: true` over an empty list (AGT-05). |
+| `rose_find_references` same, `definitionsOnly=true` | Just the count | Worked, ~~but `truncated: true` over an empty list (AGT-05).~~ **#378.** |
 | `rose_search_symbols` `ToolErrorReporting` | Find the three copies | **Excellent, and beat grep outright.** Three addresses ready to paste into the next call; `find -name` would have given me paths and no addresses. |
-| `rose_resolve_name` `ToolErrorReporting` (no filePath) | Ambiguous short name | **Failed** with a leaked Roslyn parameter name (AGT-04). |
+| `rose_resolve_name` `ToolErrorReporting` (no filePath) | Ambiguous short name | ~~**Failed** with a leaked Roslyn parameter name (AGT-04).~~ **#306, #431.** |
 | `rose_resolve_name` `ToolErrorReporting` + filePath | The same question, scoped | **Excellent.** "in scope already, so the error is something else: a misspelling, an accessibility problem, or the wrong number of type arguments" is the best single sentence on the surface. |
 | `rose_resolve_name` `Encoding` (no filePath) | Control, to isolate the failure above | Worked. So the failure is the argument shape, not the tool. |
 | `rose_diagnostics` one file, then the solution | "Does it compile" | **Worked, and is the strongest thing in the product.** Whole solution, 18 projects, a few seconds, against a `dotnet build` of 30-60 s. Every agentic session pays that difference dozens of times. Marked down only for saying nothing about the workspace being degraded (AGT-12). |

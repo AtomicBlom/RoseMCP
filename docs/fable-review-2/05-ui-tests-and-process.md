@@ -23,8 +23,8 @@ cost split is exact -- zero `Process.Start`, `MSBuildWorkspace`, `FixtureSolutio
 `deploy.ps1` are the best-commented files here, and `Assert-WindowsPackage` is a properly structural
 release gate. The four tool-surface tests show the repository already knows how to turn a rule into a
 mechanism. What holds it back is that it has only applied that trick where a rule has a named type in
-`Contracts`. Every rule that is a property of an *arrangement* -- a comment's tense, a test class's
-category attribute, "every result carries a revision" -- is review-only, and three of them have already drifted under review: a category lost in
+`Contracts`. Every rule that is a property of an *arrangement* -- a test class's category
+attribute, "every result carries a revision" -- is review-only, and three of them have already drifted under review: a category lost in
 a split, 100 history clauses where #171 counted 90, and four doc claims that describe code that has
 moved. The one structural hole is that the newest, least conventional and most bug-dense third of the
 product -- debugger, tap, live edit, 55 tests -- never ran in CI at all; the debugger part does now
@@ -499,11 +499,11 @@ means tests that would catch a regression in existing code but not an omission i
 | `hosts-and-deploy` | `PublishedLayoutTests`, `RepositoryHostBuildTests`, `XamlStackModulesTests`, `TargetArchitectureProbeTests` for the C# resolvers; `Assert-WindowsPackage` in `deploy.ps1` for the package | split across two mechanisms that never meet (UIP-25) |
 | `live-app-tests` (hand-back, slots, one gate) | the fixtures assert it themselves (`UwpProbeApp.SessionTurn.DisposeAsync`) | **structural**, and the best idea in the test suite |
 | Conventions: tabs, file-scoped namespaces, Allman, IDE0130 | `.editorconfig` + `EnforceCodeStyleInBuild` + `TreatWarningsAsErrors` + `dotnet format --verify-no-changes` in CI | **structural** |
-| Conventions: braces on a next-line body; comments carry no history or issue tags | `csharp_prefer_braces = when_multiline` gets part of the first; nothing gets the second | **review-only** (UIP-23) |
+| Conventions: braces on a next-line body; comments carry no history or issue tags | `csharp_prefer_braces = when_multiline` gets part of the first; `tools/Check-Comments.ps1` in CI holds the second against a per-file baseline that may only go down (#295) | review-only for the first; **structural** for the second |
 
 The pattern is clear and worth stating: **every rule that has a named type in `Contracts` has a
-structural guard, and every rule that is a property of an arrangement -- a comment's tense, a
-category attribute -- has none.** The four
+structural guard, and every rule that is a property of an arrangement -- a category attribute --
+has none.** The four
 tool-surface tests show the repository already knows how to close that gap; it has just not been
 applied outside `Contracts`.
 

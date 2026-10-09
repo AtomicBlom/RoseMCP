@@ -774,14 +774,15 @@ public static class NavigationService
 
 	/// <summary>
 	/// The symbol kind a search's <c>kind</c> names, as a match reports it, or null for every kind.
-	/// <c>Type</c> is accepted for <c>NamedType</c>, which is what a person calls it. Anything else is
+	/// Every kind a match can carry is accepted, so each group a capped search's shape names is a value
+	/// this takes, as its notice says. <c>Type</c> is accepted for <c>NamedType</c>, which is what a person calls it. Anything else is
 	/// refused, listing what is accepted: a kind no match carries would answer with nothing, which reads
 	/// as a name nothing declares. <c>Class</c> or <c>Interface</c> is refused rather than taken as a type,
 	/// since the search cannot tell a class from an interface and answering with both would not be the
 	/// question asked.
 	/// </summary>
 	/// <exception cref="ArgumentException">The kind is not one a match carries.</exception>
-	private static string? SearchKind(string? kind) => kind?.Trim().ToLowerInvariant() switch
+	public static string? SearchKind(string? kind) => kind?.Trim().ToLowerInvariant() switch
 	{
 		null or "" => null,
 		"namedtype" or "type" => nameof(SymbolKind.NamedType),
@@ -789,7 +790,8 @@ public static class NavigationService
 		"property" => nameof(SymbolKind.Property),
 		"field" => nameof(SymbolKind.Field),
 		"event" => nameof(SymbolKind.Event),
-		_ => throw ArgumentValues.Unknown("kind", kind, "NamedType (or Type)", "Method", "Property", "Field", "Event"),
+		"namespace" => nameof(SymbolKind.Namespace),
+		_ => throw ArgumentValues.Unknown("kind", kind, "NamedType (or Type)", "Method", "Property", "Field", "Event", "Namespace"),
 	};
 
 	/// <summary>How a search's matches divide by kind and by project, each group keyed by the value its argument takes.</summary>

@@ -167,7 +167,7 @@ public static class ToolDescriptions
 
 	public const string MaxSearchMatchesArgument = "Most matches to list, closest first; past it, the shape of the rest too. Defaults to 50.";
 
-	public const string SearchKindArgument = "Only matches of this kind: NamedType, Method, Property, Field or Event.";
+	public const string SearchKindArgument = "Only matches of this kind: NamedType, Method, Property, Field, Event or Namespace.";
 
 	public const string IncludeInheritedArgument = "Also list what the base classes contribute. Off by default.";
 

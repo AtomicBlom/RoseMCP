@@ -648,6 +648,37 @@ public sealed class NavigationTests
 	}
 
 	/// <summary>
+	/// A namespace is a match like any other, so it is a kind a search can be narrowed to -- and every
+	/// group a capped search's shape names is a value <c>kind</c> takes, as its notice tells the caller.
+	/// </summary>
+	[Test]
+	public async Task A_search_narrows_to_namespaces_and_takes_every_kind_its_shape_names()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var namespaces = await NavigationService.SearchAsync(
+			snapshot, "Deep", 50, TestContext.Current!.Execution.CancellationToken, kind: "Namespace");
+
+		namespaces.Matches.ShouldContain(match => match.Kind == "Namespace" && match.Name == "Deep");
+		namespaces.Matches.ShouldAllBe(match => match.Kind == "Namespace");
+
+		var capped = await NavigationService.SearchAsync(snapshot, "e", 1, TestContext.Current!.Execution.CancellationToken);
+		var kinds = capped.Shape.ShouldNotBeNull().Kinds.Select(group => group.Kind).ToArray();
+
+		kinds.ShouldContain("Namespace");
+
+		foreach (var kind in kinds)
+		{
+			var narrowed = await NavigationService.SearchAsync(
+				snapshot, "e", 50, TestContext.Current!.Execution.CancellationToken, kind: kind);
+
+			narrowed.Matches.ShouldNotBeEmpty($"the shape counted {kind} matches, so kind: {kind} lists them");
+		}
+	}
+
+	/// <summary>
 	/// An address a result reports is one the next call takes. The signature beside it is for reading
 	/// and does not parse: it leads with the return type, so the space before the second qualified name
 	/// lands inside a segment, and it names the parameters, which are not their types. A caller who

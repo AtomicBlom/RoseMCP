@@ -6,7 +6,8 @@ namespace RoseMcp.IntegrationTests;
 /// Where a type could be cut. The answer that matters most is the empty one: a tool that finds
 /// structure in everything is a horoscope, so a type holding together has to come back saying so.
 /// </summary>
-public sealed class IslandsTests
+[ClassDataSource<SharedWorkspaces>(Shared = SharedType.PerAssembly)]
+public sealed class IslandsTests(SharedWorkspaces workspaces)
 {
 	/// <summary>
 	/// Two jobs in one class, found from the state alone. Neither half calls the other, so nothing
@@ -15,9 +16,8 @@ public sealed class IslandsTests
 	[Test]
 	public async Task Finds_the_two_jobs_a_type_is_doing()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await IslandService.IslandsAsync(
 			snapshot,
@@ -64,9 +64,8 @@ public sealed class IslandsTests
 	[Test]
 	public async Task Leaves_behind_the_helper_something_else_also_reaches()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await IslandService.IslandsAsync(
 			snapshot,
@@ -99,9 +98,8 @@ public sealed class IslandsTests
 	[Test]
 	public async Task Says_a_type_holds_together_rather_than_inventing_a_split()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await IslandService.IslandsAsync(
 			snapshot,
@@ -127,9 +125,8 @@ public sealed class IslandsTests
 	[Test]
 	public async Task Says_which_island_a_smaller_one_sits_inside()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await IslandService.IslandsAsync(
 			snapshot,
@@ -161,14 +158,13 @@ public sealed class IslandsTests
 	[Test]
 	public async Task Answers_for_every_type_a_file_declares()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await IslandService.IslandsAsync(
 			snapshot,
 			type: null,
-			fixture.Path("Members", "Library", "Islands.cs"),
+			workspace.Path("Members", "Library", "Islands.cs"),
 			TestContext.Current!.Execution.CancellationToken);
 
 		result.Types.Select(one => one.Name).ShouldBe(["TwoJobs", "OneDoor", "Cohesive", "Layered"]);
@@ -180,9 +176,8 @@ public sealed class IslandsTests
 	[Test]
 	public async Task Refuses_to_guess_between_a_type_and_a_file()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var refusal = await Should.ThrowAsync<ArgumentException>(() => IslandService.IslandsAsync(
 			snapshot,

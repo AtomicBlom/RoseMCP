@@ -30,9 +30,8 @@ a split, 100 history clauses where #171 counted 90, and four doc claims that des
 moved. The one structural hole is that the newest, least conventional and most bug-dense third of the
 product -- debugger, tap, live edit, 55 tests -- never ran in CI at all; the debugger part does now
 (#295), and the tap and live-edit part does not. The one growing debt is `TestSession.OpenAsync`:
-254 real solution loads and 299 fixture
-copies across six distinct fixtures, with zero sharing on the Roslyn half while the live-app half next
-door has a proven sharing model. None of this is vibe-coded; it is carefully built and
+a real solution load for every test that writes, while the tests that only read share one load per
+fixture (#39) and the live-app half next door shares its apps. None of this is vibe-coded; it is carefully built and
 under-mechanised, which is a much better problem to have.
 
 ## Strengths
@@ -331,6 +330,8 @@ RIDs and runs this suite in Release, which is what proves the no-Windows-project
 inferring it. This is the cleanest boundary in the repository.
 
 ### UIP-13 The Roslyn half of the integration suite loads a solution 254 times and copies a fixture 299 times
+- **Part done, #39.** A test that only reads shares one load per fixture, so a new reading test
+  costs its read rather than a load. Layers 2 and 3 below, for the tests that write, are open.
 - **Severity:** High
 - **Effort:** L
 - **Where:** `tests/RoseMcp.IntegrationTests/TestSession.cs:8-32`, `SessionScope.cs:19-39`, and 31 test classes; `.github/workflows/ci.yml:134-137,181`
@@ -339,9 +340,7 @@ inferring it. This is the cleanest boundary in the repository.
   and 254 `TestSession.OpenAsync`**, over **six distinct fixtures** -- `Members` 165 times, `Simple`
   91, `MultiType` 17, `WithGenerator` 15, `XamlStub` 9, `Siblings` 1. Issue #39 says 58 workspace
   loads; the real number today is four times that and still climbing. `MemberEditTests` alone opens
-  59. There is not one `ClassDataSource`, `[Before(Class)]` or shared workspace anywhere on the
-  Roslyn half -- every sharing attribute in the project is on the live-app probe apps
-  (`LiveAppUwpTests.cs:27`, `LiveAppWinUiTests.cs:21`, `LiveAppUwpModernTests.cs:18`).
+  59, and every one of those writes, so none of them can take the shared read-only workspace.
 - **Why it matters:** This is the whole reason `dotnet test` takes minutes, and the reason the CI
   comment at `ci.yml:134-137` has to warn that the job is slow "rather than merely long" and cap
   parallelism at 3. It also shapes behaviour: a suite that costs minutes is one nobody runs before
@@ -349,13 +348,8 @@ inferring it. This is the cleanest boundary in the repository.
   linearly with every new test, which is exactly the slope `the-live-app-suite-is-phased-by-what-tests-share`
   was written to flatten for the other half.
 - **Suggested change:** The machinery is already in the repository and already proven -- apply the
-  live-app half's own answer to the Roslyn half. Three layers, in order of payback:
-  1. **A read-only shared workspace per fixture.** A `LoadedFixture<TMembers>` /
-     `LoadedFixture<TSimple>` with `[ClassDataSource<...>(Shared = SharedType.PerAssembly)]`, handed
-     to every class that only reads: `OutlineTests` (10), `NavigationTests` (21), `ResolveNameTests`
-     (13), `ImplementationTests` (6), `DiagnosticsTests` (4), `GeneratedDocumentTests` (4),
-     `CodeFixTests` list-only. That is roughly 60 loads collapsed to 2, with no behaviour change,
-     since nothing in those classes writes.
+  live-app half's own answer to the Roslyn half. Two layers remain, in order of payback, after the
+  first, a read-only shared workspace per fixture:
   2. **A warm copy for the classes that mutate.** `FixtureSolution.CopyTree` deliberately drops
      `bin` and `obj` for the "fresh clone" property (`FixtureSolution.cs:98`), and that property is
      only load-bearing for the generator tests. Add `FixtureSolution.CopyWarm`, which copies a
@@ -364,8 +358,9 @@ inferring it. This is the cleanest boundary in the repository.
   3. **Serve editing tests from a pool.** The live-app suite's slot model
      (`ProbeConstraints.cs:26-89`) is exactly this shape: a pool of N scratch workspaces, a
      `NotInParallel` key per slot, and a hand-back check. Apply it verbatim.
-  Do (1) first and measure -- it is a day's work, cannot change any assertion, and removes the
-  largest single block.
+  Neither reaches `BrokerForwardingTests`, `IdleEvictionTests` or `WorkspaceRoutingTests`, which
+  start real worker processes rather than load through a test session; what they could share is a
+  question of its own.
 
 ### ~~UIP-14 `LiveAppInspectionTests` lost its `[Category("LiveApp")]` in the split, so eleven debugger tests now run in CI that CI says it does not run~~
 **#295.** Eleven debugger tests ran in CI that CI said it did not run, because the category excluding
@@ -397,7 +392,9 @@ result of any timed-out verb that changes the app.
 ### UIP-17 Two-thirds of the integration suite tests the service layer, so the tool boundary's own invariants are spot-checked rather than enforced
 - **Half done, #295.** Attribution is structural rather than tested: the forwarding path will not
   compile with a result the broker cannot attribute. The runtime half -- that a tool populates those
-  fields against a real workspace -- still wants UIP-13's shared fixture.
+  fields against a real workspace -- is open. UIP-13's shared workspace serves in-process reads; a
+  tool call crosses a broker and a worker, so this test wants one broker over one fixture, shared by
+  every call it makes.
 - **Severity:** Medium
 - **Effort:** M
 - **Where:** 20 of 40 integration classes call a `*Service.*Async` directly (`OutlineTests.cs:17`,
@@ -416,8 +413,8 @@ result of any timed-out verb that changes the app.
 - **Suggested change:** One reflective test in the pattern this repo already uses four times
   (`ToolSurfaceTests`, `ToolDescriptionTests`, `ToolBudgetTests`, `SecurityModelTests`): enumerate
   every advertised tool, call it against a shared fixture with minimal valid arguments, and assert
-  the result carries a non-zero `revision` and the expected `workspace`/`workspaceKey`. It piggybacks
-  on the shared fixture from UIP-13 and costs one load.
+  the result carries a non-zero `revision` and the expected `workspace`/`workspaceKey`. One broker
+  over one fixture serves every call, so it costs one load.
 
 ### UIP-18 The stdout rule -- the one that corrupts the protocol -- has no guard of its own
 - **Severity:** Medium
@@ -705,11 +702,9 @@ the hardest failure to diagnose, one line to check. *(UIP-18)*
 `#include` lines out of `src/RoseMcp.Xaml.Tap/*.h` and asserting the allowed edges is twenty lines
 and runs in the job that already has the C++ toolset. *(UIP-24)*
 
-**9. "An expensive fixture is shared" -> make `TestSession.OpenAsync` the expensive path and give the
-cheap one a name.** Today the cheap thing (sharing) requires knowing TUnit's `ClassDataSource` and
-the expensive thing (a fresh load) is the one-liner every test reaches for. Inverting that -- a
-`SharedFixture.Members` property that is trivially available, and `TestSession.OpenAsync` documented
-as "for tests that mutate" -- makes the default choice the right one. *(UIP-13)*
+**~~9~~ #39.** A fresh load was the one-liner every test reached for, and sharing needed knowing how.
+A reading test names its fixture's shared workspace, and a fresh load is documented as the path for
+a test that writes. *(UIP-13)*
 
 ## Open questions for Steve
 

@@ -11,14 +11,14 @@ namespace RoseMcp.IntegrationTests;
 /// puts the file in front of the caller, and once it is open the edit goes through a text tool --
 /// which is the point at which none of the rest of this surface is worth reaching for.
 /// </summary>
-public sealed class OutlineTests
+[ClassDataSource<SharedWorkspaces>(Shared = SharedType.PerAssembly)]
+public sealed class OutlineTests(SharedWorkspaces workspaces)
 {
 	[Test]
 	public async Task Lists_a_types_members_with_their_signatures()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -72,9 +72,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Leaves_out_the_documentation_and_signatures_when_asked_to()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -108,9 +107,8 @@ public sealed class OutlineTests
 	[Arguments(false, true)]
 	public async Task Answers_each_detail_switch_on_its_own(bool documentation, bool signatures)
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -137,9 +135,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Marks_the_members_an_implementer_has_to_write()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -167,14 +164,13 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Lists_every_type_in_a_file_in_the_order_it_declares_them()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
 			type: null,
-			fixture.Path("Members", "Library", "Kinds.cs"),
+			workspace.Path("Members", "Library", "Kinds.cs"),
 			includeInherited: false,
 			includeDocumentation: true,
 			includeSignatures: true,
@@ -190,11 +186,10 @@ public sealed class OutlineTests
 	[Arguments(null, null)]
 	public async Task Refuses_both_roots_or_none(string? type, string? file)
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var path = file is null ? null : fixture.Path("Members", "Library", file);
+		var path = file is null ? null : workspace.Path("Members", "Library", file);
 
 		await Should.ThrowAsync<ArgumentException>(
 			() => OutlineService.OutlineAsync(
@@ -216,9 +211,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Says_what_every_member_shares_once_on_the_type()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -263,9 +257,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Lists_only_the_members_whose_name_matches()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -292,9 +285,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Says_so_when_the_name_filter_matches_nothing()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -320,9 +312,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Stops_at_the_member_cap_and_says_how_many_there_were()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -349,14 +340,13 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Shares_the_member_cap_across_every_type_in_a_file()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
 			type: null,
-			fixture.Path("Members", "Library", "Kinds.cs"),
+			workspace.Path("Members", "Library", "Kinds.cs"),
 			includeInherited: false,
 			includeDocumentation: false,
 			includeSignatures: false,
@@ -375,9 +365,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Names_the_file_only_for_a_member_declared_in_another()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -410,14 +399,13 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Lists_only_what_a_file_declares_and_counts_the_rest_of_a_partial()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
 			type: null,
-			fixture.Path("Members", "Library", "Split.cs"),
+			workspace.Path("Members", "Library", "Split.cs"),
 			includeInherited: false,
 			includeDocumentation: false,
 			includeSignatures: false,
@@ -440,14 +428,13 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Counts_only_the_filtered_members_another_file_declares()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
 			type: null,
-			fixture.Path("Members", "Library", "Split.cs"),
+			workspace.Path("Members", "Library", "Split.cs"),
 			includeInherited: false,
 			includeDocumentation: false,
 			includeSignatures: false,
@@ -468,14 +455,13 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Leaves_a_code_behinds_generated_half_out_of_its_file_outline()
 	{
-		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.XamlStub;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
 			type: null,
-			fixture.Path("XamlStub", "Ui", "Widget.xaml.cs"),
+			workspace.Path("XamlStub", "Ui", "Widget.xaml.cs"),
 			includeInherited: false,
 			includeDocumentation: false,
 			includeSignatures: false,
@@ -506,14 +492,13 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Lists_a_type_split_within_one_file_once()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
 			type: null,
-			fixture.Path("Members", "Library", "Halved.cs"),
+			workspace.Path("Members", "Library", "Halved.cs"),
 			includeInherited: false,
 			includeDocumentation: false,
 			includeSignatures: false,
@@ -534,9 +519,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Says_which_base_an_inherited_member_comes_from()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -561,9 +545,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Does_not_repeat_the_types_summary_on_its_primary_constructor()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -587,9 +570,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Gives_each_summary_as_its_first_sentence()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -613,9 +595,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Reports_which_projects_depend_on_which()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = ProjectGraphService.Describe(snapshot, project: null);
 
@@ -632,9 +613,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Refuses_a_project_that_is_not_there()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var thrown = Should.Throw<ArgumentException>(() => ProjectGraphService.Describe(snapshot, "Nowhere")).ShouldBeOfType<ArgumentException>();
 
@@ -648,9 +628,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Says_which_member_a_reference_is_inside()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var references = await NavigationService.FindReferencesAsync(
 			snapshot,
@@ -669,9 +648,8 @@ public sealed class OutlineTests
 	[Test]
 	public async Task Reports_what_a_type_derives_from()
 	{
-		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.MultiType;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,

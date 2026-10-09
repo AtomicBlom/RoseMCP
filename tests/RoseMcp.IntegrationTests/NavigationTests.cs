@@ -3,18 +3,18 @@ using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
 
-public sealed class NavigationTests
+[ClassDataSource<SharedWorkspaces>(Shared = SharedType.PerAssembly)]
+public sealed class NavigationTests(SharedWorkspaces workspaces)
 {
 	[Test]
 	public async Task Describes_a_symbol_from_its_declaration()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
-			new SymbolTarget { FilePath = fixture.Path("Simple", "Core", "Calculator.cs"), Line = 7, Column = 20 },
+			new SymbolTarget { FilePath = workspace.Path("Simple", "Core", "Calculator.cs"), Line = 7, Column = 20 },
 			TestContext.Current!.Execution.CancellationToken);
 
 		info.Name.ShouldBe("Multiply");
@@ -29,18 +29,17 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Describes_a_symbol_from_a_use_site_in_another_project()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
-			new SymbolTarget { FilePath = fixture.Path("Simple", "App", "Program.cs"), Line = 4, Column = 30 },
+			new SymbolTarget { FilePath = workspace.Path("Simple", "App", "Program.cs"), Line = 4, Column = 30 },
 			TestContext.Current!.Execution.CancellationToken);
 
 		info.Name.ShouldBe("Multiply");
 		info.Declarations.Single().FilePath.ShouldBe(
-			fixture.Path("Simple", "Core", "Calculator.cs"), StringCompareShould.IgnoreCase);
+			workspace.Path("Simple", "Core", "Calculator.cs"), StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -51,9 +50,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Describes_a_type_that_lives_in_metadata()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
@@ -79,9 +77,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Lists_what_can_be_called_on_a_type_that_lives_in_metadata()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var builder = await NavigationService.DescribeAsync(
 			snapshot,
@@ -134,9 +131,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Describes_a_member_of_a_type_that_lives_in_metadata()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
@@ -159,9 +155,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Describes_a_metadata_member_whose_name_a_source_member_also_carries()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
@@ -185,9 +180,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Describes_a_metadata_type_named_without_its_namespace()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
@@ -209,9 +203,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Refuses_to_choose_between_overloads_that_live_in_metadata()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var error = await Should.ThrowAsync<ArgumentException>(() =>
 			NavigationService.DescribeAsync(
@@ -230,9 +223,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Describes_the_metadata_overload_a_parameter_list_names()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
@@ -252,9 +244,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Describes_a_type_named_for_the_namespace_it_is_in()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
@@ -273,9 +264,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Finds_the_uses_of_a_positional_record_property_by_name()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await NavigationService.FindReferencesAsync(
 			snapshot,
@@ -295,9 +285,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Describes_a_constructor_that_lives_in_metadata()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
@@ -316,9 +305,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Still_refuses_a_name_that_is_in_neither_source_nor_metadata()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var error = await Should.ThrowAsync<SymbolNotFoundException>(() =>
 			NavigationService.DescribeAsync(
@@ -338,9 +326,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Finds_the_uses_of_a_type_that_lives_in_metadata()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await NavigationService.FindReferencesAsync(
 			snapshot,
@@ -362,9 +349,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Narrows_a_large_answer_three_ways()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var target = new SymbolTarget { Symbol = "Core.Calculator.Add" };
 
@@ -427,9 +413,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Answers_an_overflow_with_its_shape_and_lists_a_group_asked_for()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var target = new SymbolTarget { Symbol = "System.String" };
 
@@ -478,9 +463,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Says_when_no_reference_sits_in_the_member_asked_for()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await NavigationService.FindReferencesAsync(
 			snapshot,
@@ -579,9 +563,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Lists_a_property_declared_once_once()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await NavigationService.FindReferencesAsync(
 			snapshot,
@@ -600,9 +583,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task A_search_past_its_cap_counts_every_match_by_kind_and_project()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var capped = await NavigationService.SearchAsync(snapshot, "Greet", 1, TestContext.Current!.Execution.CancellationToken);
 
@@ -629,9 +611,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task A_search_refuses_a_kind_no_match_carries_and_names_the_ones_there_are()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var refusal = await Should.ThrowAsync<ArgumentException>(() => NavigationService.SearchAsync(
 			snapshot, "Greet", 50, TestContext.Current!.Execution.CancellationToken, kind: "Class"));
@@ -654,9 +635,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task A_search_narrows_to_namespaces_and_takes_every_kind_its_shape_names()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var namespaces = await NavigationService.SearchAsync(
 			snapshot, "Deep", 50, TestContext.Current!.Execution.CancellationToken, kind: "Namespace");
@@ -687,9 +667,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Reports_an_address_the_next_call_takes()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var found = await NavigationService.SearchAsync(snapshot, "Notify", 50, TestContext.Current!.Execution.CancellationToken);
 
@@ -720,9 +699,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Reports_an_address_that_separates_an_overload()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var found = await NavigationService.SearchAsync(snapshot, "Greet", 50, TestContext.Current!.Execution.CancellationToken);
 
@@ -751,9 +729,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Refuses_to_narrow_to_a_project_that_is_not_there()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var error = await Should.ThrowAsync<ArgumentException>(() =>
 			NavigationService.FindReferencesAsync(
@@ -776,9 +753,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Lists_a_property_declaration_once()
 	{
-		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Hierarchy;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await NavigationService.FindReferencesAsync(
 			snapshot,
@@ -806,10 +782,9 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Keeps_a_use_in_a_file_two_projects_compile_once_in_each()
 	{
-		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Hierarchy;
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
-		var snapshot = await session.ReadAsync(cancellationToken);
+		var snapshot = await workspace.ReadAsync(cancellationToken);
 		var target = new SymbolTarget { Symbol = "Core.Labels.Of" };
 
 		var all = await NavigationService.FindReferencesAsync(snapshot, target, 200, cancellationToken);
@@ -859,9 +834,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Lists_a_positional_record_property_declaration_once()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await NavigationService.FindReferencesAsync(
 			snapshot,
@@ -879,13 +853,12 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Finds_references_across_project_boundaries()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var target = new SymbolTarget
 		{
-			FilePath = fixture.Path("Simple", "Core", "Calculator.cs"),
+			FilePath = workspace.Path("Simple", "Core", "Calculator.cs"),
 			Line = 7,
 			Column = 20,
 		};
@@ -895,7 +868,7 @@ public sealed class NavigationTests
 
 		var reference = references.Listed().ShouldHaveSingleItem();
 
-		reference.File.FilePath.ShouldBe(fixture.Path("Simple", "App", "Program.cs"), StringCompareShould.IgnoreCase);
+		reference.File.FilePath.ShouldBe(workspace.Path("Simple", "App", "Program.cs"), StringCompareShould.IgnoreCase);
 		reference.Site.Line.ShouldBe(4);
 		reference.Site.Preview!.ShouldContain("Calculator.Multiply", Case.Sensitive);
 	}
@@ -903,14 +876,13 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Explains_a_position_that_is_not_a_symbol()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var error = await Should.ThrowAsync<ArgumentOutOfRangeException>(
 			() => NavigationService.DescribeAsync(
 				snapshot,
-				new SymbolTarget { FilePath = fixture.Path("Simple", "Core", "Calculator.cs"), Line = 9999, Column = 1 },
+				new SymbolTarget { FilePath = workspace.Path("Simple", "Core", "Calculator.cs"), Line = 9999, Column = 1 },
 				TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
 		// Guessing at a line number should not produce an opaque index error.
@@ -920,9 +892,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Searches_by_abbreviation()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await NavigationService.SearchAsync(snapshot, "Calc", 50, TestContext.Current!.Execution.CancellationToken);
 
@@ -937,9 +908,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Describes_a_symbol_named_rather_than_pointed_at()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
@@ -959,9 +929,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Reports_where_the_declaration_begins_and_ends()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
@@ -983,9 +952,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Reports_a_span_for_each_declaration_of_a_partial()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
@@ -1004,9 +972,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Refuses_a_request_that_names_nothing_and_points_nowhere()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var error = await Should.ThrowAsync<ArgumentException>(
 			() => NavigationService.DescribeAsync(
@@ -1023,9 +990,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Finds_references_by_name()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var references = await NavigationService.FindReferencesAsync(
 			snapshot,
@@ -1035,7 +1001,7 @@ public sealed class NavigationTests
 
 		var reference = references.Listed().ShouldHaveSingleItem();
 
-		reference.File.FilePath.ShouldBe(fixture.Path("Simple", "App", "Program.cs"), StringCompareShould.IgnoreCase);
+		reference.File.FilePath.ShouldBe(workspace.Path("Simple", "App", "Program.cs"), StringCompareShould.IgnoreCase);
 		reference.Site.Line.ShouldBe(4);
 	}
 
@@ -1046,9 +1012,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Refuses_a_reference_search_that_names_nothing()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Simple;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var thrown = await Should.ThrowAsync<ArgumentException>(
 			() => NavigationService.FindReferencesAsync(
@@ -1064,9 +1029,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Returns_the_source_of_a_member_when_asked()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
@@ -1091,9 +1055,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Gives_the_summary_rendered_rather_than_its_xml()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var greet = await NavigationService.DescribeAsync(
 			snapshot,
@@ -1119,9 +1082,8 @@ public sealed class NavigationTests
 	[Test]
 	public async Task Leaves_the_source_out_unless_it_is_asked_for()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,

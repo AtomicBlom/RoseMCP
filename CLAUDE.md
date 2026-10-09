@@ -163,7 +163,9 @@ way the code says. `RoseMcp.IntegrationTests` loads real solutions from `tests/f
 design-time builds and starts real workers, and takes minutes rather than seconds -- most of it the
 live-app suite in `LiveAppSessionTests`. `RoseMcp.TestSupport` holds the doubles both need. Put a
 test where its cost puts it: a test that needs a `FixtureSolution` or a `TestSession` is an
-integration test however small it looks.
+integration test however small it looks. A test that only reads a fixture takes its shared workspace
+from `SharedWorkspaces` rather than loading its own; `TestSession.OpenAsync` is for a test that
+writes ([why](docs/decisions/a-test-that-only-reads-shares-its-workspace.md)).
 
 `RoseMcp.IntegrationTests.Windows` is the third, and the one easy to forget: the only test project
 with a compile reference on `RoseMcp.LiveApp`, so it is where the host's public types are driven

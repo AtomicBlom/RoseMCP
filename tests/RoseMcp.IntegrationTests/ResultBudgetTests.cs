@@ -30,7 +30,8 @@ namespace RoseMcp.IntegrationTests;
 /// shaping, attribution included, because that shaping is most of what makes it small.
 /// </para>
 /// </summary>
-public sealed class ResultBudgetTests
+[ClassDataSource<SharedWorkspaces>(Shared = SharedType.PerAssembly)]
+public sealed class ResultBudgetTests(SharedWorkspaces workspaces)
 {
 	/// <summary>
 	/// One outlined member at the tool's defaults, which costs 70: its name, kind, line and
@@ -83,9 +84,8 @@ public sealed class ResultBudgetTests
 	[Test]
 	public async Task A_read_costs_no_more_per_item_than_its_budget()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var outline = await OutlineService.OutlineAsync(
 			snapshot,
@@ -116,7 +116,7 @@ public sealed class ResultBudgetTests
 				1000,
 				TestContext.Current!.Execution.CancellationToken,
 				includePreviews: false),
-			Path.GetDirectoryName(fixture.SolutionPath)!,
+			Path.GetDirectoryName(workspace.SolutionPath)!,
 			out _);
 
 		var hits = references.Files.Sum(file => file.References.Count);
@@ -172,9 +172,8 @@ public sealed class ResultBudgetTests
 	[Test]
 	public async Task A_list_of_heavy_reads_costs_no_more_than_one_answer()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Members;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		string[] used = ["System.String", "System.Int32", "System.Object", "System.Console", "System.Linq.Enumerable"];

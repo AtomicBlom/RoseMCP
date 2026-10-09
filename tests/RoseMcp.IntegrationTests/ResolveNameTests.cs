@@ -15,16 +15,16 @@ namespace RoseMcp.IntegrationTests;
 /// each of them says which kind of no-answer it is.
 /// </para>
 /// </summary>
-public sealed class ResolveNameTests
+[ClassDataSource<SharedWorkspaces>(Shared = SharedType.PerAssembly)]
+public sealed class ResolveNameTests(SharedWorkspaces workspaces)
 {
 	/// <summary>The ordinary case: one namespace, named, ready to hand to an import.</summary>
 	[Test]
 	public async Task Finds_the_one_namespace_that_would_resolve_a_name()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Members;
 
-		var result = await ResolveAsync(session, "Encoding", InLibrary(fixture, "Greeter.cs"));
+		var result = await ResolveAsync(workspace, "Encoding", InLibrary(workspace, "Greeter.cs"));
 
 		result.Name.ShouldBe("Encoding");
 		result.Import.ShouldBe("System.Text");
@@ -38,10 +38,9 @@ public sealed class ResolveNameTests
 	[Test]
 	public async Task Refuses_to_choose_between_two_namespaces()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Members;
 
-		var result = await ResolveAsync(session, "Palette", InLibrary(fixture, "Greeter.cs"));
+		var result = await ResolveAsync(workspace, "Palette", InLibrary(workspace, "Greeter.cs"));
 
 		result.Import.ShouldBeNull();
 		result.Candidates.Count.ShouldBe(2);
@@ -58,10 +57,9 @@ public sealed class ResolveNameTests
 	[Test]
 	public async Task Resolves_the_first_segment_of_a_qualified_use()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Members;
 
-		var result = await ResolveAsync(session, "Encoding.UTF8", InLibrary(fixture, "Greeter.cs"));
+		var result = await ResolveAsync(workspace, "Encoding.UTF8", InLibrary(workspace, "Greeter.cs"));
 
 		result.Name.ShouldBe("Encoding");
 		result.Import.ShouldBe("System.Text");
@@ -77,10 +75,9 @@ public sealed class ResolveNameTests
 	[Arguments("System.Text.Encoding.UTF8")]
 	public async Task Resolves_a_name_qualified_by_its_namespace(string name)
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Members;
 
-		var result = await ResolveAsync(session, name, InLibrary(fixture, "Greeter.cs"));
+		var result = await ResolveAsync(workspace, name, InLibrary(workspace, "Greeter.cs"));
 
 		result.Name.ShouldBe("Encoding");
 		result.Import.ShouldBe("System.Text");
@@ -95,10 +92,9 @@ public sealed class ResolveNameTests
 	[Test]
 	public async Task Says_the_namespace_holds_nothing_of_that_name_rather_than_that_it_is_not_written()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Members;
 
-		var result = await ResolveAsync(session, "System.Text.Encodingg", InLibrary(fixture, "Greeter.cs"));
+		var result = await ResolveAsync(workspace, "System.Text.Encodingg", InLibrary(workspace, "Greeter.cs"));
 
 		result.Name.ShouldBe("Encodingg");
 		result.Candidates.ShouldBeEmpty();
@@ -115,10 +111,9 @@ public sealed class ResolveNameTests
 	[Test]
 	public async Task Names_the_project_declaring_a_namespace_the_file_cannot_reach()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Simple;
 
-		var result = await ResolveAsync(session, "App.Announcer", fixture.Path("Simple", "Core", "Calculator.cs"));
+		var result = await ResolveAsync(workspace, "App.Announcer", workspace.Path("Simple", "Core", "Calculator.cs"));
 
 		result.Name.ShouldBe("Announcer");
 		result.Import.ShouldBeNull();
@@ -136,10 +131,9 @@ public sealed class ResolveNameTests
 	[Test]
 	public async Task Says_a_namespace_is_a_namespace()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Members;
 
-		var result = await ResolveAsync(session, "System.Text", InLibrary(fixture, "Greeter.cs"));
+		var result = await ResolveAsync(workspace, "System.Text", InLibrary(workspace, "Greeter.cs"));
 
 		result.Name.ShouldBe("System.Text");
 		result.Candidates.ShouldBeEmpty();
@@ -153,10 +147,9 @@ public sealed class ResolveNameTests
 	[Test]
 	public async Task Says_when_the_namespace_is_in_scope_already()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Members;
 
-		var result = await ResolveAsync(session, "CultureInfo", InLibrary(fixture, "Imports.cs"));
+		var result = await ResolveAsync(workspace, "CultureInfo", InLibrary(workspace, "Imports.cs"));
 
 		result.Import.ShouldBeNull();
 		result.Candidates.ShouldContain(candidate => candidate.AlreadyInScope == "already imported here");
@@ -170,10 +163,9 @@ public sealed class ResolveNameTests
 	[Test]
 	public async Task Says_when_an_implicit_using_already_covers_it()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Members;
 
-		var result = await ResolveAsync(session, "List", InLibrary(fixture, "Greeter.cs"));
+		var result = await ResolveAsync(workspace, "List", InLibrary(workspace, "Greeter.cs"));
 
 		result.Import.ShouldBeNull();
 		result.Candidates.ShouldContain(
@@ -188,10 +180,9 @@ public sealed class ResolveNameTests
 	[Test]
 	public async Task Finds_an_extension_method_where_nothing_of_that_name_is_a_type()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Members;
 
-		var result = await ResolveAsync(session, "Shouted", InLibrary(fixture, "Greeter.cs"));
+		var result = await ResolveAsync(workspace, "Shouted", InLibrary(workspace, "Greeter.cs"));
 
 		result.Import.ShouldBe("Library.Extras");
 		result.Candidates.ShouldContain(candidate => candidate.Kind == "ExtensionMethod");
@@ -206,10 +197,9 @@ public sealed class ResolveNameTests
 	[Test]
 	public async Task Says_a_nested_type_cannot_be_reached_by_importing_alone()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Members;
 
-		var result = await ResolveAsync(session, "Inner", InLibrary(fixture, "Greeter.cs"));
+		var result = await ResolveAsync(workspace, "Inner", InLibrary(workspace, "Greeter.cs"));
 
 		result.Import.ShouldBeNull();
 
@@ -228,10 +218,9 @@ public sealed class ResolveNameTests
 	[Test]
 	public async Task Says_when_the_arity_does_not_match_how_the_name_was_used()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Members;
 
-		var result = await ResolveAsync(session, "Outer<string>", InLibrary(fixture, "Greeter.cs"));
+		var result = await ResolveAsync(workspace, "Outer<string>", InLibrary(workspace, "Greeter.cs"));
 
 		result.Import.ShouldBeNull();
 
@@ -246,10 +235,9 @@ public sealed class ResolveNameTests
 	[Test]
 	public async Task Says_when_nothing_is_called_that_at_all()
 	{
-		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Members;
 
-		var result = await ResolveAsync(session, "Nonexistent", InLibrary(fixture, "Greeter.cs"));
+		var result = await ResolveAsync(workspace, "Nonexistent", InLibrary(workspace, "Greeter.cs"));
 
 		result.Import.ShouldBeNull();
 		result.Candidates.ShouldBeEmpty();
@@ -263,10 +251,9 @@ public sealed class ResolveNameTests
 	[Test]
 	public async Task Says_when_the_type_is_in_a_project_this_one_does_not_reference()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Simple;
 
-		var result = await ResolveAsync(session, "Announcer", fixture.Path("Simple", "Core", "Calculator.cs"));
+		var result = await ResolveAsync(workspace, "Announcer", workspace.Path("Simple", "Core", "Calculator.cs"));
 
 		result.Import.ShouldBeNull();
 
@@ -357,16 +344,16 @@ public sealed class ResolveNameTests
 		list.Notices.ShouldContain(notice => notice.Contains("rose_resolve_name", StringComparison.Ordinal));
 	}
 
-	private static string InLibrary(FixtureSolution fixture, string file) =>
-		fixture.Path("Members", "Library", file);
+	private static string InLibrary(SharedWorkspace workspace, string file) =>
+		workspace.Path("Members", "Library", file);
 
 	private static async Task<NameResolutionResult> ResolveAsync(
-		WorkspaceSession session,
+		SharedWorkspace workspace,
 		string name,
 		string? filePath = null,
 		int? arity = null)
 	{
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		return await NameResolver.ResolveAsync(
 			snapshot,

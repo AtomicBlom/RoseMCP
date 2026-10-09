@@ -487,14 +487,15 @@ public static partial class WorkspaceStatusReporter
 
 		if (EvaluationNotice(evaluationFailures) is { } unevaluated) yield return unevaluated;
 
-		ProjectOutput[] outputs =
-		[
-			.. solution.Projects.Select(project =>
-				new ProjectOutput(project.Name, project.FilePath ?? string.Empty, project.OutputFilePath ?? string.Empty)),
-		];
-
 		var messages = workspaceDiagnostics.Select(diagnostic => diagnostic.Message).ToArray();
-		if (UnbuiltReferenceNotice(build, messages, outputs, File.Exists) is { } unbuilt) yield return unbuilt;
+
+		// Only read the project files when there is an unresolved reference to attribute, since status is asked often
+		// and this is the only thing here that needs to know which projects name an SDK.
+		var anyUnresolved = messages.Any(message => message.Contains(UnresolvedMarker, StringComparison.Ordinal));
+		if (anyUnresolved && UnbuiltReferenceNotice(build, messages, Outputs(solution), File.Exists) is { } unbuilt)
+		{
+			yield return unbuilt;
+		}
 
 		var stale = BuildFreshness.Of(solution, project: null, cancellationToken)
 			.Count(project => project.Stale);
@@ -513,13 +514,16 @@ public static partial class WorkspaceStatusReporter
 	private static string? WrongPlatformSuspicion(
 		BuildProperties? build,
 		IReadOnlyList<WorkspaceDiagnostic> diagnostics) =>
-		build?.SuspectWrongPlatform(diagnostics.Select(diagnostic => diagnostic.Message));
+		build?.SuspectWrongPlatform(diagnostics.Select(diagnostic => diagnostic.Message), File.Exists);
 
 	/// <summary>A project's identity and the file its build writes, which is what an unresolved reference names.</summary>
 	/// <param name="Name">The project's name.</param>
 	/// <param name="FilePath">The project file.</param>
 	/// <param name="OutputFilePath">The assembly or metadata file its build writes; empty where Roslyn does not know it.</param>
-	public readonly record struct ProjectOutput(string Name, string FilePath, string OutputFilePath);
+	/// <param name="NamesSdk">
+	/// Whether the project file names an SDK, which decides whether <c>dotnet build</c> can build it or it needs MSBuild.
+	/// </param>
+	public readonly record struct ProjectOutput(string Name, string FilePath, string OutputFilePath, bool NamesSdk = true);
 
 	/// <summary>
 	/// The notice for references the design-time build could not resolve because the in-solution project that
@@ -540,10 +544,16 @@ public static partial class WorkspaceStatusReporter
 	/// says that a reload is all that is left.
 	/// </para>
 	/// <para>
-	/// Nothing where the platform this server chose is already suspected. A wrong platform names every
-	/// in-solution output under it as unresolved, and its own reason already says nothing has been built for
-	/// it; telling the caller to build those projects as well would send them to build for the platform that
-	/// is the mistake.
+	/// Nothing where the platform this server chose is suspected, which takes the same outputs existing under
+	/// another declared platform: then the remedy is to reload under that one, and building under this one
+	/// would build for the platform that is the mistake. Where nothing exists under any platform, as on a
+	/// fresh clone, the platform is not suspected and the remedy is this one.
+	/// </para>
+	/// <para>
+	/// The build named is the one the load ran under -- its configuration, platform and pinned properties,
+	/// passed as the restore passes them -- because a plain build writes to a different output folder and the
+	/// reference would stay unresolved after the caller did as told. A project that names no SDK, which is
+	/// every UWP one, is built with MSBuild, since <c>dotnet build</c> cannot build it.
 	/// </para>
 	/// </summary>
 	/// <param name="build">The properties the solution loaded under, which say whether the platform is suspect.</param>
@@ -556,7 +566,7 @@ public static partial class WorkspaceStatusReporter
 		IReadOnlyList<ProjectOutput> projects,
 		Func<string, bool> exists)
 	{
-		if (build?.SuspectWrongPlatform(diagnosticMessages) is not null) return null;
+		if (build?.SuspectWrongPlatform(diagnosticMessages, exists) is not null) return null;
 
 		var unbuilt = new Dictionary<string, (ProjectOutput Producer, SortedSet<string> Wanting, List<string> Paths)>(
 			StringComparer.OrdinalIgnoreCase);
@@ -595,12 +605,65 @@ public static partial class WorkspaceStatusReporter
 				+ $"solution loaded. {(one ? "It has" : "They have")} been built since, so rose_workspace_reload clears this.";
 		}
 
-		var builds = string.Join(" and ", unbuilt.Values.Select(entry => $"dotnet build \"{entry.Producer.FilePath}\""));
+		var builds = string.Join(" and ", unbuilt.Values.Select(entry => BuildCommand(entry.Producer, build)));
+		var needsMsBuild = unbuilt.Values.Any(entry => !entry.Producer.NamesSdk);
+		var msBuild = needsMsBuild
+			? " A project that names no SDK, which is every UWP one, is built with MSBuild, since dotnet build cannot build it."
+			: string.Empty;
 
 		return $"The design-time build could not resolve the output of {named}, because {(one ? "it has" : "they have")} "
 			+ "not been built: a WinUI or UWP project's design-time build looks for a referenced project's output on disk "
-			+ $"rather than in the solution. Build {(one ? "it" : "them")} first with {builds}, then rose_workspace_reload.";
+			+ $"rather than in the solution. Build {(one ? "it" : "them")} first, under the properties this load used, with "
+			+ $"{builds}, then rose_workspace_reload.{msBuild}";
 	}
+
+	/// <summary>
+	/// The command that builds a project under the properties the load ran under, so its output lands where the
+	/// load looks: <c>dotnet build</c> for a project that names an SDK, <c>msbuild</c> for one that does not.
+	/// </summary>
+	private static string BuildCommand(ProjectOutput project, BuildProperties? build)
+	{
+		var tool = project.NamesSdk ? "dotnet build" : "msbuild";
+		var properties = (build?.AsRestoreArguments() ?? [])
+			.Select(argument => argument.Contains(' ', StringComparison.Ordinal) ? $"\"{argument}\"" : argument);
+
+		return string.Join(" ", [tool, $"\"{project.FilePath}\"", .. properties]);
+	}
+
+	/// <summary>
+	/// Every project with the file its build writes and whether it names an SDK. A project file that cannot be
+	/// read is taken to name one, which is what every project this server can evaluate itself does.
+	/// </summary>
+	private static ProjectOutput[] Outputs(Solution solution) =>
+	[
+		.. solution.Projects.Select(project =>
+			new ProjectOutput(
+				project.Name,
+				project.FilePath ?? string.Empty,
+				project.OutputFilePath ?? string.Empty,
+				NamesSdk(project.FilePath))),
+	];
+
+	private static bool NamesSdk(string? projectFile)
+	{
+		if (string.IsNullOrEmpty(projectFile) || !File.Exists(projectFile)) return true;
+
+		try
+		{
+			return ProjectItemStyle.NamesSdk(File.ReadAllText(projectFile));
+		}
+		catch (IOException)
+		{
+			return true;
+		}
+		catch (UnauthorizedAccessException)
+		{
+			return true;
+		}
+	}
+
+	/// <summary>The words MSBuild opens an unresolved reference with, which is what <see cref="UnresolvedReference"/> matches.</summary>
+	private const string UnresolvedMarker = "Cannot resolve Assembly or Windows Metadata file";
 
 	/// <summary>
 	/// The project whose build writes a file, matched by the whole path where it can be and otherwise by file

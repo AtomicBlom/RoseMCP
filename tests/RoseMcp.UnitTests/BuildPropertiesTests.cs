@@ -94,7 +94,8 @@ public sealed class BuildPropertiesTests
 		[
 			@"Cannot resolve Assembly or Windows Metadata file 'D:\repo\A\bin\ARM64\Debug\A.dll'",
 			@"Cannot resolve Assembly or Windows Metadata file 'D:\repo\B\bin\ARM64\Debug\B.dll'",
-		]);
+		],
+		BuiltUnder(@"\x64\"));
 
 		suspicion.ShouldNotBeNull();
 		suspicion.ShouldContain("'ARM64' was chosen", Case.Sensitive);
@@ -113,7 +114,7 @@ public sealed class BuildPropertiesTests
 	{
 		var build = Chose("ARM64", ["x64", "ARM64"]) with { PlatformWasChosen = false };
 
-		build.SuspectWrongPlatform([@"Cannot resolve 'D:\repo\A\bin\ARM64\Debug\A.dll'"]).ShouldBeNull();
+		build.SuspectWrongPlatform([@"Cannot resolve 'D:\repo\A\bin\ARM64\Debug\A.dll'"], _ => true).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -129,7 +130,8 @@ public sealed class BuildPropertiesTests
 		[
 			"Found project reference without a matching metadata reference: A.csproj",
 			@"Cannot resolve Assembly or Windows Metadata file 'D:\repo\A\bin\x64\Debug\A.dll'",
-		]).ShouldBeNull();
+		],
+		_ => true).ShouldBeNull();
 	}
 
 	/// <summary>Posix separators too, so this reads the same on Linux.</summary>
@@ -138,7 +140,7 @@ public sealed class BuildPropertiesTests
 	{
 		var build = Chose("ARM64", ["x64", "ARM64"]);
 
-		build.SuspectWrongPlatform(["Cannot resolve '/home/me/repo/A/bin/ARM64/Debug/A.dll'"]).ShouldNotBeNull();
+		build.SuspectWrongPlatform(["Cannot resolve '/home/me/repo/A/bin/ARM64/Debug/A.dll'"], BuiltUnder("/x64/")).ShouldNotBeNull();
 	}
 
 	/// <summary>
@@ -150,8 +152,52 @@ public sealed class BuildPropertiesTests
 	{
 		var build = Chose("ARM64", ["x64", "ARM64"]);
 
-		build.SuspectWrongPlatform(["ARM64 support for this SDK is preview."]).ShouldBeNull();
+		build.SuspectWrongPlatform(["ARM64 support for this SDK is preview."], _ => true).ShouldBeNull();
 	}
+
+	/// <summary>
+	/// A fresh clone of a solution declaring several platforms has nothing built under any of them, so
+	/// every in-solution reference is unresolved under the one chosen too. Switching platform cures
+	/// nothing there; building does, which is the unbuilt-reference notice's to say.
+	/// </summary>
+	[Test]
+	public void Says_nothing_when_no_other_platform_has_the_outputs_either()
+	{
+		var build = Chose("x64", ["x64", "x86", "ARM64"]);
+
+		build.SuspectWrongPlatform(
+			[@"Cannot resolve Assembly or Windows Metadata file 'D:\repo\A\bin\x64\Debug\A.dll'"],
+			_ => false).ShouldBeNull();
+	}
+
+	/// <summary>Only the platforms that have the outputs are suggested, since the others cure nothing.</summary>
+	[Test]
+	public void Suggests_only_the_platform_the_outputs_were_built_for()
+	{
+		var build = Chose("x64", ["x64", "x86", "ARM64"]);
+
+		var suspicion = build.SuspectWrongPlatform(
+			[@"Cannot resolve Assembly or Windows Metadata file 'D:\repo\A\bin\x64\Debug\A.dll'"],
+			path => path == @"D:\repo\A\bin\x86\Debug\A.dll");
+
+		suspicion.ShouldNotBeNull().ShouldContain("platform=x86", Case.Sensitive);
+		suspicion.ShouldNotContain("ARM64", Case.Sensitive);
+	}
+
+	/// <summary>AnyCPU has no output folder of its own, so its copy of an output is the path without the platform.</summary>
+	[Test]
+	public void Looks_for_an_AnyCPU_output_without_a_platform_folder()
+	{
+		var build = Chose("x64", ["x64", "Any CPU"]);
+
+		build.SuspectWrongPlatform(
+			[@"Cannot resolve Assembly or Windows Metadata file 'D:\repo\A\bin\x64\Debug\A.dll'"],
+			path => path == @"D:\repo\A\bin\Debug\A.dll").ShouldNotBeNull().ShouldContain("platform=Any CPU", Case.Sensitive);
+	}
+
+	/// <summary>Whether a path is under the given platform folder, standing in for the outputs that exist on disk.</summary>
+	private static Func<string, bool> BuiltUnder(string folder) =>
+		path => path.Contains(folder, StringComparison.OrdinalIgnoreCase);
 
 	private static BuildProperties Chose(string platform, string[] declared) => new()
 	{

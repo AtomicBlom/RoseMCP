@@ -25,11 +25,25 @@ namespace RoseMcp.UnitTests;
 /// suite also runs.
 /// </para>
 /// <para>
-/// Three things reach stdout: a <see cref="Console"/> member that writes to it, console logging that
-/// sends any level there, and a host builder whose default providers, a stdout console logger among
-/// them, are never cleared. Every branch of every <c>#if</c> is read, whichever symbol it turns on.
+/// It catches three things, every branch of every <c>#if</c> read whichever symbol it turns on:
+/// </para>
+/// <list type="bullet">
+/// <item>A <see cref="Console"/> member that writes to stdout, however <c>Console</c> is spelled or imported.</item>
+/// <item><c>AddConsole</c> without <c>LogToStandardErrorThreshold = LogLevel.Trace</c>, and the console formatters.</item>
+/// <item>
+/// A host builder that registers the default providers, a stdout console logger among them: a
+/// <c>Create*Builder</c> on <c>Host</c>, <c>WebApplication</c> or <c>WebHost</c>, or a
+/// <c>HostApplicationBuilder</c> constructed directly, unless its arguments set <c>DisableDefaults</c>.
+/// It passes only when that builder's providers are cleared: <c>ConfigureLogging</c> on its own call
+/// chain or on the local it is assigned to, with a lambda that clears its parameter; or, in the same
+/// function, <c>local.Logging.ClearProviders()</c>, or <c>local.Logging</c> passed to a method of the
+/// same file, by its bare name, in a parameter that method clears.
+/// </item>
+/// </list>
+/// <para>
 /// What gets past it is a write that names none of these -- a stream opened some other way -- which is
-/// what the logging tests are for.
+/// what the logging tests are for. A builder cleared some way it does not follow, through a field, a
+/// lambda or a method of another file, fails it, and is better written one of the ways above.
 /// </para>
 /// </summary>
 public sealed partial class StdoutRuleTests
@@ -145,14 +159,43 @@ public sealed partial class StdoutRuleTests
 	[Arguments("var builder = WebApplication.CreateBuilder();")]
 	[Arguments("var builder = WebApplication.CreateSlimBuilder();")]
 	[Arguments("var host = Host.CreateDefaultBuilder(args).Build();")]
+	[Arguments("var host = WebHost.CreateDefaultBuilder(args).Build();")]
+	[Arguments("var builder = new HostApplicationBuilder(args);")]
+	[Arguments("var builder = new Microsoft.Extensions.Hosting.HostApplicationBuilder(settings);")]
+	[Arguments("HostApplicationBuilder builder = new(args);")]
+	[Arguments("using var factory = LoggerFactory.Create(logging => { logging.ClearProviders(); });\nvar builder = Host.CreateApplicationBuilder();")]
+	[Arguments("var first = Host.CreateApplicationBuilder();\nfirst.Logging.ClearProviders();\nvar second = Host.CreateApplicationBuilder();")]
+	[Arguments("var builder = Host.CreateApplicationBuilder();\nAction clear = () => builder.Logging.ClearProviders();")]
+	[Arguments("var builder = Host.CreateDefaultBuilder();\nother.ConfigureLogging(logging => logging.ClearProviders());")]
+	[Arguments("var builder = Host.CreateDefaultBuilder();\nbuilder.ConfigureLogging(logging => other.ClearProviders());")]
 	public void Finds_a_host_whose_default_console_logger_is_left_in(string statement)
 	{
-		WritesIn(Method(statement), ConsoleImports.None).ShouldNotBeEmpty();
+		WritesIn(Method(statement.Replace("\n", Environment.NewLine, StringComparison.Ordinal)), ConsoleImports.None).ShouldNotBeEmpty();
+	}
+
+	/// <summary>
+	/// A top-level program is one function, and a local function in it is another: a host the local
+	/// function builds and clears clears nothing for the one the program builds.
+	/// </summary>
+	[Test]
+	public void Finds_a_top_level_host_beside_a_local_function_that_clears_its_own()
+	{
+		string[] lines =
+		[
+			"var builder = Host.CreateApplicationBuilder(args);",
+			"void Other() { var builder = Host.CreateApplicationBuilder(); builder.Logging.ClearProviders(); }",
+		];
+
+		WritesIn(string.Join(Environment.NewLine, lines), ConsoleImports.None).Select(write => write.Split(':')[0]).ShouldBe(["1"]);
 	}
 
 	[Test]
 	[Arguments("var builder = Host.CreateApplicationBuilder(args);\nbuilder.Logging.ClearProviders();")]
+	[Arguments("var builder = new HostApplicationBuilder(args);\nbuilder.Logging.ClearProviders();")]
+	[Arguments("var builder = new HostApplicationBuilder(new HostApplicationBuilderSettings { DisableDefaults = true });")]
 	[Arguments("var host = Host.CreateDefaultBuilder(args).ConfigureLogging(logging => logging.ClearProviders()).Build();")]
+	[Arguments("var host = WebHost.CreateDefaultBuilder(args).ConfigureLogging((context, logging) => logging.ClearProviders()).Build();")]
+	[Arguments("var builder = Host.CreateDefaultBuilder();\nbuilder.ConfigureLogging(logging => logging.ClearProviders());")]
 	[Arguments("var builder = Host.CreateEmptyApplicationBuilder(new());")]
 	[Arguments("var builder = ImmutableArray.CreateBuilder<int>();")]
 	public void Leaves_a_host_alone_that_clears_its_logging_providers(string statement)
@@ -162,11 +205,12 @@ public sealed partial class StdoutRuleTests
 
 	/// <summary>
 	/// The shape the server has: one method that clears the providers it is given, called by each method
-	/// that builds a host, and a method that builds and clears a host of its own, which clears nothing
-	/// for its caller.
+	/// that builds a host. A method that builds and clears a host of its own clears nothing for its
+	/// caller, a same-named method on another object is not this file's, and a method clears only the
+	/// parameter it calls <c>ClearProviders</c> on.
 	/// </summary>
 	[Test]
-	public void Follows_the_logging_into_a_method_of_the_same_file_that_clears_it()
+	public void Follows_the_logging_into_the_parameter_a_method_of_the_same_file_clears()
 	{
 		string[] lines =
 		[
@@ -175,11 +219,15 @@ public sealed partial class StdoutRuleTests
 			"void N() { var builder = Host.CreateApplicationBuilder(); Configure(builder.Logging); }",
 			"void O() { Relay(); var builder = Host.CreateApplicationBuilder(); }",
 			"void Relay() { var builder = Host.CreateApplicationBuilder(); builder.Logging.ClearProviders(); }",
+			"void P(C other) { var builder = Host.CreateApplicationBuilder(); other.Configure(builder.Logging); }",
+			"void Q() { var builder = Host.CreateApplicationBuilder(); Pair(null, builder.Logging); }",
+			"void R() { var builder = Host.CreateApplicationBuilder(); Pair(kept: null, cleared: builder.Logging); }",
 			"static void Configure(ILoggingBuilder logging) => Helper(logging);",
-			"static void Helper(ILoggingBuilder logging) => logging.ClearProviders(); }",
+			"static void Helper(ILoggingBuilder logging) => logging.ClearProviders();",
+			"static void Pair(ILoggingBuilder cleared, ILoggingBuilder kept) => cleared.ClearProviders(); }",
 		];
 
-		WritesIn(string.Join(Environment.NewLine, lines), ConsoleImports.None).Select(write => write.Split(':')[0]).ShouldBe(["2", "4"]);
+		WritesIn(string.Join(Environment.NewLine, lines), ConsoleImports.None).Select(write => write.Split(':')[0]).ShouldBe(["2", "4", "6", "7"]);
 	}
 
 	private static string Method(string body) => $"class C{Environment.NewLine}{{{Environment.NewLine}void M(){Environment.NewLine}{{{Environment.NewLine}{body}{Environment.NewLine}}}{Environment.NewLine}}}";
@@ -222,16 +270,15 @@ public sealed partial class StdoutRuleTests
 	{
 		var root = tree.GetCompilationUnitRoot();
 		var imports = projectWide.With(ConsoleImports.Of(root.DescendantNodes().OfType<UsingDirectiveSyntax>()));
-		var clearers = Clearers(root);
+		var clearing = new ClearingParameters(root);
 
 		foreach (var node in root.DescendantNodes())
 		{
 			var what = node switch
 			{
-				InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax access } call
-					when HostBuilders.Contains(access.Name.Identifier.ValueText) && LastName(access.Expression) is "Host" or "WebApplication" && !ClearsProviders(call, clearers) =>
-					$"{LastName(access.Expression)}.{access.Name.Identifier.ValueText} keeps the default logging providers, whose console logger writes to stdout; "
-					+ "call ClearProviders() in the same member, or pass its Logging to a method of this file that does",
+				ExpressionSyntax creation when HostCreation(creation) is { } host && !ClearsProviders(creation, clearing) =>
+					$"{host} keeps the default logging providers, whose console logger writes to stdout; call ClearProviders() on the "
+					+ "builder's own Logging, in ConfigureLogging on its own chain, or in a method of this file it passes its Logging to",
 				MemberAccessExpressionSyntax access when StdoutMembers.Contains(access.Name.Identifier.ValueText) && imports.Names(access.Expression) =>
 					$"Console.{access.Name.Identifier.ValueText}",
 				IdentifierNameSyntax name when imports.Static && StdoutMembers.Contains(name.Identifier.ValueText) && IsUnqualified(name) =>
@@ -276,62 +323,157 @@ public sealed partial class StdoutRuleTests
 	}
 
 	/// <summary>
-	/// Whether the member building a host clears its logging providers: it calls <c>ClearProviders</c>
-	/// itself, or hands a <c>.Logging</c> to a method of the same file that clears what it is given. A
-	/// top-level program is one member. The member rather than the file, because a file can build more
-	/// than one host; and a call counts only with the logging passed in, because calling a method that
-	/// builds and clears a host of its own leaves this one's providers where they were.
+	/// What an expression creates, when it is a host builder that registers the default logging
+	/// providers: a <c>Create*Builder</c> call on <c>Host</c>, <c>WebApplication</c> or <c>WebHost</c>,
+	/// or a <c>HostApplicationBuilder</c> constructed directly. The empty builders register no providers
+	/// and are not matched, and nor is a creation whose arguments set <c>DisableDefaults = true</c>.
 	/// </summary>
-	private static bool ClearsProviders(InvocationExpressionSyntax creation, IReadOnlySet<string> clearers)
+	private static string? HostCreation(ExpressionSyntax expression)
 	{
-		var member = creation.Ancestors().FirstOrDefault(node => node is MemberDeclarationSyntax and not GlobalStatementSyntax and not BaseTypeDeclarationSyntax and not BaseNamespaceDeclarationSyntax)
-			?? creation.SyntaxTree.GetRoot();
+		var host = expression switch
+		{
+			InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax access }
+				when HostBuilders.Contains(access.Name.Identifier.ValueText) && LastName(access.Expression) is "Host" or "WebApplication" or "WebHost" =>
+				$"{LastName(access.Expression)}.{access.Name.Identifier.ValueText}",
+			ObjectCreationExpressionSyntax creation when LastName(creation.Type) == "HostApplicationBuilder" => "new HostApplicationBuilder",
+			ImplicitObjectCreationExpressionSyntax { Parent: EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax { Parent: VariableDeclarationSyntax declaration } } }
+				when LastName(declaration.Type) == "HostApplicationBuilder" => "new HostApplicationBuilder",
+			_ => null,
+		};
 
-		return member.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(call =>
-			InvokedName(call) == "ClearProviders"
-			|| (clearers.Contains(InvokedName(call) ?? string.Empty)
-				&& call.ArgumentList.Arguments.Any(argument => argument.Expression is MemberAccessExpressionSyntax { Name.Identifier.ValueText: "Logging" })));
+		if (host is null) return null;
+
+		var disablesDefaults = expression.DescendantNodes()
+			.OfType<AssignmentExpressionSyntax>()
+			.Any(assignment => AssignedName(assignment.Left) == "DisableDefaults" && assignment.Right.IsKind(SyntaxKind.TrueLiteralExpression));
+
+		return disablesDefaults ? null : host;
 	}
 
 	/// <summary>
-	/// The methods of a file that clear the providers of a logging builder they are given: one that calls
-	/// <c>ClearProviders</c> on a parameter, or passes a parameter on to another such method.
+	/// Whether a host builder's own providers are cleared, tied to the builder rather than to anything
+	/// nearby: <c>ConfigureLogging</c> on the creation's own call chain, or on the local it is assigned to,
+	/// with a lambda that clears its parameter or a method of this file that does; or, in the same
+	/// function as the creation, <c>local.Logging.ClearProviders()</c>, or <c>local.Logging</c> passed to a
+	/// method of this file in a parameter it clears. A clear on another builder, in another function, or
+	/// through a method reached any way but by its bare name, does not count.
 	/// </summary>
-	private static HashSet<string> Clearers(SyntaxNode root)
+	private static bool ClearsProviders(ExpressionSyntax creation, ClearingParameters clearing)
 	{
-		var clearers = new HashSet<string>(StringComparer.Ordinal);
-		var methods = root.DescendantNodes()
-			.Select(node => node switch
-			{
-				MethodDeclarationSyntax method => (Name: method.Identifier.ValueText, Parameters: (ParameterListSyntax?)method.ParameterList, Body: (SyntaxNode)method),
-				LocalFunctionStatementSyntax function => (Name: function.Identifier.ValueText, Parameters: function.ParameterList, Body: function),
-				_ => (Name: string.Empty, Parameters: null, Body: node),
-			})
-			.Where(method => method.Parameters is not null)
-			.Select(method => (method.Name, Parameters: method.Parameters!.Parameters.Select(parameter => parameter.Identifier.ValueText).ToHashSet(StringComparer.Ordinal), method.Body))
-			.ToList();
-
-		for (var grew = true; grew;)
+		for (SyntaxNode current = creation; current.Parent is MemberAccessExpressionSyntax link && link.Expression == current && link.Parent is InvocationExpressionSyntax next; current = next)
 		{
-			var found = methods
-				.Where(method => !clearers.Contains(method.Name) && method.Body.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(call =>
-				{
-					var clearsParameter = InvokedName(call) == "ClearProviders"
-						&& call.Expression is MemberAccessExpressionSyntax { Expression: IdentifierNameSyntax receiver }
-						&& method.Parameters.Contains(receiver.Identifier.ValueText);
-					var passesParameterOn = clearers.Contains(InvokedName(call) ?? string.Empty)
-						&& call.ArgumentList.Arguments.Any(argument => argument.Expression is IdentifierNameSyntax passed && method.Parameters.Contains(passed.Identifier.ValueText));
-
-					return clearsParameter || passesParameterOn;
-				}))
-				.Select(method => method.Name)
-				.ToList();
-
-			clearers.UnionWith(found);
-			grew = found.Count > 0;
+			if (link.Name.Identifier.ValueText == "ConfigureLogging" && ConfiguresAClear(next, clearing)) return true;
 		}
 
-		return clearers;
+		var local = creation.Parent switch
+		{
+			EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax declarator } => declarator.Identifier.ValueText,
+			AssignmentExpressionSyntax { Left: IdentifierNameSyntax target } assignment when assignment.Right == creation => target.Identifier.ValueText,
+			_ => null,
+		};
+		if (local is null) return false;
+
+		var function = FunctionOf(creation);
+
+		return function.DescendantNodes()
+			.OfType<InvocationExpressionSyntax>()
+			.Where(call => FunctionOf(call) == function)
+			.Any(call =>
+			{
+				var clearsLogging = clearing.ClearedBy(call).Any(cleared => cleared is MemberAccessExpressionSyntax { Name.Identifier.ValueText: "Logging", Expression: IdentifierNameSyntax owner }
+					&& owner.Identifier.ValueText == local);
+				var configuresLocal = call.Expression is MemberAccessExpressionSyntax { Name.Identifier.ValueText: "ConfigureLogging", Expression: IdentifierNameSyntax receiver }
+					&& receiver.Identifier.ValueText == local
+					&& ConfiguresAClear(call, clearing);
+
+				return clearsLogging || configuresLocal;
+			});
+	}
+
+	/// <summary>A <c>ConfigureLogging</c> call given a lambda that clears its own parameter, or a method of this file that clears its.</summary>
+	private static bool ConfiguresAClear(InvocationExpressionSyntax configure, ClearingParameters clearing) =>
+		configure.ArgumentList.Arguments.Any(argument => argument.Expression switch
+		{
+			AnonymousFunctionExpressionSyntax lambda => lambda.DescendantNodes()
+				.OfType<InvocationExpressionSyntax>()
+				.SelectMany(clearing.ClearedBy)
+				.Any(cleared => cleared is IdentifierNameSyntax name && ParametersOf(lambda).Contains(name.Identifier.ValueText)),
+			IdentifierNameSyntax method => clearing.ClearsAny(method.Identifier.ValueText),
+			_ => false,
+		});
+
+	private static IEnumerable<string> ParametersOf(AnonymousFunctionExpressionSyntax lambda) => lambda switch
+	{
+		SimpleLambdaExpressionSyntax simple => [simple.Parameter.Identifier.ValueText],
+		ParenthesizedLambdaExpressionSyntax parenthesized => parenthesized.ParameterList.Parameters.Select(parameter => parameter.Identifier.ValueText),
+		AnonymousMethodExpressionSyntax { ParameterList: { } parameters } => parameters.Parameters.Select(parameter => parameter.Identifier.ValueText),
+		_ => [],
+	};
+
+	/// <summary>The method, local function, accessor or lambda a node runs in; a top-level statement runs in the file.</summary>
+	private static SyntaxNode FunctionOf(SyntaxNode node) =>
+		node.Ancestors().FirstOrDefault(ancestor => ancestor is BaseMethodDeclarationSyntax or LocalFunctionStatementSyntax or AnonymousFunctionExpressionSyntax or AccessorDeclarationSyntax)
+			?? node.SyntaxTree.GetRoot();
+
+	/// <summary>
+	/// Which parameters each method and local function of a file clears the providers of: one it calls
+	/// <c>ClearProviders</c> on, or passes in a parameter position that the method it calls clears.
+	/// </summary>
+	private sealed class ClearingParameters
+	{
+		private readonly List<(string Name, string[] Parameters, SyntaxNode Body, HashSet<int> Cleared)> _functions;
+
+		public ClearingParameters(SyntaxNode root)
+		{
+			_functions = [.. root.DescendantNodes()
+				.Select(node => node switch
+				{
+					MethodDeclarationSyntax method => (Name: method.Identifier.ValueText, List: (ParameterListSyntax?)method.ParameterList, Body: (SyntaxNode)method),
+					LocalFunctionStatementSyntax function => (Name: function.Identifier.ValueText, List: function.ParameterList, Body: function),
+					_ => (Name: string.Empty, List: null, Body: node),
+				})
+				.Where(function => function.List is not null)
+				.Select(function => (function.Name, Parameters: function.List!.Parameters.Select(parameter => parameter.Identifier.ValueText).ToArray(), function.Body, Cleared: new HashSet<int>()))];
+
+			for (var grew = true; grew;)
+			{
+				grew = false;
+				foreach (var function in _functions)
+				{
+					var indexes = function.Body.DescendantNodes()
+						.OfType<InvocationExpressionSyntax>()
+						.SelectMany(ClearedBy)
+						.OfType<IdentifierNameSyntax>()
+						.Select(name => Array.IndexOf(function.Parameters, name.Identifier.ValueText))
+						.Where(index => index >= 0)
+						.ToList();
+
+					foreach (var index in indexes) grew |= function.Cleared.Add(index);
+				}
+			}
+		}
+
+		public bool ClearsAny(string name) => _functions.Any(function => function.Name == name && function.Cleared.Count > 0);
+
+		/// <summary>
+		/// What a call clears the providers of: the receiver of <c>ClearProviders()</c>, and each argument a
+		/// method of this file, called by its bare name, clears the parameter of.
+		/// </summary>
+		public IEnumerable<ExpressionSyntax> ClearedBy(InvocationExpressionSyntax call)
+		{
+			if (call.Expression is MemberAccessExpressionSyntax { Name.Identifier.ValueText: "ClearProviders" } access) yield return access.Expression;
+			if (call.Expression is not IdentifierNameSyntax callee) yield break;
+
+			var arguments = call.ArgumentList.Arguments;
+			foreach (var function in _functions.Where(function => function.Name == callee.Identifier.ValueText && function.Parameters.Length >= arguments.Count))
+			{
+				for (var position = 0; position < arguments.Count; position++)
+				{
+					var index = arguments[position].NameColon is { } named ? Array.IndexOf(function.Parameters, named.Name.Identifier.ValueText) : position;
+					if (function.Cleared.Contains(index)) yield return arguments[position].Expression;
+				}
+			}
+		}
 	}
 
 	private static string? InvokedName(InvocationExpressionSyntax call) => call.Expression switch

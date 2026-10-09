@@ -8,12 +8,16 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   loads -- a host is found by its `WithStdioServerTransport` call, and what it loads by following
   its project references -- and names the file and the line of each of three things: a stdout write
   in any spelling `Console` allows; console logging that leaves a level on stdout; and a host
-  builder (`Host` or `WebApplication`'s `CreateApplicationBuilder`, `CreateDefaultBuilder`,
-  `CreateBuilder`, `CreateSlimBuilder`) whose member neither calls `ClearProviders()` nor passes its
-  `.Logging` to a method of the same file that clears the builder it is given, since the default
-  providers include a console logger on stdout. Every branch of every `#if` is read. It reads syntax
-  rather than binding, so a write that names none of these -- a stream opened some other way -- gets
-  past it; that is what the logging test below is for. `RoseMcp.Logging` adds the file sink -- Serilog behind the existing
+  builder that registers the default providers, a stdout console logger among them, without those
+  providers being cleared. A host builder is a `Create*Builder` on `Host`, `WebApplication` or
+  `WebHost`, or a `HostApplicationBuilder` constructed directly, unless its arguments set
+  `DisableDefaults`. Cleared means tied to that builder: `ConfigureLogging` on its own call chain or
+  on the local it is assigned to, with a lambda that clears its parameter; or, in the same function,
+  `local.Logging.ClearProviders()`, or `local.Logging` passed to a method of the same file in a
+  parameter that method clears. A clear on another builder, in a lambda, or in a host a called method
+  builds for itself does not count. Every branch of every `#if` is read. It reads syntax rather than
+  binding, so a write that names none of these -- a stream opened some other way -- gets past it;
+  that is what the logging test below is for. `RoseMcp.Logging` adds the file sink -- Serilog behind the existing
   `Microsoft.Extensions.Logging` call sites, never a console sink, and there is a regression test
   asserting the pipeline writes nothing to stdout at all. Logs land in
   `%LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{Server,Worker,Tray,Inspector}/[{solution}-]{yyyyMMdd-HHmmss}.log`

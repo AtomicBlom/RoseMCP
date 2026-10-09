@@ -149,7 +149,8 @@ anything useful from a clone -- `install.ps1` wants a `payload/` beside it, whic
 extracted archive -- so they sit apart from `tools/`, where everything is meant to be run in place.
 `tools/RoseMcp.Deploy.ps1` is the exception that stays: `deploy.ps1` dot-sources it here and
 packaging also copies it into the archive, because stopping a running install is the one thing both
-installers and the promote path have to agree about.
+installers and the promote path have to agree about. `tools/published-layout.json` travels with it,
+for the same reason about where everything in an install sits.
 
 `promote` installs to `-Destination`, else `ROSEMCP_DEPLOY_ROOT`, else
 `%LOCALAPPDATA%/BinaryVibrance/RoseMCP` -- the same vendor/product folder the logs live under.

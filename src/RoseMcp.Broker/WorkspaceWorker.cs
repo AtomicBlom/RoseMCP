@@ -622,7 +622,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	private async Task FollowLoadAsync()
 	{
 		var load = Stopwatch.StartNew();
-		IDisposable hold = new CancellationTokenSource();
+		var hold = Hold(use: false);
 
 		try
 		{

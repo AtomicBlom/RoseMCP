@@ -299,6 +299,61 @@ public static partial class WorkspaceStatusReporter
 	}
 
 	/// <summary>
+	/// The one notice a read carries from a workspace that is degraded, or null when nothing degrades it.
+	/// <para>
+	/// A read cannot report what its workspace could not see: a project whose design-time build failed
+	/// resolves nothing and so reports nothing, and a generator that did not load writes nothing for the
+	/// compiler to complain about. An empty list from a degraded workspace is therefore not the fact an empty
+	/// list from a healthy one is, and without this the two read the same. One line rather than the reasons,
+	/// because it rides on every read and the reasons, each with its fix, are what status is for: the first
+	/// reason's opening sentence is the why, since every reason leads with what is wrong and ends with the
+	/// remedy.
+	/// </para>
+	/// </summary>
+	/// <param name="reasons">Why the workspace is degraded, as status would list them; empty when it is not.</param>
+	public static string? DegradedNotice(IReadOnlyList<string> reasons)
+	{
+		if (reasons.Count == 0) return null;
+
+		var others = reasons.Count == 1 ? string.Empty : $" {Count(reasons.Count - 1, "more reason", "more reasons")} besides.";
+
+		return "This workspace is degraded, so this answer can be missing what it could not see rather than reporting it: "
+			+ $"{FirstSentence(reasons[0])}{others} Ask rose_workspace_status for every reason and its fix.";
+	}
+
+	/// <summary>
+	/// A reason's opening sentence, ended with a full stop. A full stop inside parentheses or double quotes
+	/// does not end it, since that is where a reason quotes MSBuild or names a dialect's own explanation.
+	/// </summary>
+	private static string FirstSentence(string reason)
+	{
+		var depth = 0;
+		var quoted = false;
+
+		for (var index = 0; index < reason.Length; index++)
+		{
+			switch (reason[index])
+			{
+				case '(':
+					depth++;
+					break;
+				case ')':
+					depth = Math.Max(0, depth - 1);
+					break;
+				case '"':
+					quoted = !quoted;
+					break;
+				case '.' when depth == 0 && !quoted && (index + 1 == reason.Length || reason[index + 1] == ' '):
+					return reason[..(index + 1)];
+			}
+		}
+
+		var trimmed = reason.TrimEnd();
+
+		return trimmed.EndsWith('.') ? trimmed : $"{trimmed}.";
+	}
+
+	/// <summary>
 	/// Failures grouped by what MSBuild said, the commonest first, each naming a few of its projects.
 	/// </summary>
 	private static string Grouped(IEnumerable<ProjectEvaluationFailure> failures) =>

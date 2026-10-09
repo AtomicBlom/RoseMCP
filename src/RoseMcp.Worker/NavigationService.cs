@@ -766,9 +766,9 @@ public static class NavigationService
 			Truncated = truncated,
 			Shape = truncated ? SearchShape(ordered) : null,
 			Notices = truncated
-				? [$"Listed the {maxResults} closest of {ordered.Length} matches. Narrow with kind or project -- every group "
+				? [.. snapshot.Notices, $"Listed the {maxResults} closest of {ordered.Length} matches. Narrow with kind or project -- every group "
 					+ $"in the shape is a value one of them takes -- or pass maxResults={ordered.Length} to list them all."]
-				: [],
+				: [.. snapshot.Notices],
 		};
 	}
 

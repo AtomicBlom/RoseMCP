@@ -30,6 +30,12 @@ public sealed class WorkspaceHost(
 	private readonly List<AssemblyLoadFault> _assemblyLoadFaults = [];
 	private readonly Lock _faultGate = new();
 
+	/// <summary>
+	/// The newest status call's description of a load, which a read from the same load trusts over the load's
+	/// own: it is later, so a generator built since or a project fixed since is already accounted for.
+	/// </summary>
+	private volatile DescribedLoad? _described;
+
 	public Task StartAsync(CancellationToken cancellationToken)
 	{
 		_start = Task.Run(StartSessionAsync, CancellationToken.None);
@@ -52,19 +58,23 @@ public sealed class WorkspaceHost(
 		{
 			var session = await StartedAsync();
 			var snapshot = await session.ReadAsync(cancellationToken);
+			var load = session.Load;
 
 			var report = await WorkspaceStatusReporter.DescribeAsync(
 				snapshot.Solution,
 				options.SolutionPath,
-				session.Load.Diagnostics,
-				session.Load.Restore,
-				session.Load.EvaluationFailures,
+				load.Diagnostics,
+				load.Restore,
+				load.EvaluationFailures,
 				snapshot.Revision,
-				session.Load.Seconds,
+				load.Seconds,
 				cancellationToken,
 				progress,
 				session.Build,
 				loader.AnalyzerLoader);
+
+			// Kept for the reads, which say the workspace is degraded without paying for this description.
+			_described = new DescribedLoad(load, report.DegradedReasons);
 
 			// A reconciliation notice is something that happened, not a reason to distrust the answer:
 			// "Absorbed 16 external file change(s)" is the server doing the job it exists for. These
@@ -105,9 +115,23 @@ public sealed class WorkspaceHost(
 	/// A snapshot to analyse, already ordered behind every pending mutation and reconciled with
 	/// disk. Unlike <see cref="GetStatusAsync"/> this throws, because a caller wanting to read code
 	/// can do nothing useful with a failed load.
+	/// <para>
+	/// Where the workspace is degraded the snapshot's notices lead with saying so, which every read passes
+	/// on and a batch says once. Here rather than in the broker, which stamps each result with the workspace
+	/// that answered, because the broker knows only the last status a client happened to ask for: it cannot
+	/// see a reload this process made on its own, or an assembly a tool failed to load a call ago, which is
+	/// exactly when a read's clean answer is least to be trusted. Here every read passes, and the status and
+	/// the mutations do not, since status lists the reasons itself and a write's verdict comes from the
+	/// compile it ran.
+	/// </para>
 	/// </summary>
-	public async Task<WorkspaceSnapshot> ReadAsync(CancellationToken cancellationToken) =>
-		await (await StartedAsync()).ReadAsync(cancellationToken);
+	public async Task<WorkspaceSnapshot> ReadAsync(CancellationToken cancellationToken)
+	{
+		var session = await StartedAsync();
+		var snapshot = await session.ReadAsync(cancellationToken);
+
+		return snapshot.Noting(WorkspaceStatusReporter.DegradedNotice(ReasonsToDistrust(session.Load)));
+	}
 
 	public async Task<WorkspaceSession> SessionAsync() => await StartedAsync();
 
@@ -146,6 +170,22 @@ public sealed class WorkspaceHost(
 			}
 		}
 	}
+
+	/// <summary>
+	/// Why a read from <paramref name="load"/> should not be trusted, as status would say it, without describing
+	/// the solution again: the newest full description of that load -- a status call's where one was made since
+	/// the load, the load's own otherwise -- and every assembly a tool call failed to load, which belongs to the
+	/// process and is current to the last call.
+	/// </summary>
+	private IReadOnlyList<string> ReasonsToDistrust(LoadOutcome load)
+	{
+		var described = _described is { } last && ReferenceEquals(last.Load, load) ? last.Reasons : load.DegradedReasons;
+
+		return WorkspaceStatusReporter.AssemblyLoadReason(AssemblyLoadFaults) is { } faults ? [.. described, faults] : described;
+	}
+
+	/// <summary>What a status call's description of one load called degraded, before the process's own faults are added.</summary>
+	private sealed record DescribedLoad(LoadOutcome Load, IReadOnlyList<string> Reasons);
 
 	private async Task<WorkspaceSession> StartSessionAsync()
 	{

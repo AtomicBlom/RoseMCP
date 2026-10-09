@@ -175,6 +175,54 @@ public sealed class WorkspaceStatusTests
 		}
 	}
 
+	/// <summary>
+	/// A read cannot report what its workspace could not see, so a read from a degraded workspace says so, once
+	/// -- including for a fault no status call has described yet, which is when a clean answer is least to be
+	/// trusted. Status lists the reasons itself and a write's verdict is its own compile, so neither carries it.
+	/// </summary>
+	[Test]
+	public async Task A_read_from_a_degraded_workspace_says_so_and_status_and_writes_do_not()
+	{
+		const string Degraded = "This workspace is degraded";
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var host = Host(fixture);
+
+		await host.StartAsync(token);
+		(await host.ReadAsync(token)).Notices.ShouldNotContain(
+			notice => notice.StartsWith(Degraded, StringComparison.Ordinal), "a healthy workspace says nothing");
+
+		host.RecordAssemblyLoadFault(new AssemblyLoadFault
+		{
+			Assembly = "System.IO.Compression",
+			Tool = "rose_find_references",
+			Message = "Could not load file or assembly 'System.IO.Compression, Version=10.0.0.0'.",
+			RuntimeDirectoryMissing = false,
+		});
+
+		var snapshot = await host.ReadAsync(token);
+		var notice = snapshot.Notices[0];
+		notice.ShouldStartWith(Degraded, Case.Sensitive);
+		notice.ShouldContain("System.IO.Compression (rose_find_references)", Case.Sensitive);
+		snapshot.Notices.Count(candidate => candidate.StartsWith(Degraded, StringComparison.Ordinal)).ShouldBe(1);
+
+		var diagnostics = await new DiagnosticsService(NullLogger<DiagnosticsService>.Instance)
+			.AnalyseAsync(snapshot, new DiagnosticsRequest(), token);
+		diagnostics.Notices.Count(candidate => candidate == notice).ShouldBe(1);
+
+		var status = await host.GetStatusAsync(token);
+		status.State.ShouldBe(WorkspaceState.Degraded);
+		status.Notices.ShouldNotContain(candidate => candidate.StartsWith(Degraded, StringComparison.Ordinal));
+
+		(await host.ReadAsync(token)).Notices.ShouldContain(notice, "a status call's description is what the next read reads");
+
+		var session = await host.SessionAsync();
+		var seenByWrite = await session.MutateAsync(
+			(writing, _) => Task.FromResult(new MutationResult<IReadOnlyList<string>>(writing.Notices, null)),
+			token);
+		seenByWrite.ShouldNotContain(candidate => candidate.StartsWith(Degraded, StringComparison.Ordinal));
+	}
+
 	private static WorkspaceHost Host(FixtureSolution fixture) => new(
 		new WorkerOptions { SolutionPath = fixture.SolutionPath },
 		new SolutionLoader(

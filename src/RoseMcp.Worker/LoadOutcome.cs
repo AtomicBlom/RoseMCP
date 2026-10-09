@@ -38,6 +38,13 @@ public sealed record LoadOutcome
 	public required IReadOnlyList<ProjectEvaluationFailure> EvaluationFailures { get; init; }
 
 	/// <summary>
+	/// Why the load's own description called the workspace degraded, empty where it did not. Kept so a read
+	/// can say its workspace is degraded without describing the solution again, which runs every project's
+	/// generators: this is the newest full description there is until a status call makes another.
+	/// </summary>
+	public IReadOnlyList<string> DegradedReasons { get; init; } = [];
+
+	/// <summary>
 	/// Snapshots what the load produced. Copied rather than referenced because the workspace it
 	/// came from is disposed on the next reload, and a status call is not going to be holding the
 	/// lock that would make reading a live collection safe.
@@ -48,5 +55,6 @@ public sealed record LoadOutcome
 		Restore = load.Report.Restore,
 		Diagnostics = [.. load.Workspace.Diagnostics],
 		EvaluationFailures = load.Inputs.Failures,
+		DegradedReasons = load.Report.DegradedReasons,
 	};
 }

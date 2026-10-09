@@ -186,6 +186,22 @@ Read before adding a tool, adding a field to a result, or changing an error path
   assembly against the trusted platform list and the worker's directory, not by the throwing frame, since
   the JIT reports a missing dependency in its caller's frame, which can be Roslyn's. Neither is this, and
   telling a caller to restart the worker over them would be wrong advice.
+- **A read from a degraded workspace says so, once, in one line.** A read cannot report what its
+  workspace could not see: a project whose design-time build failed resolves nothing and so reports
+  nothing, and a generator that did not load writes nothing for the compiler to complain about. So
+  `diagnostics: []` from a degraded workspace is not the fact it is from a healthy one, and without a
+  notice the two read the same -- an agent treats the zero as a gate and moves on. The snapshot a read
+  is handed leads its notices with the first reason's opening sentence, a count of the others and a
+  pointer to `rose_workspace_status`; every read passes the snapshot's notices on, and a batch says them
+  once rather than on every entry. The reasons in full, each with its fix, are status's: the notice rides
+  on every read, and every reason on every read would be read past. It is decided in the worker, in
+  `WorkspaceHost.ReadAsync`, rather than beside attribution in the broker, because the broker holds only
+  the last status a client asked for, which cannot see a reload the worker made on its own or an
+  assembly a tool failed to load a call ago -- exactly when a clean answer is least to be trusted. What
+  it reads is the newest full description of the current load, the load's own or a status call's since,
+  plus the process's assembly faults, so no read pays for running every project's generators. Status and
+  writes do not carry it: status lists the reasons itself, and a write's verdict is the compile it ran.
+  A read that builds its notices without the snapshot's drops this with them.
 - **A fixer that declines is the same as no fixer.** `rose_list_code_fixes` dropped a diagnostic
   whose providers offered nothing from `fixes` and from `unfixableIds` both, so it disappeared from
   the answer entirely -- which is exactly what the second list exists to prevent. CS0103 is what

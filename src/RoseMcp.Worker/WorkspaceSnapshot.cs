@@ -23,9 +23,18 @@ public sealed record WorkspaceSnapshot
 
 	/// <summary>
 	/// Things that happened during reconciliation and that a caller should know about: projects
-	/// reloaded, documents dropped, files that could not be read this time.
+	/// reloaded, documents dropped, files that could not be read this time. A snapshot handed to a read
+	/// also leads with the workspace being degraded, where it is, so every answer passing these on says so.
 	/// </summary>
 	public IReadOnlyList<string> Notices { get; init; } = [];
+
+	/// <summary>
+	/// This snapshot with <paramref name="notice"/> leading its notices, or this snapshot where there is no
+	/// notice or it already carries this one -- so noting the same thing twice says it once.
+	/// </summary>
+	/// <param name="notice">What every answer read from this snapshot should say, or null for nothing.</param>
+	public WorkspaceSnapshot Noting(string? notice) =>
+		notice is null || Notices.Contains(notice, StringComparer.Ordinal) ? this : this with { Notices = [notice, .. Notices] };
 
 	/// <summary>
 	/// Refuses a write whose caller was looking at an older world than this one.

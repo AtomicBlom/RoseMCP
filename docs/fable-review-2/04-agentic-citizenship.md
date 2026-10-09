@@ -216,13 +216,10 @@ prose, cut at a sentence past a ceiling with a notice saying so.
 switch away in `includeSource`, and for a library symbol they would cost an argument on a surface
 held to a single ceiling with no room under it.
 
-### AGT-12 `rose_diagnostics` never says the workspace is degraded, so a clean answer from a broken workspace reads as a clean bill of health
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Contracts/DiagnosticsResult.cs:23-24`; transcript T10b; `docs/invariants/result-shapes.md`
-- **What:** This workspace is `Degraded` -- two source generators fail to load with a manifest version mismatch, and the WinUI projects cannot resolve `RoseMcp.Contracts.dll` during the design-time build. `rose_diagnostics` over the whole solution returned `diagnostics: []`, `totalCount: 0`, `notices: []`. Nothing in the result says the workspace it came from does not trust itself, although `notices` exists and is exactly where it would go.
-- **Why it matters:** `rose_diagnostics` is what the instructions route "does it compile" to, and what the dogfooding rule says to use instead of a build. An agent treats `0` as a gate and moves on. A project whose design-time build failed resolves no references and a generator that failed to load produces no code, so `0` from a degraded workspace is not the same fact as `0` from a healthy one -- and `result-shapes.md` is explicit that reporting a signal which cannot mean what it says is the failure to avoid. `MemberEditResult` models this correctly with `Verified` and `DependentsNotChecked`; the read path does not.
-- **Suggested change:** When the workspace state is not `Healthy`, put one notice on every `DiagnosticsResult`: which projects are untrustworthy, the one-line fix, ending in "ask rose_workspace_status". Do the same for `OutlineResult.Notices` and `ReferencesResult`. Cheap, since the state is already computed.
+### ~~AGT-12 `rose_diagnostics` never says the workspace is degraded, so a clean answer from a broken workspace reads as a clean bill of health~~
+**#382.** A read from a degraded workspace answered with nothing to say so, so an empty list read as a
+clean bill of health. Every read leads its notices with one line saying the workspace is degraded and
+why, and points at status for the rest.
 
 ### AGT-13 The model-facing budget is 74 KB and is measured only for the operating system the test runs on
 - **Severity:** Medium
@@ -533,7 +530,7 @@ already loaded (revision 1) and reported `Degraded` for the reasons the brief's 
 | `rose_resolve_name` `ToolErrorReporting` (no filePath) | Ambiguous short name | ~~**Failed** with a leaked Roslyn parameter name (AGT-04).~~ **#306, #431.** |
 | `rose_resolve_name` `ToolErrorReporting` + filePath | The same question, scoped | **Excellent.** "in scope already, so the error is something else: a misspelling, an accessibility problem, or the wrong number of type arguments" is the best single sentence on the surface. |
 | `rose_resolve_name` `Encoding` (no filePath) | Control, to isolate the failure above | Worked. So the failure is the argument shape, not the tool. |
-| `rose_diagnostics` one file, then the solution | "Does it compile" | **Worked, and is the strongest thing in the product.** Whole solution, 18 projects, a few seconds, against a `dotnet build` of 30-60 s. Every agentic session pays that difference dozens of times. Marked down only for saying nothing about the workspace being degraded (AGT-12). |
+| `rose_diagnostics` one file, then the solution | "Does it compile" | **Worked, and is the strongest thing in the product.** Whole solution, 18 projects, a few seconds, against a `dotnet build` of 30-60 s. Every agentic session pays that difference dozens of times. |
 | `rose_outline workspace=C:\Windows\System32` | Grade a bad-path error | **Excellent**, names the problem and the three extensions that would fix it. |
 
 Reached for grep instead, and why: the descriptions and tests are *prose*, so every question about

@@ -23,9 +23,8 @@ cost split is exact -- zero `Process.Start`, `MSBuildWorkspace`, `FixtureSolutio
 `deploy.ps1` are the best-commented files here, and `Assert-WindowsPackage` is a properly structural
 release gate. The four tool-surface tests show the repository already knows how to turn a rule into a
 mechanism. What holds it back is that it has only applied that trick where a rule has a named type in
-`Contracts`. Every rule that is a property of an *arrangement* -- a comment's tense, a published
-folder layout, a test class's category attribute, a header's include graph, "every result carries a
-revision" -- is review-only, and three of them have already drifted under review: a category lost in
+`Contracts`. Every rule that is a property of an *arrangement* -- a comment's tense, a test class's
+category attribute, "every result carries a revision" -- is review-only, and three of them have already drifted under review: a category lost in
 a split, 100 history clauses where #171 counted 90, and four doc claims that describe code that has
 moved. The one structural hole is that the newest, least conventional and most bug-dense third of the
 product -- debugger, tap, live edit, 55 tests -- never ran in CI at all; the debugger part does now
@@ -503,8 +502,8 @@ means tests that would catch a regression in existing code but not an omission i
 | Conventions: braces on a next-line body; comments carry no history or issue tags | `csharp_prefer_braces = when_multiline` gets part of the first; nothing gets the second | **review-only** (UIP-23) |
 
 The pattern is clear and worth stating: **every rule that has a named type in `Contracts` has a
-structural guard, and every rule that is a property of an arrangement -- a header's include graph, a
-comment's tense, a published folder layout, a category attribute -- has none.** The four
+structural guard, and every rule that is a property of an arrangement -- a comment's tense, a
+category attribute -- has none.** The four
 tool-surface tests show the repository already knows how to close that gap; it has just not been
 applied outside `Contracts`.
 

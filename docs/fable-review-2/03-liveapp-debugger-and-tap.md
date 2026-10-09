@@ -482,11 +482,8 @@ protocol version the host refuses on mismatch, so every parser requires the full
 4. ~~"A mutating request that timed out may still run", held by a reviewer remembering it.~~ **#317,
    #323.** Which verbs mutate is a classification a test holds against the provider's dispatch, and
    each request carries an id its reply echoes.
-5. **Rule today:** "the tap's tier purity is checked by include order and by nothing else"
-   (`tap-tiers.md`: "not currently checked by a test"). **Mechanism:** a compile-only translation unit per
-   tier in each `build.ps1` (`tap_tier2_check.cpp` includes `tap_channel.h` through `tap_object.h` with no
-   projection headers and no aliases defined), so a violation fails the build in a file named for the
-   tier rather than being absorbed by moving an include.
+5. ~~"The tap's tier purity is checked by include order and by nothing else."~~ **#386.** A unit
+   test holds every header to its tier and each provider to its include order, on every runner.
 6. ~~"An older provider writes fewer columns; check the length" at every parse site.~~ **#323.** A
    provider that greets with another protocol version is refused by name, and a test holds the
    provider's version and escape table against the host's.

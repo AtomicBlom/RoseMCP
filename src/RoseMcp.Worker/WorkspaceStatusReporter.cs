@@ -45,6 +45,7 @@ public static class WorkspaceStatusReporter
 			State = degradedReasons.Count == 0 ? WorkspaceState.Loaded : WorkspaceState.Degraded,
 			Revision = revision,
 			Projects = projects,
+			ProjectCount = projects.Count,
 			LoadDiagnostics = LoadDiagnosticSummary.Summarise(workspaceDiagnostics),
 			LoadDiagnosticCount = workspaceDiagnostics.Count,
 			DegradedReasons = degradedReasons,

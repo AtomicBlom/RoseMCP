@@ -100,10 +100,11 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 	public async Task<WorkspaceStatusReport> StatusAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.IncludeProjectsArgument)] bool includeProjects = false,
 		CancellationToken cancellationToken = default)
 	{
 		var worker = await workspaces.GetOrStartAsync(WorkspaceHints.From(paths.Of(workspace)), cancellationToken);
-		return await workspaces.StatusOfAsync(worker, cancellationToken, progress);
+		return await workspaces.StatusOfAsync(worker, cancellationToken, progress, includeProjects);
 	}
 
 	[McpServerTool(

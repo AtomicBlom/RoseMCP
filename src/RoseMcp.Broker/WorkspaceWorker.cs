@@ -408,7 +408,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			PrivateMemoryBytes = privateMemory,
 			ManagedHeapBytes = ManagedHeapBytes,
 			BuildConfiguration = status?.BuildConfiguration,
-			ProjectCount = status?.Projects.Count,
+			ProjectCount = status?.ProjectCount,
 			FailedProjects = status is null
 				? []
 				: [.. status.Projects.Where(project => !project.LoadedSuccessfully).Select(project => project.Name)],

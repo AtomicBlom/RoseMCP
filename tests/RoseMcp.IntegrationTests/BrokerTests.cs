@@ -65,10 +65,10 @@ public sealed class BrokerTests
 		// workspace can answer, so a question asked immediately gets a real answer rather than a
 		// half-loaded one.
 		var status = await tools.StatusAsync(
-			new Progress<ProgressNotificationValue>(), fixture.SolutionPath, TestContext.Current!.Execution.CancellationToken);
+			new Progress<ProgressNotificationValue>(), fixture.SolutionPath, cancellationToken: TestContext.Current!.Execution.CancellationToken);
 
 		status.State.ShouldBe(WorkspaceState.Loaded);
-		status.Projects.ShouldNotBeEmpty();
+		status.ProjectCount.ShouldBeGreaterThan(0);
 
 		// Loaded now, so opening again has nothing to wait for and says nothing about waiting. The
 		// notice belongs to the loading answer alone: told unconditionally it would read as "still

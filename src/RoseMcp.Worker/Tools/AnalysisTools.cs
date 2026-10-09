@@ -108,6 +108,7 @@ public sealed class AnalysisTools(
 			MinimumSeverity = ParseSeverity(minimumSeverity),
 			IncludeAnalyzers = includeAnalyzers,
 			MaxResults = maxResults <= 0 ? 200 : maxResults,
+			WithholdUnrestored = wanted.Scope == DiagnosticScope.Solution,
 		};
 
 		return await calls.ReadAsync(

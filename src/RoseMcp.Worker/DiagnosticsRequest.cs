@@ -21,4 +21,12 @@ public sealed record DiagnosticsRequest
 	public bool IncludeAnalyzers { get; init; }
 
 	public int MaxResults { get; init; } = 200;
+
+	/// <summary>
+	/// Leaves out the projects with no restore output whose errors are references that resolve to nothing,
+	/// and names them in a notice instead. Only a solution-wide pass asks this: there two such projects
+	/// bury every real error in the solution under tens of thousands that say only that restore did not
+	/// run, and a project named on purpose still has them all listed.
+	/// </summary>
+	public bool WithholdUnrestored { get; init; }
 }

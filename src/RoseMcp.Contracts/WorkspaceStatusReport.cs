@@ -18,7 +18,16 @@ public sealed record WorkspaceStatusReport : WorkspaceScopedResult
 	/// </summary>
 	public required long Revision { get; init; }
 
+	/// <summary>
+	/// The projects with something to say -- a failed load, analyzer output missing from disk, XAML types
+	/// that would not resolve -- or every project, where the caller asked for them all. A project that
+	/// loaded cleanly is a few hundred characters saying so, and a solution of two hundred of them is a
+	/// status answer nobody can read.
+	/// </summary>
 	public required IReadOnlyList<ProjectStatus> Projects { get; init; }
+
+	/// <summary>How many projects the solution loaded, whether or not <see cref="Projects"/> lists them all.</summary>
+	public int ProjectCount { get; init; }
 
 	/// <summary>
 	/// Diagnostics MSBuild reported while loading -- unresolved references, failed projects -- with

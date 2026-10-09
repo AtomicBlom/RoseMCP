@@ -97,15 +97,16 @@ function Get-TargetRuntime
         An x86 Windows install has no broker to run: nothing publishes win-x86 except the live-app
         debug hosts, which exist to match a *target* process and are not hosts in their own right.
         Saying so beats laying down a tree with no apphost that can start.
-    #>
-    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
 
-    switch ($arch)
-    {
-        'Arm64' { return 'win-arm64' }
-        'X64' { return 'win-x64' }
-        default { throw "RoseMCP has no build for $arch. It ships for x64 and ARM64 Windows." }
-    }
+        Which architectures ship, and which OS architecture each is for, is the published layout's.
+    #>
+    $arch = [string] [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+    $runtimes = @((Get-PublishedLayout).runtimes)
+
+    $match = @($runtimes | Where-Object { $_.osArchitecture -eq $arch })
+    if ($match.Count -eq 1) { return $match[0].rid }
+
+    throw "RoseMCP has no build for $arch. It ships for $(($runtimes | ForEach-Object { $_.osArchitecture }) -join ' and ') Windows."
 }
 
 function Get-PackageVersion
@@ -131,48 +132,6 @@ function Get-PackageVersion
     # Informational versions carry build metadata after a '+' (0.3.0+1a2b3c4). ARP shows this string
     # verbatim and winget compares it, so the semver core is the useful part.
     return ($version -split '\+')[0].Trim()
-}
-
-function Assert-Payload
-{
-    <#
-        That the package actually carries what this machine needs, and that each native piece is built
-        for the architecture its folder claims.
-
-        The check is here as well as in packaging because this is the last point where the answer is
-        still "the download is wrong" rather than "RoseMCP is broken". A missing XAML provider costs
-        nothing until somebody debugs a XAML app weeks later; a provider built for the wrong
-        architecture is worse, because it fails inside somebody else's process.
-    #>
-    param(
-        [Parameter(Mandatory)][string] $PayloadRoot,
-        [Parameter(Mandatory)][string] $SharedRoot,
-        [Parameter(Mandatory)][string] $LiveAppRoot,
-        [Parameter(Mandatory)][string] $Rid
-    )
-
-    # Either root: a package carrying more than one architecture keeps whatever is identical between
-    # them in shared/, and an install is that folder plus this architecture's own.
-    foreach ($required in 'RoseMcp.Server.exe', 'RoseMcp.Worker.exe', 'tray/RoseMcp.Tray.exe', 'inspector/RoseMcp.Inspector.exe')
-    {
-        $present = (Test-Path "$PayloadRoot/$required") -or (Test-Path "$SharedRoot/$required")
-        if (-not $present) { throw "the package is missing $required for $Rid" }
-    }
-
-    $expected = Get-ExpectedPeMachine -Rid $Rid
-    $machine = Get-PeMachine "$PayloadRoot/tray/RoseMcp.Tray.exe"
-    if ($machine -ne $expected)
-    {
-        throw ("the $Rid payload reports machine 0x{0:X4}, expected 0x{1:X4} -- this package is built wrong." -f $machine, $expected)
-    }
-
-    foreach ($hostRid in Get-LiveAppRuntimes -Rid $Rid)
-    {
-        if (-not (Test-Path "$LiveAppRoot/$hostRid/RoseMcp.LiveApp.exe"))
-        {
-            throw "the package is missing the live-app debug host for $hostRid, which an $Rid machine can execute."
-        }
-    }
 }
 
 function Write-ArpEntry
@@ -201,7 +160,7 @@ function Write-ArpEntry
         DisplayVersion = $Version
         Publisher = 'BinaryVibrance'
         InstallLocation = $native
-        DisplayIcon = "$native\tray\RoseMcp.Tray.exe"
+        DisplayIcon = (Get-InstalledExecutable -Root $Root -Project 'RoseMcp.Tray').Replace('/', '\')
         UninstallString = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$native\install.ps1`" -Uninstall"
         URLInfoAbout = 'https://github.com/AtomicBlom/RoseMCP'
         NoModify = 1
@@ -225,8 +184,8 @@ function Set-StartupRegistration
     #>
     param([Parameter(Mandatory)][string] $Root)
 
-    New-ItemProperty -Path $runKey -Name $runValue -Value "`"$($Root.Replace('/', '\'))\tray\RoseMcp.Tray.exe`"" `
-        -PropertyType String -Force | Out-Null
+    $tray = (Get-InstalledExecutable -Root $Root -Project 'RoseMcp.Tray').Replace('/', '\')
+    New-ItemProperty -Path $runKey -Name $runValue -Value "`"$tray`"" -PropertyType String -Force | Out-Null
 
     Write-Host '  registered to start with Windows'
 }
@@ -281,10 +240,12 @@ if ($Uninstall)
     return
 }
 
+# Everything about where things sit -- in the package and in the install -- comes from the published
+# layout, which ships beside this script and is read before anything is stopped or removed.
 $rid = Get-TargetRuntime
-$payload = "$Source/payload/$rid"
-$shared = "$Source/payload/shared"
-$liveApp = "$Source/payload/live-app"
+$layout = Get-PublishedLayout
+$payload = Get-PackagePath -Stage $Source -Rid $rid
+$shared = Get-PackagePath -Stage $Source -Shared
 
 if (-not (Test-Path $payload))
 {
@@ -293,7 +254,9 @@ if (-not (Test-Path $payload))
 
 Write-Host "installing RoseMCP ($rid) into $Destination"
 
-Assert-Payload -PayloadRoot $payload -SharedRoot $shared -LiveAppRoot $liveApp -Rid $rid
+# Here as well as in packaging, because this is the last point where the answer is still "the
+# download is wrong" rather than "RoseMCP is broken".
+$null = Assert-PackagedRuntime -Stage $Source -Rid $rid
 $version = Get-PackageVersion -PayloadRoot $payload -SharedRoot $shared
 Write-Host "  version $version"
 
@@ -319,11 +282,13 @@ Copy-Item -Path "$payload/*" -Destination $Destination -Recurse -Force
 
 # Only the hosts this machine can execute. The package carries every architecture's, and copying the
 # ones nothing can load is weight in the install for no reachable capability.
-New-Item -ItemType Directory -Force -Path "$Destination/live-app" | Out-Null
 foreach ($hostRid in Get-LiveAppRuntimes -Rid $rid)
 {
+    $hostDir = Join-LayoutPath $Destination, (Expand-LayoutPath $layout.liveAppHost.folder -HostRid $hostRid)
+
     Write-Host "  copying live-app host $hostRid"
-    Copy-Item -Path "$liveApp/$hostRid" -Destination "$Destination/live-app" -Recurse -Force
+    New-Item -ItemType Directory -Force -Path $hostDir | Out-Null
+    Copy-Item -Path "$(Get-PackagePath -Stage $Source -HostRid $hostRid)/*" -Destination $hostDir -Recurse -Force
 }
 
 # Beside the payload, so uninstall works from the install rather than from an archive somebody has
@@ -349,7 +314,7 @@ else
     # failed while the install is live is worse than the problem it is reporting, because anything
     # automating it believes the installer.
     try { Start-Tray -Root $Destination -WorkspaceRoot $WorkspaceRoot -Port $Port }
-    catch { Write-Warning "  the tray did not start: $($_.Exception.Message). The install is complete; start it from $Destination/tray/RoseMcp.Tray.exe" }
+    catch { Write-Warning "  the tray did not start: $($_.Exception.Message). The install is complete; start it from $(Get-InstalledExecutable -Root $Destination -Project 'RoseMcp.Tray')" }
 }
 
 if ($Register)

@@ -1,0 +1,83 @@
+{
+  "about": [
+    "Where each part of RoseMCP sits in an install, and in the Windows package an install is made from.",
+    "deploy.ps1 publishes from this file and checks the package against it; install.ps1 and build-installer.ps1 check a package and lay it down from it.",
+    "PublishedLayoutTests stages it and drives every C# resolver against it, and InstallerLayoutTests holds installer/rosemcp.iss to it, so a layout change made here and nowhere else fails a unit test rather than an install.",
+    "Paths are relative and use forward slashes. {rid} is an architecture an install is for; {host} is a live-app debug host's architecture.",
+    "Executables are named without an extension: .exe on Windows, nothing elsewhere.",
+    "Read by Windows PowerShell 5.1 as well as by PowerShell 7, because install.ps1 is run by whichever shell somebody has: so no comments, and nothing outside ASCII."
+  ],
+  "runtimes": [
+    {
+      "rid": "win-x64",
+      "osArchitecture": "X64",
+      "innoCheck": "IsX64OS",
+      "liveAppHosts": [ "win-x64", "win-x86" ]
+    },
+    {
+      "rid": "win-arm64",
+      "osArchitecture": "Arm64",
+      "innoCheck": "IsArm64",
+      "liveAppHosts": [ "win-arm64", "win-x64", "win-x86" ]
+    }
+  ],
+  "components": [
+    {
+      "project": "RoseMcp.Worker",
+      "executable": "RoseMcp.Worker",
+      "folder": "",
+      "windowsOnly": false,
+      "hostsBroker": false,
+      "why": "Flat in the root beside the server, because beside the broker is the worker's first lookup and the one that needs no configuration."
+    },
+    {
+      "project": "RoseMcp.Server",
+      "executable": "RoseMcp.Server",
+      "folder": "",
+      "windowsOnly": false,
+      "hostsBroker": true,
+      "why": "The console broker, flat in the root."
+    },
+    {
+      "project": "RoseMcp.Tray",
+      "executable": "RoseMcp.Tray",
+      "folder": "tray",
+      "windowsOnly": true,
+      "hostsBroker": true,
+      "why": "A folder of its own: WinUI drags in a lot, and mixing it with the server risks one overwriting shared assemblies with windows-targeted variants of a different version. Every resolver the tray runs therefore looks one level up as well as beside itself."
+    },
+    {
+      "project": "RoseMcp.Inspector",
+      "executable": "RoseMcp.Inspector",
+      "folder": "inspector",
+      "windowsOnly": true,
+      "hostsBroker": false,
+      "why": "A folder of its own for the tray's reason, and one more: two WinUI publishes into one directory overwrite each other's WindowsAppSDK payload, and publish -o never removes what it does not write."
+    }
+  ],
+  "liveAppHost": {
+    "project": "RoseMcp.LiveApp",
+    "executable": "RoseMcp.LiveApp",
+    "folder": "live-app/{host}",
+    "why": "One per architecture a target can be, because ICorDebug has no cross-architecture path. Published once into the root, and found from the tray one level up.",
+    "xamlProviders": {
+      "folder": "xaml-provider/{host}",
+      "why": "Relative to the host's folder. Both taps for every host, because the framework a target runs decides which one serves it.",
+      "files": [
+        { "project": "RoseMcp.Xaml.Uwp.Tap", "file": "RoseMcp.Xaml.Uwp.Tap.dll" },
+        { "project": "RoseMcp.Xaml.WinUi.Tap", "file": "RoseMcp.Xaml.WinUi.Tap.dll" }
+      ]
+    }
+  },
+  "package": {
+    "runtime": "payload/{rid}",
+    "shared": "payload/shared",
+    "liveAppHost": "payload/live-app/{host}",
+    "why": "Every Windows architecture in one archive. A runtime's components go under its own folder, and whatever is byte-identical across all of them is moved into shared, which an install lays down first. The debug hosts are packaged once, outside any runtime's folder, since an ARM64 machine's set is a superset of an x64 one's.",
+    "scripts": [
+      { "file": "install.ps1", "source": "installer" },
+      { "file": "RoseMcp.Deploy.ps1", "source": "tools" },
+      { "file": "published-layout.json", "source": "tools" }
+    ]
+  }
+}

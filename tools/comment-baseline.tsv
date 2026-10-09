@@ -85,7 +85,6 @@ tests/RoseMcp.UnitTests/BuildPropertiesTests.cs	issue	1
 tests/RoseMcp.UnitTests/CallSiteRewriterTests.cs	issue	2
 tests/RoseMcp.UnitTests/CallSiteShapeMatrixTests.cs	history	1
 tests/RoseMcp.UnitTests/PollLoopTests.cs	history	1
-tests/RoseMcp.UnitTests/PublishedLayoutTests.cs	issue	2
 tests/RoseMcp.UnitTests/TargetArchitectureProbeTests.cs	issue	1
 tests/RoseMcp.UnitTests/ToolSurfaceTests.cs	issue	1
 tests/RoseMcp.UnitTests/XamlApplyBaselineTests.cs	issue	1

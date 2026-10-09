@@ -66,15 +66,140 @@ function Get-LiveAppRuntimes
 
         The ARM64 set is a superset of the x64 set, which is what lets one package carry the hosts for
         both without duplicating any of them.
+
+        The sets themselves are the published layout's, so the Inno installer's Check: conditions are
+        tested against the same answer this gives.
     #>
     param([Parameter(Mandatory)][string] $Rid)
 
-    switch ($Rid)
+    return @((Get-LayoutRuntime -Rid $Rid).liveAppHosts)
+}
+
+<#
+    The published layout, read from published-layout.json beside this script: where every part of an
+    install sits, and where the Windows package keeps it. deploy.ps1 finds it in tools/, and install.ps1
+    in the root of the extracted archive, which is why packaging copies all three files there together.
+
+    Read when first asked for rather than when this script is dot-sourced, because the Inno installer
+    runs this script from a temporary folder holding nothing else, to stop and clear an install -- and
+    neither of those needs to know the layout.
+#>
+$script:PublishedLayoutPath = Join-Path $PSScriptRoot 'published-layout.json'
+$script:PublishedLayout = $null
+
+function Get-PublishedLayout
+{
+    if ($null -ne $script:PublishedLayout) { return $script:PublishedLayout }
+
+    if (-not (Test-Path -LiteralPath $script:PublishedLayoutPath))
     {
-        'win-arm64' { return @('win-arm64', 'win-x64', 'win-x86') }
-        'win-x64' { return @('win-x64', 'win-x86') }
-        default { return @($Rid) }
+        throw "no published layout at $script:PublishedLayoutPath. It ships beside RoseMcp.Deploy.ps1, " +
+            'and every script that installs or packages RoseMCP reads where things go from it.'
     }
+
+    $script:PublishedLayout = Get-Content -LiteralPath $script:PublishedLayoutPath -Raw | ConvertFrom-Json
+
+    return $script:PublishedLayout
+}
+
+function Get-LayoutRuntime
+{
+    <#
+        One architecture's entry in the layout. Refused rather than guessed for anything else, because
+        a guess here is an install laid down with no debug host and nothing saying why.
+    #>
+    param([Parameter(Mandatory)][string] $Rid)
+
+    $runtime = @((Get-PublishedLayout).runtimes | Where-Object { $_.rid -eq $Rid })
+    if ($runtime.Count -ne 1)
+    {
+        $known = @((Get-PublishedLayout).runtimes | ForEach-Object { $_.rid }) -join ', '
+        throw "the published layout has no runtime $Rid; it describes $known."
+    }
+
+    return $runtime[0]
+}
+
+function Get-LayoutComponent
+{
+    <#
+        The components an install for $Rid carries, in the order they are published: everything off
+        Windows except what only Windows can run.
+    #>
+    param([Parameter(Mandatory)][string] $Rid)
+
+    $onWindowsRid = Test-WindowsRid $Rid
+
+    return @((Get-PublishedLayout).components | Where-Object { $onWindowsRid -or -not $_.windowsOnly })
+}
+
+function Join-LayoutPath
+{
+    <#
+        Joins path segments with forward slashes, skipping empty ones -- a component in the root has
+        the folder "", which would otherwise come out as a doubled slash.
+    #>
+    param([string[]] $Part)
+
+    return (@($Part | Where-Object { $_ }) -join '/')
+}
+
+function Expand-LayoutPath
+{
+    <# A layout path with its {rid} and {host} placeholders filled in. #>
+    param(
+        [Parameter(Mandatory)][string] $Path,
+        [string] $Rid,
+        [string] $HostRid
+    )
+
+    if ($Rid) { $Path = $Path.Replace('{rid}', $Rid) }
+    if ($HostRid) { $Path = $Path.Replace('{host}', $HostRid) }
+
+    return $Path
+}
+
+function Get-ExecutableName
+{
+    <# The layout names executables bare; on Windows the file carries .exe. #>
+    param([Parameter(Mandatory)][string] $Name, [Parameter(Mandatory)][string] $Rid)
+
+    if (Test-WindowsRid $Rid) { return "$Name.exe" }
+
+    return $Name
+}
+
+function Get-PackagePath
+{
+    <#
+        Where a Windows package under $Stage keeps one architecture's own payload (-Rid), the payload
+        every architecture shares (-Shared), or one debug host (-HostRid).
+    #>
+    param(
+        [Parameter(Mandatory)][string] $Stage,
+        [string] $Rid,
+        [string] $HostRid,
+        [switch] $Shared
+    )
+
+    $package = (Get-PublishedLayout).package
+
+    if ($Shared) { return Join-LayoutPath $Stage, $package.shared }
+    if ($HostRid) { return Join-LayoutPath $Stage, (Expand-LayoutPath $package.liveAppHost -HostRid $HostRid) }
+    if (-not $Rid) { throw 'Get-PackagePath needs -Rid, -HostRid or -Shared' }
+
+    return Join-LayoutPath $Stage, (Expand-LayoutPath $package.runtime -Rid $Rid)
+}
+
+function Get-InstalledExecutable
+{
+    <# Where a Windows install under $Root keeps a component's executable, by the component's project. #>
+    param([Parameter(Mandatory)][string] $Root, [Parameter(Mandatory)][string] $Project)
+
+    $component = @((Get-PublishedLayout).components | Where-Object { $_.project -eq $Project })
+    if ($component.Count -ne 1) { throw "the published layout has no component $Project" }
+
+    return Join-LayoutPath $Root, $component[0].folder, "$($component[0].executable).exe"
 }
 
 function Get-InstalledProcess
@@ -266,11 +391,11 @@ function Start-Tray
         [int] $TimeoutSeconds = 15
     )
 
-    $exe = "$Root/tray/RoseMcp.Tray.exe"
+    $exe = Get-InstalledExecutable -Root $Root -Project 'RoseMcp.Tray'
     if (-not (Test-Path $exe)) { throw "no tray at $exe" }
 
     $process = Start-Process -FilePath $exe -PassThru -WorkingDirectory $WorkspaceRoot `
-        -ArgumentList '--port', $Port, '--worker', "$Root/RoseMcp.Worker.exe"
+        -ArgumentList '--port', $Port, '--worker', (Get-InstalledExecutable -Root $Root -Project 'RoseMcp.Worker')
 
     Write-Host "  started tray pid $($process.Id) (workspace root $WorkspaceRoot)"
 
@@ -413,4 +538,104 @@ function Get-ExpectedPeMachine
     param([Parameter(Mandatory)][string] $Rid)
 
     return $script:PeMachineByRid[$Rid]
+}
+
+function Assert-PackagedImage
+{
+    <#
+        That a native image is where the layout puts it and is built for the machine its folder claims.
+        Test-Path alone passes a tree that looks complete and injects, or runs, the wrong architecture.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $Path,
+        [Parameter(Mandatory)][string] $Rid,
+        [Parameter(Mandatory)][string] $What
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) { throw "the package is missing $What at $Path" }
+
+    $machine = Get-PeMachine $Path
+    $expected = Get-ExpectedPeMachine -Rid $Rid
+    if ($machine -ne $expected)
+    {
+        # Parenthesised before -f on purpose: -f binds tighter than +, so formatting a concatenation
+        # without these brackets formats only the last piece of it and leaves the placeholders in the
+        # rest sitting there as literal text.
+        throw (("the package has the wrong {0}: {1} reports machine 0x{2:X4}, expected 0x{3:X4} for " +
+            '{4}.') -f $What, $Path, $machine, $expected, $Rid)
+    }
+}
+
+function Assert-PackagedRuntime
+{
+    <#
+        That a Windows package carries everything the published layout says an install for $Rid needs,
+        each native piece built for its architecture: every component's executable in that
+        architecture's own folder, and a debug host for each architecture its machine can execute, with
+        both XAML providers beside each.
+
+        Run by packaging, for every architecture packaged, and by install.ps1, for the one it is about
+        to lay down. Packaging is as close to the cause as the check can be put; installing is the last
+        point where the answer is still "the download is wrong" rather than "RoseMCP is broken". A
+        missing XAML provider costs nothing until somebody debugs a XAML app weeks later, and one built
+        for the wrong architecture fails inside somebody else's process.
+
+        Executables are looked for only in the architecture's folder, never in shared/: deduplication
+        moves a file there only when every architecture built it byte-identical, which two PE images
+        for different machines cannot be. Finding one there means the deduplication matched something
+        it should not have, and that is said rather than reported as a missing file.
+
+        Returns the number of XAML providers checked.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $Stage,
+        [Parameter(Mandatory)][string] $Rid
+    )
+
+    $layout = Get-PublishedLayout
+    $payload = Get-PackagePath -Stage $Stage -Rid $Rid
+    $shared = Get-PackagePath -Stage $Stage -Shared
+
+    foreach ($component in Get-LayoutComponent -Rid $Rid)
+    {
+        $relative = Join-LayoutPath $component.folder, (Get-ExecutableName $component.executable -Rid $Rid)
+        $exe = Join-LayoutPath $payload, $relative
+
+        $deduplicated = -not (Test-Path -LiteralPath $exe) -and (Test-Path -LiteralPath (Join-LayoutPath $shared, $relative))
+        if ($deduplicated)
+        {
+            throw "$relative was deduplicated into $($layout.package.shared), which cannot be right for a " +
+                'native image: the architectures would have had to produce identical bytes.'
+        }
+
+        Assert-PackagedImage -Path $exe -Rid $Rid -What "$Rid $($component.executable)"
+    }
+
+    $providers = $layout.liveAppHost.xamlProviders
+    $checked = 0
+
+    foreach ($hostRid in Get-LiveAppRuntimes -Rid $Rid)
+    {
+        $hostDir = Get-PackagePath -Stage $Stage -HostRid $hostRid
+        $hostExe = Join-LayoutPath $hostDir, (Get-ExecutableName $layout.liveAppHost.executable -Rid $hostRid)
+
+        Assert-PackagedImage -Path $hostExe -Rid $hostRid -What "live-app debug host for $hostRid (an $Rid machine runs $hostRid targets)"
+
+        foreach ($provider in $providers.files)
+        {
+            $dll = Join-LayoutPath $hostDir, (Expand-LayoutPath $providers.folder -HostRid $hostRid), $provider.file
+            if (-not (Test-Path -LiteralPath $dll))
+            {
+                throw "the package is missing the XAML provider at $dll. XAML inspection and live " +
+                    "editing would be unavailable for $hostRid targets, and nothing else would say " +
+                    "so. On a build agent this is usually a missing MSVC cross-toolset for that " +
+                    "architecture."
+            }
+
+            Assert-PackagedImage -Path $dll -Rid $hostRid -What "XAML provider for $hostRid"
+            $checked++
+        }
+    }
+
+    return $checked
 }

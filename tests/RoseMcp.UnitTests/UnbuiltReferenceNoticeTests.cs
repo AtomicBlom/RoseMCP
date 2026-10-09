@@ -11,11 +11,20 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class UnbuiltReferenceNoticeTests
 {
+	/// <summary>
+	/// A repository at the filesystem root, absolute on every OS and joined with its separator, because the
+	/// notice names projects by <see cref="Path.GetFileNameWithoutExtension(string)"/> and matches outputs by
+	/// <see cref="Path.GetFileName(string)"/>, and off Windows a backslash is part of a file name rather than a
+	/// separator. The root and not the temporary directory under it: these paths ride inside MSBuild's quoted
+	/// message, which an apostrophe in a user's temporary path would end early. Nothing here touches disk.
+	/// </summary>
+	private static readonly string Repo = Path.Combine(Path.GetPathRoot(Path.GetTempPath())!, "repo");
+
 	private static readonly ProjectOutput Contracts =
-		new("Contracts", @"D:\repo\Contracts\Contracts.csproj", @"D:\repo\Contracts\bin\Debug\net10.0\Contracts.dll");
+		new("Contracts", InRepo("Contracts", "Contracts.csproj"), InRepo("Contracts", "bin", "Debug", "net10.0", "Contracts.dll"));
 
 	private static readonly ProjectOutput Inspector =
-		new("Inspector", @"D:\repo\Inspector\Inspector.csproj", @"D:\repo\Inspector\bin\x64\Debug\Inspector.dll");
+		new("Inspector", InRepo("Inspector", "Inspector.csproj"), InRepo("Inspector", "bin", "x64", "Debug", "Inspector.dll"));
 
 	private static readonly ProjectOutput[] Projects = [Contracts, Inspector];
 
@@ -27,7 +36,7 @@ public sealed class UnbuiltReferenceNoticeTests
 
 		notice.ShouldNotBeNull();
 		notice.ShouldContain("Contracts (wanted by Inspector)", Case.Sensitive);
-		notice.ShouldContain(@"dotnet build ""D:\repo\Contracts\Contracts.csproj""", Case.Sensitive);
+		notice.ShouldContain($"dotnet build \"{Contracts.FilePath}\"", Case.Sensitive);
 		notice.ShouldContain("then rose_workspace_reload", Case.Sensitive);
 	}
 
@@ -67,11 +76,11 @@ public sealed class UnbuiltReferenceNoticeTests
 
 		var notice = UnbuiltReferenceNotice(
 			build,
-			[Unresolved("Inspector", @"D:\repo\Contracts\bin\x64\Debug-2027\net10.0\Contracts.dll")],
+			[Unresolved("Inspector", InRepo("Contracts", "bin", "x64", "Debug-2027", "net10.0", "Contracts.dll"))],
 			Projects,
 			_ => false);
 
-		notice.ShouldNotBeNull().ShouldContain(@"dotnet build ""D:\repo\Contracts\Contracts.csproj"" ", Case.Sensitive);
+		notice.ShouldNotBeNull().ShouldContain($"dotnet build \"{Contracts.FilePath}\" ", Case.Sensitive);
 		notice.ShouldContain("-p:Platform=x64", Case.Sensitive);
 		notice.ShouldContain("-p:Configuration=Debug-2027", Case.Sensitive);
 		notice.ShouldContain("-p:RevitVersion=2027", Case.Sensitive);
@@ -85,7 +94,7 @@ public sealed class UnbuiltReferenceNoticeTests
 
 		var notice = UnbuiltReferenceNotice(null, [Unresolved("Inspector", Contracts.OutputFilePath)], [legacy, Inspector], _ => false);
 
-		notice.ShouldNotBeNull().ShouldContain(@"msbuild ""D:\repo\Contracts\Contracts.csproj""", Case.Sensitive);
+		notice.ShouldNotBeNull().ShouldContain($"msbuild \"{Contracts.FilePath}\"", Case.Sensitive);
 		notice.ShouldNotContain("dotnet build \"", Case.Sensitive);
 		notice.ShouldContain("is built with MSBuild", Case.Sensitive);
 	}
@@ -104,7 +113,7 @@ public sealed class UnbuiltReferenceNoticeTests
 			PlatformWasChosen = true,
 			Available = new SolutionConfigurations { Platforms = ["x64", "x86", "ARM64"] },
 		};
-		string[] messages = [Unresolved("Inspector", @"D:\repo\Contracts\bin\x64\Debug\net10.0\Contracts.dll")];
+		string[] messages = [Unresolved("Inspector", InRepo("Contracts", "bin", "x64", "Debug", "net10.0", "Contracts.dll"))];
 
 		build.SuspectWrongPlatform(messages, _ => false).ShouldBeNull();
 
@@ -128,7 +137,7 @@ public sealed class UnbuiltReferenceNoticeTests
 	[Test]
 	public void Says_nothing_about_a_file_no_project_writes()
 	{
-		UnbuiltReferenceNotice(null, [Unresolved("Inspector", @"C:\nuget\Some.Package.dll")], Projects, _ => false).ShouldBeNull();
+		UnbuiltReferenceNotice(null, [Unresolved("Inspector", InRepo("packages", "Some.Package.dll"))], Projects, _ => false).ShouldBeNull();
 		UnbuiltReferenceNotice(null, ["Found project reference without a matching metadata reference: A.csproj"], Projects, _ => false)
 			.ShouldBeNull();
 	}
@@ -147,8 +156,9 @@ public sealed class UnbuiltReferenceNoticeTests
 			PlatformWasChosen = true,
 			Available = new SolutionConfigurations { Platforms = ["x64", "x86", "ARM64"] },
 		};
-		string[] messages = [Unresolved("Inspector", @"D:\repo\Contracts\bin\x64\Debug\net10.0\Contracts.dll")];
-		Func<string, bool> builtForX86 = path => path.Contains(@"\x86\", StringComparison.Ordinal);
+		string[] messages = [Unresolved("Inspector", InRepo("Contracts", "bin", "x64", "Debug", "net10.0", "Contracts.dll"))];
+		var x86Folder = $"{Path.DirectorySeparatorChar}x86{Path.DirectorySeparatorChar}";
+		Func<string, bool> builtForX86 = path => path.Contains(x86Folder, StringComparison.Ordinal);
 
 		build.SuspectWrongPlatform(messages, builtForX86).ShouldNotBeNull().ShouldContain("platform=x86", Case.Sensitive);
 		UnbuiltReferenceNotice(build, messages, Projects, builtForX86).ShouldBeNull();
@@ -156,6 +166,9 @@ public sealed class UnbuiltReferenceNoticeTests
 
 	/// <summary>The diagnostic as MSBuild words it for a project whose design-time build could not find a reference.</summary>
 	private static string Unresolved(string wanting, string path) =>
-		$@"Msbuild failed when processing the file 'D:\repo\{wanting}\{wanting}.csproj' with message: "
+		$"Msbuild failed when processing the file '{InRepo(wanting, $"{wanting}.csproj")}' with message: "
 		+ $"Cannot resolve Assembly or Windows Metadata file '{path}'";
+
+	/// <summary>A path under <see cref="Repo"/>, joined with this OS's separator.</summary>
+	private static string InRepo(params string[] segments) => Path.Combine([Repo, .. segments]);
 }

@@ -555,8 +555,9 @@ public sealed class WorkspaceManager(
 			var workers = Workers;
 			var loaded = workers.Where(worker => worker.IsAlive).Select(worker => worker.SolutionPath).ToList();
 			var stopped = workers.Where(worker => !worker.IsAlive).Select(worker => worker.SolutionPath).ToList();
+			var gone = stopped.Where(path => !File.Exists(path)).ToList();
 
-			return ByKey(key, loaded, stopped);
+			return ByKey(key, loaded, stopped, gone);
 		}
 
 		// Paths the call carries for its own reasons. The first that decides wins; an ambiguous one is
@@ -610,7 +611,7 @@ public sealed class WorkspaceManager(
 	/// naming nothing on disk whose last segment has the key's shape is refused, and it is named as the
 	/// key of a workspace this broker knows where it is one -- as loaded only while its worker serves,
 	/// since a stopped row is not loaded and calling it loaded would promise a warm answer where the
-	/// next call pays a full load.
+	/// next call pays a full load -- and as loadable again only while its solution file exists.
 	/// </para>
 	/// </summary>
 	private void RefuseAKeySentAsAPath(RootedPath named)
@@ -623,10 +624,15 @@ public sealed class WorkspaceManager(
 		var owner = _workers.Values.FirstOrDefault(
 			worker => string.Equals(Solutions.WorkspaceKey.For(worker.SolutionPath), sent, StringComparison.OrdinalIgnoreCase));
 
+		// A stopped row outlives its solution file when the worktree went, and following advice to load
+		// it again would only fail on the missing file.
 		var whose = owner switch
 		{
 			null => string.Empty,
 			{ IsAlive: true } => $" It is the key of {owner.SolutionPath}, which is loaded.",
+			_ when !File.Exists(owner.SolutionPath) =>
+				$" It is the key of {owner.SolutionPath}, whose worker has stopped ({owner.ExitReason}) and whose "
+					+ "solution file is gone, so it cannot be loaded again.",
 			_ => $" It is the key of {owner.SolutionPath}, whose worker has stopped ({owner.ExitReason}) and is "
 				+ "not loaded. Sent as workspaceKey it still names that workspace, and a call that needs the worker "
 				+ "starts a fresh one.",
@@ -645,9 +651,10 @@ public sealed class WorkspaceManager(
 	/// the path it came from. That is enough for the caller the key exists for: one that read it off a
 	/// result, which a loaded worker produced. A worker stopped since -- evicted, or crashed -- keeps its
 	/// row for a while, and its key still names it: the path is known, and the next call that needs the
-	/// worker starts a fresh one, as it would for the path. A broker that has restarted, or dropped the
-	/// row, has forgotten the key, which is a failure naming what is loaded and the argument that works
-	/// regardless, not a guess.
+	/// worker starts a fresh one, as it would for the path -- unless the solution file has gone with a
+	/// removed worktree, when status still answers from the row and nothing can load it again. A broker
+	/// that has restarted, or dropped the row, has forgotten the key, which is a failure naming what is
+	/// loaded and the argument that works regardless, not a guess.
 	/// </para>
 	/// <para>
 	/// The hash is four bytes, so two known solutions can share a key, however rarely; that is refused
@@ -657,7 +664,7 @@ public sealed class WorkspaceManager(
 	/// </para>
 	/// <para>
 	/// Static and public so the matching can be tested without starting a worker for every solution it
-	/// is asked to tell apart.
+	/// is asked to tell apart; which solution files exist is passed in for the same reason.
 	/// </para>
 	/// </summary>
 	/// <param name="key">The key the caller sent.</param>
@@ -665,10 +672,19 @@ public sealed class WorkspaceManager(
 	/// <param name="stopped">
 	/// The solution paths of stopped rows, which a key still names but a failure must not call loaded.
 	/// </param>
+	/// <param name="gone">
+	/// Those of <paramref name="stopped"/> whose solution file no longer exists, which nothing can load
+	/// again -- so a failure must not promise that a call will.
+	/// </param>
 	/// <exception cref="McpException">No known solution carries the key, or more than one does.</exception>
-	public static string ByKey(string key, IReadOnlyCollection<string> loaded, IReadOnlyCollection<string>? stopped = null)
+	public static string ByKey(
+		string key,
+		IReadOnlyCollection<string> loaded,
+		IReadOnlyCollection<string>? stopped = null,
+		IReadOnlyCollection<string>? gone = null)
 	{
 		stopped ??= [];
+		gone ??= [];
 
 		var wanted = key.Trim();
 		var matching = loaded
@@ -693,21 +709,25 @@ public sealed class WorkspaceManager(
 					+ "Pass workspace with the solution's path instead, which loads it.");
 		}
 
-		var known = loaded.Select(path => $"{Solutions.WorkspaceKey.For(path)} ({path})");
-		var cold = stopped.Select(path => $"{Solutions.WorkspaceKey.For(path)} ({path})");
+		static string Named(string path) => $"{Solutions.WorkspaceKey.For(path)} ({path})";
+
+		var reloadable = stopped.Where(path => !gone.Contains(path, PathCasing.Comparer)).ToList();
+		var unloadable = stopped.Where(path => gone.Contains(path, PathCasing.Comparer)).ToList();
 
 		var loadedPart = loaded.Count == 0
 			? "none is loaded"
-			: $"the loaded ones are: {string.Join(", ", known)}";
-		var stoppedPart = stopped.Count == 0
+			: $"the loaded ones are: {string.Join(", ", loaded.Select(Named))}";
+		var stoppedPart = reloadable.Count == 0
 			? string.Empty
-			: $"; stopped, and loaded again by the next call that needs one: {string.Join(", ", cold)}";
+			: $"; stopped, and loaded again by the next call that needs one: {string.Join(", ", reloadable.Select(Named))}";
+		var gonePart = unloadable.Count == 0
+			? string.Empty
+			: $"; stopped with the solution file gone, so it cannot be loaded again: {string.Join(", ", unloadable.Select(Named))}";
 
 		throw new McpException(
 			$"No workspace this broker holds has the workspaceKey {wanted}. A key names a workspace only while the "
-				+ "broker holds it, loaded or stopped, and "
-				+ $"{loadedPart}{stoppedPart}. Pass one of those keys, or workspace with the solution's path, which "
-				+ "loads it if it is not.");
+				+ $"broker holds it, loaded or stopped, and {loadedPart}{stoppedPart}{gonePart}. Pass one of those keys, "
+				+ "or workspace with the solution's path, which loads it if it is not.");
 	}
 
 	/// <summary>

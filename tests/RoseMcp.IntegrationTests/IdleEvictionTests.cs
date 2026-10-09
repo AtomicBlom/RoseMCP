@@ -144,6 +144,14 @@ public sealed class IdleEvictionTests
 		worker.ExitReason.ShouldBe(WorkerExitReason.Evicted);
 		EvictionNote(manager).ShouldNotBeNull().Message.ShouldNotBeNull().ShouldContain("missing");
 
+		// The key sent under the wrong argument is named as this workspace's, without the promise that a
+		// call loads it again: the solution file it would load from is gone.
+		var misread = WorkspaceHints.From(RootedPath.Absolute(Path.Combine(Path.GetDirectoryName(fixture.SolutionPath)!, worker.Key)));
+		var refused = Should.Throw<McpException>(() => manager.WorkspaceFor(misread));
+		refused.Message.ShouldContain($"It is the key of {worker.SolutionPath}");
+		refused.Message.ShouldContain("solution file is gone, so it cannot be loaded again");
+		refused.Message.ShouldNotContain("starts a fresh one");
+
 		await WaitUntilAsync(() => manager.Workers.Count == 0, TimeSpan.FromSeconds(60), cancellationToken);
 
 		manager.List().Workspaces.ShouldBeEmpty();

@@ -93,18 +93,38 @@ public sealed class WorkspaceKeyRoutingTests
 	}
 
 	/// <summary>
-	/// A stopped row is offered as somewhere the key could have meant, but never as loaded: calling it
-	/// loaded promises a warm answer where the next call pays a full load.
+	/// A stopped row whose solution file is still there is offered as somewhere the key could have
+	/// meant, and as loadable again, but never as loaded: calling it loaded promises a warm answer where
+	/// the next call pays a full load. Which files exist is the caller's to say, so nothing in
+	/// <c>gone</c> means every stopped row's file is there.
 	/// </summary>
 	[Test]
 	public void An_unknown_key_does_not_call_a_stopped_workspace_loaded()
 	{
-		var error = Should.Throw<McpException>(() => WorkspaceManager.ByKey("Shop-00000000", [], stopped: [Beta]))
+		var error = Should.Throw<McpException>(() => WorkspaceManager.ByKey("Shop-00000000", [], stopped: [Beta], gone: []))
 			.ShouldBeOfType<McpException>();
 
 		error.Message.ShouldContain("none is loaded", Case.Sensitive);
 		error.Message.ShouldContain($"stopped, and loaded again by the next call that needs one: {WorkspaceKey.For(Beta)} ({Beta})", Case.Sensitive);
 		error.Message.ShouldNotContain("the loaded ones are", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A stopped row whose solution file went with its worktree is named with the file it lost, and
+	/// never promised a reload: following that promise would only fail on the missing file.
+	/// </summary>
+	[Test]
+	public void An_unknown_key_does_not_promise_to_reload_a_workspace_whose_solution_is_gone()
+	{
+		var error = Should.Throw<McpException>(
+				() => WorkspaceManager.ByKey("Shop-00000000", [Alpha], stopped: [Beta], gone: [Beta]))
+			.ShouldBeOfType<McpException>();
+
+		error.Message.ShouldContain(
+			$"stopped with the solution file gone, so it cannot be loaded again: {WorkspaceKey.For(Beta)} ({Beta})",
+			Case.Sensitive);
+		error.Message.ShouldNotContain("loaded again by the next call", Case.Sensitive);
+		error.Message.ShouldContain($"the loaded ones are: {WorkspaceKey.For(Alpha)} ({Alpha})", Case.Sensitive);
 	}
 
 	/// <summary>

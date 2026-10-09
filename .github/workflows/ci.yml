@@ -564,6 +564,32 @@ jobs:
           --show-slowest-tests 20
           --timeout 27m
 
+      # What the deployment engine did, for the evidence below. A refused registration's failure names
+      # what Windows asked for and carries that activity's errors, but only the event log has every
+      # step of every attempt -- the framework installs the fixtures make before retrying included --
+      # and the frameworks the runner ended up with say which of those installs took.
+      - name: Keep the AppX deployment log
+        if: ${{ failure() || cancelled() }}
+        shell: pwsh
+        run: |
+          $out = 'tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/TestResults'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          # The job's own limit, so this reaches back to its first registration and no further.
+          $since = (Get-Date).AddMinutes(-60)
+          $events = Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-AppXDeploymentServer/Operational'; StartTime = $since } -ErrorAction SilentlyContinue |
+              Sort-Object TimeCreated
+          $events |
+              ForEach-Object { '{0:u} [{1}] {2} activity {3}: {4}' -f $_.TimeCreated, $_.LevelDisplayName, $_.Id, $_.ActivityId, ($_.Message -replace '\s+', ' ') } |
+              Set-Content (Join-Path $out 'appx-deployment.log')
+          Write-Host "Wrote $(@($events).Count) AppX deployment events since $since to $out/appx-deployment.log"
+
+          Get-AppxPackage |
+              Where-Object { $_.IsFramework -or $_.Name -like 'RoseMcp.ProbeApp.*' } |
+              Sort-Object Name, Architecture |
+              ForEach-Object { '{0} {1} {2} signature={3} framework={4}' -f $_.Name, $_.Version, $_.Architecture, $_.SignatureKind, $_.IsFramework } |
+              Set-Content (Join-Path $out 'appx-packages.txt')
+
       # The same evidence as the integration job keeps, under a name of its own so a run where both
       # fail keeps both. The tap's own logs are in it too: every process the suite starts, the apps'
       # injected providers included, logs under TestResults.

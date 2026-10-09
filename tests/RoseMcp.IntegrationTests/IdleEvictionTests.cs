@@ -130,11 +130,16 @@ public sealed class IdleEvictionTests
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		// On a clock the test moves, so the retirement under test is the solution going and never the
+		// idle limit passing during a stall, and the stopped row stays until the test moves past the limit.
+		var clock = new SteerableClock();
 		await using var manager = CreateManager(configure: options =>
 		{
-			options.IdleEvictionAfter = TimeSpan.FromSeconds(20);
+			options.IdleEvictionAfter = TimeSpan.FromMinutes(30);
 			options.SolutionGoneGrace = TimeSpan.FromMilliseconds(500);
 			options.EvictionSweepInterval = SweepInterval;
+			options.TimeProvider = clock;
 		});
 
 		var hints = WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath));
@@ -144,9 +149,14 @@ public sealed class IdleEvictionTests
 
 		var worker = manager.Workers.ShouldHaveSingleItem();
 
+		// After the load: a loading worker is never evicted, however long its solution has been gone, and
+		// on a loaded machine the load outlasts a short wait. The wait is long for the same reason -- a
+		// test process here stalls for ten seconds and more at a time.
+		await WaitUntilAsync(() => worker.LoadDuration is not null, TimeSpan.FromSeconds(60), cancellationToken);
+
 		File.Delete(fixture.SolutionPath);
 
-		await WaitUntilAsync(() => EvictionNote(manager) is not null, TimeSpan.FromSeconds(15), cancellationToken);
+		await WaitUntilAsync(() => EvictionNote(manager) is not null, TimeSpan.FromSeconds(60), cancellationToken);
 
 		worker.ExitReason.ShouldBe(WorkerExitReason.Evicted);
 		EvictionNote(manager).ShouldNotBeNull().Message.ShouldNotBeNull().ShouldContain("missing");
@@ -159,6 +169,7 @@ public sealed class IdleEvictionTests
 		refused.Message.ShouldContain("solution file is gone, so it cannot be loaded again");
 		refused.Message.ShouldNotContain("starts a fresh one");
 
+		clock.Jump(TimeSpan.FromHours(1));
 		await WaitUntilAsync(() => manager.Workers.Count == 0, TimeSpan.FromSeconds(60), cancellationToken);
 
 		manager.List().Workspaces.ShouldBeEmpty();

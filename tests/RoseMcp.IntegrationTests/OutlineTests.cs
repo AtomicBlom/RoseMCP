@@ -433,6 +433,35 @@ public sealed class OutlineTests
 	}
 
 	/// <summary>
+	/// What the other files declare is counted among the members the name filter keeps: a filter matching
+	/// only this file's members leaves nothing elsewhere to report, and a notice that there was would send
+	/// the caller after members it did not ask about.
+	/// </summary>
+	[Test]
+	public async Task Counts_only_the_filtered_members_another_file_declares()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			type: null,
+			fixture.Path("Members", "Library", "Split.cs"),
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken,
+			members: "First");
+
+		var type = result.Types.ShouldHaveSingleItem();
+
+		type.Members.ShouldHaveSingleItem().Name.ShouldBe("First");
+		type.DeclaredElsewhere.ShouldBe(0);
+		result.Notices.ShouldNotContain(notice => notice.Contains("declared in its other files", StringComparison.Ordinal));
+	}
+
+	/// <summary>
 	/// The case that makes it matter: a XAML code-behind's type is mostly its generated half, whose
 	/// members are none of what a caller outlining the code-behind is about to edit.
 	/// </summary>

@@ -132,7 +132,9 @@ public sealed class ResultBudgetTests
 		var batch = await ReadBatches.EachAsync(
 			snapshot,
 			asked,
-			request => NavigationService.DescribeAsync(snapshot, new SymbolTarget { Symbol = request }, TestContext.Current!.Execution.CancellationToken),
+			(request, used) => NavigationService.DescribeAsync(
+				snapshot, new SymbolTarget { Symbol = request }, TestContext.Current!.Execution.CancellationToken, used: used),
+			answer => answer.Members?.Count ?? 0,
 			(answer, shared) => answer with { Notices = ReadBatches.Own(answer.Notices, shared) },
 			TestContext.Current!.Execution.CancellationToken);
 
@@ -158,6 +160,58 @@ public sealed class ResultBudgetTests
 			listed,
 			"a referenced assembly's member, which always carries its signature");
 	}
+
+	/// <summary>
+	/// A list of reads is bounded as a whole, not per entry: the cap it takes is shared, so the symbols
+	/// past it answer with their shape and the answer stays the size one call's would. Measured over
+	/// symbols that overrun the cap between them, previews on.
+	/// </summary>
+	[Test]
+	public async Task A_list_of_heavy_reads_costs_no_more_than_one_answer()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		string[] used = ["System.String", "System.Int32", "System.Object", "System.Console", "System.Linq.Enumerable"];
+		var references = await ReadBatches.EachAsync(
+			snapshot,
+			used,
+			(request, before) => NavigationService.FindReferencesAsync(
+				snapshot, new SymbolTarget { Symbol = request }, MaxResults, cancellationToken, used: before),
+			answer => answer.Files.Sum(file => file.References.Count),
+			(answer, shared) => answer with { Notices = ReadBatches.Own(answer.Notices, shared) },
+			cancellationToken);
+
+		references.Results.Sum(entry => entry.Answer?.Files.Sum(file => file.References.Count) ?? 0).ShouldBeLessThanOrEqualTo(MaxResults);
+		references.Results.Count(entry => entry.Answer?.Shape is not null).ShouldBeGreaterThan(0, "a symbol past the shared cap gives its shape");
+		Size(references).ShouldBeLessThanOrEqualTo(WholeReferenceBatch, $"a batch of {used.Length} heavy reference searches");
+
+		string[] types = ["System.Text.StringBuilder", "System.Collections.Generic.List`1", "System.String"];
+		var described = await ReadBatches.EachAsync(
+			snapshot,
+			types,
+			(request, before) => NavigationService.DescribeAsync(snapshot, new SymbolTarget { Symbol = request }, cancellationToken, used: before),
+			answer => answer.Members?.Count ?? 0,
+			(answer, shared) => answer with { Notices = ReadBatches.Own(answer.Notices, shared) },
+			cancellationToken);
+
+		described.Results.Sum(entry => entry.Answer?.Members?.Count ?? 0).ShouldBeLessThanOrEqualTo(OutlineService.DefaultMaxMembers);
+		Size(described).ShouldBeLessThanOrEqualTo(WholeMemberBatch, $"a batch of {types.Length} library types");
+	}
+
+	/// <summary>
+	/// A reference cap the fixture's symbols overrun between them, standing in for the default against a
+	/// solution large enough to overrun that.
+	/// </summary>
+	private const int MaxResults = 20;
+
+	/// <summary>A whole batch of reference searches sharing the cap above, measured at 2,742.</summary>
+	private const int WholeReferenceBatch = 3000;
+
+	/// <summary>A whole batch of library types' member listings sharing the default member cap, measured at 35,924 -- what one type listed to the cap costs, rather than that once per type.</summary>
+	private const int WholeMemberBatch = 37000;
 
 	/// <summary>
 	/// And the write shape, which is the one an edit loop pays over and over. Its own fixture, since

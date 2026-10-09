@@ -623,6 +623,31 @@ public sealed class NavigationTests
 	}
 
 	/// <summary>
+	/// A kind no match carries is refused, naming the kinds there are, rather than answered with nothing
+	/// -- which reads as a name nothing declares. The name a person uses for a type is accepted.
+	/// </summary>
+	[Test]
+	public async Task A_search_refuses_a_kind_no_match_carries_and_names_the_ones_there_are()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var refusal = await Should.ThrowAsync<ArgumentException>(() => NavigationService.SearchAsync(
+			snapshot, "Greet", 50, TestContext.Current!.Execution.CancellationToken, kind: "Class"));
+
+		refusal.Message.ShouldContain("'Class'", Case.Sensitive);
+		refusal.Message.ShouldContain("NamedType", Case.Sensitive);
+		refusal.Message.ShouldContain("Method", Case.Sensitive);
+
+		var types = await NavigationService.SearchAsync(
+			snapshot, "Greet", 50, TestContext.Current!.Execution.CancellationToken, kind: "type");
+
+		types.Matches.ShouldNotBeEmpty();
+		types.Matches.ShouldAllBe(match => match.Kind == "NamedType");
+	}
+
+	/// <summary>
 	/// An address a result reports is one the next call takes. The signature beside it is for reading
 	/// and does not parse: it leads with the return type, so the space before the second qualified name
 	/// lands inside a segment, and it names the parameters, which are not their types. A caller who

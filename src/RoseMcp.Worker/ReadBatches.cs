@@ -57,7 +57,12 @@ public static class ReadBatches
 	/// <summary>Each request answered in order, from one snapshot.</summary>
 	/// <param name="snapshot">The snapshot every answer reads.</param>
 	/// <param name="requested">What was asked about, in order.</param>
-	/// <param name="answer">The read for one request.</param>
+	/// <param name="answer">
+	/// The read for one request, given how many items the entries before it listed. The cap a read takes
+	/// bounds the whole answer rather than each entry, so a read lists only what the cap has room left for
+	/// and describes the rest, as it would past its cap in a call of its own.
+	/// </param>
+	/// <param name="itemsListed">How many items an answer listed -- references, members -- against the shared cap.</param>
 	/// <param name="withoutNotices">
 	/// The answer with the given notices taken out of its own, which is how the snapshot's notices are
 	/// said once on the batch rather than on every answer.
@@ -71,7 +76,8 @@ public static class ReadBatches
 	public static async Task<ReadBatch<T>> EachAsync<T>(
 		WorkspaceSnapshot snapshot,
 		IReadOnlyList<string> requested,
-		Func<string, Task<T>> answer,
+		Func<string, int, Task<T>> answer,
+		Func<T, int> itemsListed,
 		Func<T, IReadOnlySet<string>, T> withoutNotices,
 		CancellationToken cancellationToken,
 		bool listed = true)
@@ -79,6 +85,7 @@ public static class ReadBatches
 	{
 		var shared = snapshot.Notices.ToHashSet(StringComparer.Ordinal);
 		var results = new List<ReadEntry<T>>();
+		var used = 0;
 
 		foreach (var request in requested)
 		{
@@ -92,7 +99,8 @@ public static class ReadBatches
 
 			try
 			{
-				var answered = await answer(request);
+				var answered = await answer(request, used);
+				used += itemsListed(answered);
 				results.Add(new ReadEntry<T> { Requested = request, Status = "found", Answer = withoutNotices(answered, shared) });
 			}
 			catch (ArgumentException refused) when (listed)

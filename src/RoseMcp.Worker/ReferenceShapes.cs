@@ -175,10 +175,20 @@ public static class ReferenceShapes
 	/// What an overflow says beside its shape: that the list was withheld, and the questions that would
 	/// list fewer, named by the arguments that ask them.
 	/// </summary>
-	public static string Overflow(int total, int maxResults) =>
-		$"{total} references is more than maxResults ({maxResults}), so their shape is given instead of "
-			+ "the list. Narrow with project, containingMember, isTestProject or isGenerated -- every "
-			+ $"group in the shape is a value one of them takes -- or pass maxResults={total} to list them all.";
+	/// <param name="total">How many references there are.</param>
+	/// <param name="maxResults">The cap, which bounds the whole call.</param>
+	/// <param name="used">How many of the cap earlier symbols of the same call listed.</param>
+	public static string Overflow(int total, int maxResults, int used = 0)
+	{
+		var limit = used == 0
+			? $"more than maxResults ({maxResults})"
+			: $"more than the {Math.Max(0, maxResults - used)} of maxResults ({maxResults}) the symbols before it left";
+		var raise = used == 0 ? $"maxResults={total}" : $"maxResults={total + used}, or ask about it alone,";
+
+		return $"{total} references is {limit}, so their shape is given instead of the list. Narrow with "
+			+ "project, containingMember, isTestProject or isGenerated -- every group in the shape is a value "
+			+ $"one of them takes -- or pass {raise} to list them all.";
+	}
 
 	/// <summary>What a search whose filters kept nothing says beside the unfiltered shape.</summary>
 	public static string NothingKept(int total, ReferenceFilter filter) =>

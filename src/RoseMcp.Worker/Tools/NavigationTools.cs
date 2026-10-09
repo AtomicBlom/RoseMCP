@@ -66,8 +66,9 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 			snapshot => ReadBatches.EachAsync(
 				snapshot,
 				requested,
-				request => NavigationService.DescribeAsync(
-					snapshot, Target(symbols, request, filePath, line, column), cancellationToken, includeSource, members, maxMembers),
+				(request, used) => NavigationService.DescribeAsync(
+					snapshot, Target(symbols, request, filePath, line, column), cancellationToken, includeSource, members, maxMembers, used),
+				answer => answer.Members?.Count ?? 0,
 				(answer, shared) => answer with { Notices = ReadBatches.Own(answer.Notices, shared) },
 				cancellationToken,
 				listed: symbols is not null),
@@ -134,7 +135,7 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 				return ReadBatches.EachAsync(
 					snapshot,
 					requested,
-					request =>
+					(request, used) =>
 					{
 						// Reported without a percentage, deliberately. Roslyn's reference search offers no
 						// progress and cannot say up front how much of the solution it will visit, so an
@@ -151,8 +152,10 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 							includePreviews,
 							containingMember,
 							isTestProject,
-							isGenerated);
+							isGenerated,
+							used);
 					},
+					answer => answer.Files.Sum(file => file.References.Count),
 					(answer, shared) => answer with { Notices = ReadBatches.Own(answer.Notices, shared) },
 					cancellationToken,
 					listed: symbols is not null);
@@ -255,7 +258,7 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 			snapshot => ReadBatches.EachAsync(
 				snapshot,
 				requested,
-				request => OutlineService.OutlineAsync(
+				(request, used) => OutlineService.OutlineAsync(
 					snapshot,
 					pathed ? null : request,
 					pathed ? request : null,
@@ -264,7 +267,9 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 					includeSignatures,
 					cancellationToken,
 					members,
-					maxMembers),
+					maxMembers,
+					used),
+				answer => answer.Types.Sum(type => type.Members.Count),
 				(answer, shared) => answer with { Notices = ReadBatches.Own(answer.Notices, shared) },
 				cancellationToken,
 				listed: symbols is not null),

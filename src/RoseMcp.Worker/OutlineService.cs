@@ -44,7 +44,8 @@ public static class OutlineService
 		bool includeSignatures,
 		CancellationToken cancellationToken,
 		string? members = null,
-		int maxMembers = DefaultMaxMembers)
+		int maxMembers = DefaultMaxMembers,
+		int used = 0)
 	{
 		var named = !string.IsNullOrWhiteSpace(type);
 		var pathed = !string.IsNullOrWhiteSpace(filePath);
@@ -60,7 +61,7 @@ public static class OutlineService
 		var notices = new List<string>(snapshot.Notices);
 
 		var filter = string.IsNullOrWhiteSpace(members) ? null : members.Trim();
-		var listing = new Listing(maxMembers <= 0 ? DefaultMaxMembers : maxMembers);
+		var listing = new Listing(maxMembers <= 0 ? DefaultMaxMembers : maxMembers, used);
 		var detail = new OutlineDetail(includeDocumentation, includeSignatures, includeInherited, filter);
 
 		var types = named
@@ -104,15 +105,17 @@ public static class OutlineService
 	/// <param name="members">Only members whose name contains this, ignoring case; null for all.</param>
 	/// <param name="maxMembers">How many to list at most; zero or less means <see cref="DefaultMaxMembers"/>.</param>
 	/// <param name="cancellationToken">Cancels the listing.</param>
+	/// <param name="used">How much of <paramref name="maxMembers"/> earlier entries of the same call listed.</param>
 	public static MemberListing ListReachable(
 		WorkspaceSnapshot snapshot,
 		INamedTypeSymbol type,
 		string? members,
 		int maxMembers,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		int used = 0)
 	{
 		var filter = string.IsNullOrWhiteSpace(members) ? null : members.Trim();
-		var listing = new Listing(maxMembers <= 0 ? DefaultMaxMembers : maxMembers);
+		var listing = new Listing(maxMembers <= 0 ? DefaultMaxMembers : maxMembers, used);
 		var detail = new OutlineDetail(Documentation: false, Signatures: true, Inherited: false, filter);
 
 		var all = Members(type, includeInherited: false).Where(IsReachableFromOutside).ToList();
@@ -158,9 +161,12 @@ public static class OutlineService
 	/// The member cap, shared across every type in the answer: a file of several types is one answer,
 	/// and a cap per type would let a file of many small types overrun it anyway.
 	/// </summary>
-	private sealed class Listing(int cap)
+	private sealed class Listing(int cap, int used = 0)
 	{
 		public int Cap { get; } = cap;
+
+		/// <summary>How much of the cap earlier entries of the same call listed, which this one does not have.</summary>
+		public int Used { get; } = used;
 
 		public int Listed { get; private set; }
 
@@ -172,7 +178,7 @@ public static class OutlineService
 		/// <summary>As many of these as the cap still has room for, recording that it cut some off.</summary>
 		public IReadOnlyList<ISymbol> Take(IReadOnlyList<ISymbol> matching)
 		{
-			var room = Math.Max(0, Cap - Listed);
+			var room = Math.Max(0, Cap - Used - Listed);
 			if (matching.Count > room) Truncated = true;
 
 			var taken = matching.Take(room).ToList();
@@ -200,7 +206,9 @@ public static class OutlineService
 
 			if (Truncated)
 			{
-				yield return $"Listed {Listed} of {Plural(found, "member")}, stopping at maxMembers={Cap}. "
+				var shared = Used == 0 ? "" : $", which the entries before this one had used {Used} of";
+
+				yield return $"Listed {Listed} of {Plural(found, "member")}, stopping at maxMembers={Cap}{shared}. "
 					+ "Narrow by name with members, or raise maxMembers, for the rest.";
 			}
 		}
@@ -282,7 +290,9 @@ public static class OutlineService
 		var all = onlyHome
 			? every.Where(member => !IsOwn(member, symbol) || IsDeclaredIn(member, home)).ToList()
 			: every;
-		var elsewhere = every.Count - all.Count;
+		// Counted among the members the name filter keeps, so the notice speaks of members the caller asked
+		// about rather than every member the other files declare.
+		var elsewhere = every.Count(detail.Matches) - all.Count(detail.Matches);
 
 		var matching = all.Where(detail.Matches).ToList();
 

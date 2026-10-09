@@ -85,10 +85,17 @@ revision, which every answer would otherwise repeat.
 A list waited for the answers to shrink, since batching a read whose answer is already large
 multiplies the payload as well as saving the turns. They have: an outline member is its name, kind,
 accessibility and line, documentation is a sentence there and a bounded summary in symbol info, and a
-reference search past its cap answers with its shape rather than its list. So the arguments that bound
-an answer -- `maxResults`, `maxMembers`, the filters -- bound each entry, as they would one call. A
-list of five costs what five calls would, in one turn, and nothing more: what an entry adds beyond its
-answer is held by `ResultBudgetTests.PerBatchEntry`.
+reference search past its cap answers with its shape rather than its list. The filters apply to
+every entry, but the caps -- `maxResults` and `maxMembers` -- bound the whole answer rather than each
+entry, shared in the order the names were given: once the entries before it have listed the cap, an
+entry answers as a call past its cap does, with the shape of its references or the count of its
+members and a notice saying the cap was spent before it. A cap per entry would let eight heavy symbols
+answer at eight times what one call may, which is the overrun the cap exists to prevent; the outline
+already shares one cap across every type of a file for that reason. Sharing it rather than capping
+how many names a list may hold keeps every name answered -- a name past the cap still says how many
+references it has and where -- and keeps the bound where the cost is. `ResultBudgetTests` holds the
+whole answer of a heavy list to what one call costs, and what an entry adds beyond its answer to
+`PerBatchEntry`.
 
 What makes the whole call impossible is refused once, before any entry is answered: an empty list,
 naming it; a `project` no project carries; names given beside a position. A position, and

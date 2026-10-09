@@ -143,7 +143,7 @@ public static class ToolDescriptions
 
 	public const string DiagnosticIsGeneratedArgument = "true: only diagnostics in generated code; false: only the rest.";
 
-	public const string MaxReferencesArgument = "Most references to list; past it, their shape instead. Defaults to 200.";
+	public const string MaxReferencesArgument = "Most references to list across the symbols; past it, their shape instead. Defaults to 200.";
 
 	public const string DefinitionsOnlyArgument =
 		"Return where it is declared, how many uses there are and their shape, without listing them.";
@@ -284,7 +284,7 @@ public static class ToolDescriptions
 		"Types, as Namespace.Type, each outlined on its own. One of this and filePath.";
 
 	public const string OutlineFilePathArgument =
-		"The file to outline, only what it declares. One of this and symbol.";
+		"The file to outline, only what it declares. One of this and symbols.";
 
 	public const string OutlineMembersArgument =
 		"Only members whose name contains this, ignoring case.";
@@ -298,14 +298,14 @@ public static class ToolDescriptions
 	/// name contains this" is the same sentence whichever tool narrows by it.
 	/// </summary>
 	public const string MaxSymbolMembersArgument =
-		"Maximum members to list. Defaults to 200.";
+		"Maximum members to list, across the symbols. Defaults to 200.";
 
 	/// <summary>
 	/// Its own rather than the outline's, which names outlining. The type argument is shared, because
 	/// "the type, as Namespace.Type" is the same sentence whatever is then done with it.
 	/// </summary>
 	public const string SplitOptionsFilePathArgument =
-		"The file to read. One of this and type; every type it declares is answered for.";
+		"The file to read. One of this and symbol; every type it declares is answered for.";
 
 	public const string ResolveNameArgument =
 		"The name as the code spells it: Encoding, List<int>, Encoding.UTF8, or System.Text.Encoding.";

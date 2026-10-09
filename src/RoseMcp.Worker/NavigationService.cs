@@ -27,13 +27,15 @@ public static class NavigationService
 	/// else.
 	/// </param>
 	/// <param name="maxMembers">For a metadata type, how many members to list at most.</param>
+	/// <param name="used">How much of <paramref name="maxMembers"/> earlier symbols of the same call listed.</param>
 	public static async Task<SymbolInfoResult> DescribeAsync(
 		WorkspaceSnapshot snapshot,
 		SymbolTarget request,
 		CancellationToken cancellationToken,
 		bool includeSource = false,
 		string? members = null,
-		int maxMembers = OutlineService.DefaultMaxMembers)
+		int maxMembers = OutlineService.DefaultMaxMembers,
+		int used = 0)
 	{
 		// The one read that can say something true about a symbol it cannot edit, so it is the one that
 		// looks in metadata when nothing in source carries the name.
@@ -58,7 +60,7 @@ public static class NavigationService
 		// A metadata type has no file for rose_outline to read, so its members are listed here; a source
 		// type is outline's, and listing it here too would be the same answer in two shapes.
 		var listing = symbol is INamedTypeSymbol type && declarations.Count == 0
-			? OutlineService.ListReachable(snapshot, type, members, maxMembers, cancellationToken)
+			? OutlineService.ListReachable(snapshot, type, members, maxMembers, cancellationToken, used)
 			: null;
 
 		if (listing is not null)
@@ -139,6 +141,10 @@ public static class NavigationService
 	/// </param>
 	/// <param name="isTestProject">True for only references in test projects, false for only those outside them.</param>
 	/// <param name="isGenerated">True for only references in source-generated code, false for only those in files.</param>
+	/// <param name="used">
+	/// How many references earlier symbols of the same call already listed against <paramref name="maxResults"/>,
+	/// which bounds the whole answer: this one lists only what is left of it.
+	/// </param>
 	/// <exception cref="ArgumentException">The solution has no project of that name.</exception>
 	public static async Task<ReferencesResult> FindReferencesAsync(
 		WorkspaceSnapshot snapshot,
@@ -150,7 +156,8 @@ public static class NavigationService
 		bool includePreviews = true,
 		string? containingMember = null,
 		bool? isTestProject = null,
-		bool? isGenerated = null)
+		bool? isGenerated = null,
+		int used = 0)
 	{
 		// Resolved before the search, so a name no project carries is refused rather than filtering every
 		// reference out: an empty list reads exactly like a symbol nobody uses, which invites a deletion.
@@ -220,11 +227,12 @@ public static class NavigationService
 		// every use instead, and says so: an empty list there reads as a symbol nobody uses, and the
 		// unfiltered shape is what shows the caller which question does have an answer.
 		var keptNothing = kept.Length == 0 && every.Length > 0;
-		var overflows = !definitionsOnly && kept.Length > maxResults;
+		var room = Math.Max(0, maxResults - used);
+		var overflows = !definitionsOnly && kept.Length > room;
 
 		var notices = new List<string>();
 		if (keptNothing) notices.Add(ReferenceShapes.NothingKept(every.Length, filter));
-		else if (overflows) notices.Add(ReferenceShapes.Overflow(kept.Length, maxResults));
+		else if (overflows) notices.Add(ReferenceShapes.Overflow(kept.Length, maxResults, used));
 
 		var shape = keptNothing ? ReferenceShapes.Of(every)
 			: (definitionsOnly || overflows) && kept.Length > 0 ? ReferenceShapes.Of(kept)
@@ -706,7 +714,7 @@ public static class NavigationService
 		var searched = project is { Length: > 0 }
 			? ProjectNames.Resolve(snapshot.Solution, project)
 			: snapshot.Solution.Projects;
-		var wantedKind = string.IsNullOrWhiteSpace(kind) ? null : kind.Trim();
+		var wantedKind = SearchKind(kind);
 
 		foreach (var candidate in searched)
 		{
@@ -763,6 +771,26 @@ public static class NavigationService
 				: [],
 		};
 	}
+
+	/// <summary>
+	/// The symbol kind a search's <c>kind</c> names, as a match reports it, or null for every kind.
+	/// <c>Type</c> is accepted for <c>NamedType</c>, which is what a person calls it. Anything else is
+	/// refused, listing what is accepted: a kind no match carries would answer with nothing, which reads
+	/// as a name nothing declares. <c>Class</c> or <c>Interface</c> is refused rather than taken as a type,
+	/// since the search cannot tell a class from an interface and answering with both would not be the
+	/// question asked.
+	/// </summary>
+	/// <exception cref="ArgumentException">The kind is not one a match carries.</exception>
+	private static string? SearchKind(string? kind) => kind?.Trim().ToLowerInvariant() switch
+	{
+		null or "" => null,
+		"namedtype" or "type" => nameof(SymbolKind.NamedType),
+		"method" => nameof(SymbolKind.Method),
+		"property" => nameof(SymbolKind.Property),
+		"field" => nameof(SymbolKind.Field),
+		"event" => nameof(SymbolKind.Event),
+		_ => throw ArgumentValues.Unknown("kind", kind, "NamedType (or Type)", "Method", "Property", "Field", "Event"),
+	};
 
 	/// <summary>How a search's matches divide by kind and by project, each group keyed by the value its argument takes.</summary>
 	private static SymbolSearchShape SearchShape(IReadOnlyCollection<(ISymbol Symbol, string Project)> matches) => new()

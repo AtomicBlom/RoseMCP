@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
 using Microsoft.CodeAnalysis;
@@ -20,11 +21,18 @@ namespace RoseMcp.UnitTests;
 /// <c>WithStdioServerTransport</c>, and every project it references, analyzer references included: the
 /// XAML stubs run inside the worker, so their stdout is the worker's. The WinUI windows are referenced
 /// by none of them and are not read. The check is syntax rather than binding, because binding needs a
-/// project's references and so a build, and two of the three hosts cannot build off Windows, where this
+/// project's references and so a build, and the live-app host cannot build off Windows, where this
 /// suite also runs.
 /// </para>
+/// <para>
+/// Three things reach stdout: a <see cref="Console"/> member that writes to it, console logging that
+/// sends any level there, and a host builder whose default providers, a stdout console logger among
+/// them, are never cleared. Every branch of every <c>#if</c> is read, whichever symbol it turns on.
+/// What gets past it is a write that names none of these -- a stream opened some other way -- which is
+/// what the logging tests are for.
+/// </para>
 /// </summary>
-public sealed class StdoutRuleTests
+public sealed partial class StdoutRuleTests
 {
 	private const string Rule =
 		"Nothing writes to stdout in stdio mode except protocol frames (CLAUDE.md, docs/invariants/transport-and-lifetime.md). "
@@ -39,12 +47,13 @@ public sealed class StdoutRuleTests
 	/// </summary>
 	private static readonly HashSet<string> ConsoleFormatters = new(StringComparer.Ordinal) { "AddSimpleConsole", "AddJsonConsole", "AddSystemdConsole" };
 
-	/// <summary>Debug's symbols and Release's, so a write behind <c>#if DEBUG</c> is read as well as one outside it.</summary>
-	private static readonly CSharpParseOptions[] Configurations =
-	[
-		new(LanguageVersion.Preview, preprocessorSymbols: ["DEBUG", "TRACE"]),
-		new(LanguageVersion.Preview, preprocessorSymbols: ["RELEASE", "TRACE"]),
-	];
+	/// <summary>
+	/// The host builders that register the default logging providers, console included. The empty
+	/// builders register none, and are left out for that reason.
+	/// </summary>
+	private static readonly HashSet<string> HostBuilders = new(StringComparer.Ordinal) { "CreateApplicationBuilder", "CreateDefaultBuilder", "CreateBuilder", "CreateSlimBuilder" };
+
+	private static readonly CSharpParseOptions Options = new(LanguageVersion.Preview, preprocessorSymbols: ["DEBUG", "TRACE"]);
 
 	[Test]
 	public void Nothing_a_stdio_process_loads_writes_to_stdout()
@@ -100,7 +109,7 @@ public sealed class StdoutRuleTests
 	[Test]
 	public void Finds_a_write_through_another_files_global_import()
 	{
-		var imports = ConsoleImports.Of(Parse("global using static System.Console;", Configurations[0]).GetCompilationUnitRoot().Usings);
+		var imports = ConsoleImports.Of(CSharpSyntaxTree.ParseText("global using static System.Console;", Options).GetCompilationUnitRoot().Usings);
 
 		WritesIn(Method("WriteLine(1);"), imports).ShouldNotBeEmpty();
 		WritesIn(Method("WriteLine(1);"), ConsoleImports.None).ShouldBeEmpty();
@@ -118,28 +127,86 @@ public sealed class StdoutRuleTests
 		WritesIn(Method(statement), ConsoleImports.None).ShouldBeEmpty();
 	}
 
+	/// <summary>Every branch of every conditional, whatever symbol it turns on and whichever side of it the write is.</summary>
 	[Test]
-	[Arguments("#if DEBUG")]
-	[Arguments("#if !DEBUG")]
-	public void Reads_both_sides_of_a_configuration(string condition)
+	[Arguments("#if DEBUG\nConsole.WriteLine(1);\n#endif")]
+	[Arguments("#if !DEBUG\nConsole.WriteLine(1);\n#endif")]
+	[Arguments("#if WINDOWS\nConsole.WriteLine(1);\n#endif")]
+	[Arguments("#if NET10_0_OR_GREATER\nConsole.Error.WriteLine(1);\n#else\nConsole.WriteLine(1);\n#endif")]
+	[Arguments("#if WINDOWS\nConsole.Error.WriteLine(1);\n#elif A && !B\nConsole.WriteLine(1);\n#else\nConsole.Error.WriteLine(1);\n#endif")]
+	public void Reads_every_branch_of_a_conditional(string body)
 	{
-		var source = Method($"{Environment.NewLine}{condition}{Environment.NewLine}Console.WriteLine(1);{Environment.NewLine}#endif{Environment.NewLine}");
+		WritesIn(Method(body.Replace("\n", Environment.NewLine, StringComparison.Ordinal)), ConsoleImports.None).ShouldNotBeEmpty();
+	}
 
-		WritesIn(source, ConsoleImports.None).ShouldNotBeEmpty();
+	[Test]
+	[Arguments("var builder = Host.CreateApplicationBuilder(args);")]
+	[Arguments("var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();")]
+	[Arguments("var builder = WebApplication.CreateBuilder();")]
+	[Arguments("var builder = WebApplication.CreateSlimBuilder();")]
+	[Arguments("var host = Host.CreateDefaultBuilder(args).Build();")]
+	public void Finds_a_host_whose_default_console_logger_is_left_in(string statement)
+	{
+		WritesIn(Method(statement), ConsoleImports.None).ShouldNotBeEmpty();
+	}
+
+	[Test]
+	[Arguments("var builder = Host.CreateApplicationBuilder(args);\nbuilder.Logging.ClearProviders();")]
+	[Arguments("var host = Host.CreateDefaultBuilder(args).ConfigureLogging(logging => logging.ClearProviders()).Build();")]
+	[Arguments("var builder = Host.CreateEmptyApplicationBuilder(new());")]
+	[Arguments("var builder = ImmutableArray.CreateBuilder<int>();")]
+	public void Leaves_a_host_alone_that_clears_its_logging_providers(string statement)
+	{
+		WritesIn(Method(statement.Replace("\n", Environment.NewLine, StringComparison.Ordinal)), ConsoleImports.None).ShouldBeEmpty();
+	}
+
+	/// <summary>
+	/// The shape the server has: one method that clears the providers it is given, called by each method
+	/// that builds a host, and a method that builds and clears a host of its own, which clears nothing
+	/// for its caller.
+	/// </summary>
+	[Test]
+	public void Follows_the_logging_into_a_method_of_the_same_file_that_clears_it()
+	{
+		string[] lines =
+		[
+			"class C {",
+			"void M() { var builder = Host.CreateApplicationBuilder(); }",
+			"void N() { var builder = Host.CreateApplicationBuilder(); Configure(builder.Logging); }",
+			"void O() { Relay(); var builder = Host.CreateApplicationBuilder(); }",
+			"void Relay() { var builder = Host.CreateApplicationBuilder(); builder.Logging.ClearProviders(); }",
+			"static void Configure(ILoggingBuilder logging) => Helper(logging);",
+			"static void Helper(ILoggingBuilder logging) => logging.ClearProviders(); }",
+		];
+
+		WritesIn(string.Join(Environment.NewLine, lines), ConsoleImports.None).Select(write => write.Split(':')[0]).ShouldBe(["2", "4"]);
 	}
 
 	private static string Method(string body) => $"class C{Environment.NewLine}{{{Environment.NewLine}void M(){Environment.NewLine}{{{Environment.NewLine}{body}{Environment.NewLine}}}{Environment.NewLine}}}";
 
 	private static IReadOnlyList<string> WritesIn(string source, ConsoleImports imports) =>
-		[.. Configurations.SelectMany(options => WritesIn(Parse(source, options), imports)).Select(write => write.What).Distinct()];
+		[.. Parse(source, string.Empty).SelectMany(tree => WritesIn(tree, imports)).Select(write => $"{write.Line}: {write.What}").Distinct()];
 
-	private static SyntaxTree Parse(string source, CSharpParseOptions options) => CSharpSyntaxTree.ParseText(source, options);
+	/// <summary>
+	/// A file twice: as Debug compiles it, and with its conditional directives blanked, so that every
+	/// branch of every <c>#if</c>, <c>#elif</c> and <c>#else</c> is code at once. The second parse may
+	/// hold two branches that could never compile together, which a syntax walk does not mind, and its
+	/// lines are the file's own, since only the directive lines are emptied.
+	/// </summary>
+	private static SyntaxTree[] Parse(string text, string path) =>
+	[
+		CSharpSyntaxTree.ParseText(text, Options, path),
+		CSharpSyntaxTree.ParseText(ConditionalDirective().Replace(text, string.Empty), Options, path),
+	];
+
+	[GeneratedRegex(@"^[ \t]*#[ \t]*(if|elif|else|endif)\b.*$", RegexOptions.Multiline)]
+	private static partial Regex ConditionalDirective();
 
 	/// <summary>Every write in a project's sources, as <c>file:line: what</c> from the repository root.</summary>
 	private static IEnumerable<string> WritesIn(Project project)
 	{
 		var trees = project.Sources
-			.SelectMany(path => Configurations.Select(options => CSharpSyntaxTree.ParseText(File.ReadAllText(path), options, path)))
+			.SelectMany(path => Parse(File.ReadAllText(path), path))
 			.ToList();
 		var projectWide = ConsoleImports.FromProjectFile(project.File)
 			.With(ConsoleImports.FromProjectFile(Checkout.RepositoryFile("Directory.Build.props")))
@@ -155,11 +222,16 @@ public sealed class StdoutRuleTests
 	{
 		var root = tree.GetCompilationUnitRoot();
 		var imports = projectWide.With(ConsoleImports.Of(root.DescendantNodes().OfType<UsingDirectiveSyntax>()));
+		var clearers = Clearers(root);
 
 		foreach (var node in root.DescendantNodes())
 		{
 			var what = node switch
 			{
+				InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax access } call
+					when HostBuilders.Contains(access.Name.Identifier.ValueText) && LastName(access.Expression) is "Host" or "WebApplication" && !ClearsProviders(call, clearers) =>
+					$"{LastName(access.Expression)}.{access.Name.Identifier.ValueText} keeps the default logging providers, whose console logger writes to stdout; "
+					+ "call ClearProviders() in the same member, or pass its Logging to a method of this file that does",
 				MemberAccessExpressionSyntax access when StdoutMembers.Contains(access.Name.Identifier.ValueText) && imports.Names(access.Expression) =>
 					$"Console.{access.Name.Identifier.ValueText}",
 				IdentifierNameSyntax name when imports.Static && StdoutMembers.Contains(name.Identifier.ValueText) && IsUnqualified(name) =>
@@ -187,12 +259,7 @@ public sealed class StdoutRuleTests
 	/// </summary>
 	private static string? ConsoleLogging(InvocationExpressionSyntax call)
 	{
-		var name = call.Expression switch
-		{
-			MemberAccessExpressionSyntax access => access.Name.Identifier.ValueText,
-			IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
-			_ => null,
-		};
+		var name = InvokedName(call);
 
 		if (name is not null && ConsoleFormatters.Contains(name))
 		{
@@ -207,6 +274,82 @@ public sealed class StdoutRuleTests
 
 		return allToStderr ? null : "AddConsole without LogToStandardErrorThreshold = LogLevel.Trace, which leaves every level below the threshold on stdout";
 	}
+
+	/// <summary>
+	/// Whether the member building a host clears its logging providers: it calls <c>ClearProviders</c>
+	/// itself, or hands a <c>.Logging</c> to a method of the same file that clears what it is given. A
+	/// top-level program is one member. The member rather than the file, because a file can build more
+	/// than one host; and a call counts only with the logging passed in, because calling a method that
+	/// builds and clears a host of its own leaves this one's providers where they were.
+	/// </summary>
+	private static bool ClearsProviders(InvocationExpressionSyntax creation, IReadOnlySet<string> clearers)
+	{
+		var member = creation.Ancestors().FirstOrDefault(node => node is MemberDeclarationSyntax and not GlobalStatementSyntax and not BaseTypeDeclarationSyntax and not BaseNamespaceDeclarationSyntax)
+			?? creation.SyntaxTree.GetRoot();
+
+		return member.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(call =>
+			InvokedName(call) == "ClearProviders"
+			|| (clearers.Contains(InvokedName(call) ?? string.Empty)
+				&& call.ArgumentList.Arguments.Any(argument => argument.Expression is MemberAccessExpressionSyntax { Name.Identifier.ValueText: "Logging" })));
+	}
+
+	/// <summary>
+	/// The methods of a file that clear the providers of a logging builder they are given: one that calls
+	/// <c>ClearProviders</c> on a parameter, or passes a parameter on to another such method.
+	/// </summary>
+	private static HashSet<string> Clearers(SyntaxNode root)
+	{
+		var clearers = new HashSet<string>(StringComparer.Ordinal);
+		var methods = root.DescendantNodes()
+			.Select(node => node switch
+			{
+				MethodDeclarationSyntax method => (Name: method.Identifier.ValueText, Parameters: (ParameterListSyntax?)method.ParameterList, Body: (SyntaxNode)method),
+				LocalFunctionStatementSyntax function => (Name: function.Identifier.ValueText, Parameters: function.ParameterList, Body: function),
+				_ => (Name: string.Empty, Parameters: null, Body: node),
+			})
+			.Where(method => method.Parameters is not null)
+			.Select(method => (method.Name, Parameters: method.Parameters!.Parameters.Select(parameter => parameter.Identifier.ValueText).ToHashSet(StringComparer.Ordinal), method.Body))
+			.ToList();
+
+		for (var grew = true; grew;)
+		{
+			var found = methods
+				.Where(method => !clearers.Contains(method.Name) && method.Body.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(call =>
+				{
+					var clearsParameter = InvokedName(call) == "ClearProviders"
+						&& call.Expression is MemberAccessExpressionSyntax { Expression: IdentifierNameSyntax receiver }
+						&& method.Parameters.Contains(receiver.Identifier.ValueText);
+					var passesParameterOn = clearers.Contains(InvokedName(call) ?? string.Empty)
+						&& call.ArgumentList.Arguments.Any(argument => argument.Expression is IdentifierNameSyntax passed && method.Parameters.Contains(passed.Identifier.ValueText));
+
+					return clearsParameter || passesParameterOn;
+				}))
+				.Select(method => method.Name)
+				.ToList();
+
+			clearers.UnionWith(found);
+			grew = found.Count > 0;
+		}
+
+		return clearers;
+	}
+
+	private static string? InvokedName(InvocationExpressionSyntax call) => call.Expression switch
+	{
+		MemberAccessExpressionSyntax access => access.Name.Identifier.ValueText,
+		IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+		_ => null,
+	};
+
+	/// <summary>The type a static call is made on, however it is qualified.</summary>
+	private static string? LastName(ExpressionSyntax receiver) => receiver switch
+	{
+		MemberAccessExpressionSyntax access => access.Name.Identifier.ValueText,
+		AliasQualifiedNameSyntax alias => alias.Name.Identifier.ValueText,
+		QualifiedNameSyntax qualified => qualified.Right.Identifier.ValueText,
+		SimpleNameSyntax name => name.Identifier.ValueText,
+		_ => null,
+	};
 
 	private static string? AssignedName(ExpressionSyntax target) => target switch
 	{
@@ -242,7 +385,7 @@ public sealed class StdoutRuleTests
 		var text = File.ReadAllText(path);
 		if (!text.Contains("WithStdioServerTransport", StringComparison.Ordinal)) return false;
 
-		return CSharpSyntaxTree.ParseText(text, Configurations[0]).GetRoot().DescendantNodes()
+		return CSharpSyntaxTree.ParseText(text, Options).GetRoot().DescendantNodes()
 			.OfType<MemberAccessExpressionSyntax>()
 			.Any(access => access.Name.Identifier.ValueText == "WithStdioServerTransport");
 	}

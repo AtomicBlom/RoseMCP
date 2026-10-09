@@ -6,10 +6,14 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   and to a file. A stray `Console.WriteLine` corrupts the stream, and the failure looks like a
   protocol bug. `StdoutRuleTests` holds the rule against the source of every project a stdio host
   loads -- a host is found by its `WithStdioServerTransport` call, and what it loads by following
-  its project references -- and fails on a stdout write in any spelling `Console` allows, or on
-  console logging that leaves a level on stdout, naming the file and the line. It reads syntax rather
-  than binding, so a write that never names `Console` gets past it; that is what the logging test
-  below is for. `RoseMcp.Logging` adds the file sink -- Serilog behind the existing
+  its project references -- and names the file and the line of each of three things: a stdout write
+  in any spelling `Console` allows; console logging that leaves a level on stdout; and a host
+  builder (`Host` or `WebApplication`'s `CreateApplicationBuilder`, `CreateDefaultBuilder`,
+  `CreateBuilder`, `CreateSlimBuilder`) whose member neither calls `ClearProviders()` nor passes its
+  `.Logging` to a method of the same file that clears the builder it is given, since the default
+  providers include a console logger on stdout. Every branch of every `#if` is read. It reads syntax
+  rather than binding, so a write that names none of these -- a stream opened some other way -- gets
+  past it; that is what the logging test below is for. `RoseMcp.Logging` adds the file sink -- Serilog behind the existing
   `Microsoft.Extensions.Logging` call sites, never a console sink, and there is a regression test
   asserting the pipeline writes nothing to stdout at all. Logs land in
   `%LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{Server,Worker,Tray,Inspector}/[{solution}-]{yyyyMMdd-HHmmss}.log`

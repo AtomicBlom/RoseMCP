@@ -166,10 +166,15 @@ public static class SolutionResolver
 
 		var wanted = files.Select(Path.GetFullPath).ToArray();
 		var overlaps = new List<SolutionOverlap>();
+		var loaded = ProjectsOf(full);
 
 		foreach (var sibling in SolutionsIn(new DirectoryInfo(directory)))
 		{
 			if (sibling.Equals(full, StringComparison.OrdinalIgnoreCase)) continue;
+
+			// A sibling with no project outside this one has nothing the change could have missed.
+			var onlyItsOwn = ProjectsOf(sibling).Except(loaded, StringComparer.OrdinalIgnoreCase);
+			if (!onlyItsOwn.Any()) continue;
 
 			var shared = wanted.Count(file => Contains(sibling, file));
 			if (shared > 0) overlaps.Add(new SolutionOverlap { SolutionPath = sibling, SharedFileCount = shared });
@@ -267,6 +272,18 @@ public static class SolutionResolver
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{
 			return false;
+		}
+	}
+
+	private static string[] ProjectsOf(string solutionPath)
+	{
+		try
+		{
+			return [.. SolutionFileReader.ReadProjectPaths(solutionPath).Select(Path.GetFullPath)];
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			return [];
 		}
 	}
 

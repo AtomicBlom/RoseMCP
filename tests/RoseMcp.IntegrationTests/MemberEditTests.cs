@@ -272,6 +272,56 @@ public sealed class MemberEditTests
 	}
 
 	/// <summary>
+	/// A backing field and the property over it are a block as much as a run of fields is. A pair added
+	/// as a pair stays packed, and a property added under a packed one joins it rather than opening a gap
+	/// in the middle of the pair.
+	/// </summary>
+	[Test]
+	[Arguments(
+		"Second",
+		"private int _third;\r\npublic int Third => _third;",
+		"\tpublic int Second => _second;\r\n\r\n\tprivate int _third;\r\n\tpublic int Third => _third;\r\n}")]
+	[Arguments(
+		"First",
+		"public int Doubled => _first * 2;",
+		"\tpublic int First => _first;\r\n\tpublic int Doubled => _first * 2;\r\n\r\n\tprivate int _second;")]
+	public async Task Adds_into_a_packed_field_and_property_pair_without_spacing_it(string after, string code, string expected)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Paired.cs"),
+			"""
+			namespace Library;
+
+			public sealed class Paired
+			{
+				private int _first;
+				public int First => _first;
+
+				private int _second;
+				public int Second => _second;
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Paired",
+			Code = code,
+			After = after,
+		});
+
+		result.Applied.ShouldBeTrue();
+
+		(await ReadAsync(fixture, "Paired.cs")).ShouldContain(expected, Case.Sensitive);
+	}
+
+	/// <summary>
 	/// A partial type whose other half a source generator writes has one place a member can go, so it is
 	/// added there without being told. Counting the generated half as a candidate refuses every type an
 	/// MVVM toolkit or a XAML compiler touches until the caller passes the one file that was ever possible.
@@ -880,6 +930,41 @@ public sealed class MemberEditTests
 
 		text.ShouldContain("public interface IShape", Case.Sensitive);
 		text.ShouldNotContain("double Area()", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A file indented deeper than the formatter would put it keeps every line the deletion did not
+	/// remove. Formatting the type the member was taken out of re-indents all of its other members,
+	/// which turns one deletion into a diff of the whole file.
+	/// </summary>
+	[Test]
+	[Arguments("First", "\t\tpublic int Second => 2;\r\n\r\n\t\tpublic int Third => 3;\r\n\t}\r\n")]
+	[Arguments("Second", "\t\tpublic int First => 1;\r\n\r\n\t\tpublic int Third => 3;\r\n\t}\r\n")]
+	[Arguments("Third", "\t\tpublic int First => 1;\r\n\r\n\t\tpublic int Second => 2;\r\n\t}\r\n")]
+	public async Task Removes_a_member_without_reindenting_the_rest_of_the_type(string removed, string expected)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Deeper.cs"),
+			"namespace Library;\r\n\r\n\tpublic sealed class Deeper\r\n\t{\r\n\t\tpublic int First => 1;\r\n\r\n"
+				+ "\t\tpublic int Second => 2;\r\n\r\n\t\tpublic int Third => 3;\r\n\t}\r\n",
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Delete,
+			Symbol = $"Library.Deeper.{removed}",
+		});
+
+		result.Applied.ShouldBeTrue();
+
+		var text = await ReadAsync(fixture, "Deeper.cs");
+
+		text.ShouldBe("namespace Library;\r\n\r\n\tpublic sealed class Deeper\r\n\t{\r\n" + expected);
+		result.Notices.ShouldNotContain(notice => notice.Contains("Nothing this was asked to do reaches them", StringComparison.Ordinal));
 	}
 
 	/// <summary>

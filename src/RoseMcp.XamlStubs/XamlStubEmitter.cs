@@ -39,12 +39,11 @@ public static class XamlStubEmitter
 			return XamlStubEmission.Skipped($"no class {document.ClassName} in this project");
 		}
 
-		// The real partial is present -- some project shapes do put it in the compilation -- so
-		// generating a second one would be a pile of duplicate members.
-		if (symbol.GetMembers("InitializeComponent").Length > 0)
-		{
-			return XamlStubEmission.Skipped("the generated partial is already in the compilation");
-		}
+		// The real partial is present -- a project that has been built carries the markup compiler's
+		// output from obj -- so generating a second one would be a pile of duplicate members. It is as
+		// old as that build, though, and an element named since is in no partial at all: every use of
+		// it is CS0103 until the next build. Those fields alone are supplied.
+		var builtPartial = symbol.GetMembers("InitializeComponent").Length > 0;
 
 		var unresolved = new List<string>();
 		var fields = new List<string>();
@@ -70,16 +69,21 @@ public static class XamlStubEmitter
 			fields.Add($"{element.Modifier ?? dialect.DefaultFieldModifier} {type} {element.Name};");
 		}
 
+		if (builtPartial && fields.Count == 0)
+		{
+			return XamlStubEmission.Skipped("the generated partial is already in the compilation");
+		}
+
 		// Only when no other part declares one: two partials naming different base classes is
 		// CS0263, which is worse than the missing base we started with.
-		var baseType = symbol.BaseType is null || symbol.BaseType.SpecialType == SpecialType.System_Object
+		var baseType = !builtPartial && (symbol.BaseType is null || symbol.BaseType.SpecialType == SpecialType.System_Object)
 			? Resolve(compilation, dialect, document.RootType)
 			: null;
 
 		return new XamlStubEmission
 		{
 			HintName = $"{document.ClassName}.xamlstub.g.cs",
-			Source = Compose(compilation, document, dialect, baseType, fields),
+			Source = Compose(compilation, document, dialect, baseType, fields, fieldsOnly: builtPartial),
 			SkipReason = null,
 			UnresolvedTypes = unresolved,
 		};
@@ -90,7 +94,8 @@ public static class XamlStubEmitter
 		XamlDocument document,
 		IXamlDialect dialect,
 		string? baseType,
-		IReadOnlyList<string> fields)
+		IReadOnlyList<string> fields,
+		bool fieldsOnly)
 	{
 		var body = new StringBuilder();
 
@@ -99,21 +104,26 @@ public static class XamlStubEmitter
 			body.Append('\t').Append(field).Append('\n');
 		}
 
-		if (fields.Count > 0) body.Append('\n');
-
-		// Public because the frameworks generate it public, and code outside the class calls it.
-		body.Append("\tpublic void InitializeComponent()\n\t{\n\t}\n");
-
-		// An exe whose entry point the markup compiler would have generated is CS5001 without it.
-		// Guarded on there being none already, so a hand-written Main always wins.
-		if (document.IsApplicationDefinition && NeedsEntryPoint(compilation))
+		// Beside a partial a build left behind, which already declares everything else the markup
+		// compiler writes.
+		if (!fieldsOnly)
 		{
-			body.Append("\n\tpublic static void Main(string[] args)\n\t{\n\t}\n");
-		}
+			if (fields.Count > 0) body.Append('\n');
 
-		foreach (var member in dialect.ExtraMembers(document))
-		{
-			body.Append('\t').Append(member).Append('\n');
+			// Public because the frameworks generate it public, and code outside the class calls it.
+			body.Append("\tpublic void InitializeComponent()\n\t{\n\t}\n");
+
+			// An exe whose entry point the markup compiler would have generated is CS5001 without it.
+			// Guarded on there being none already, so a hand-written Main always wins.
+			if (document.IsApplicationDefinition && NeedsEntryPoint(compilation))
+			{
+				body.Append("\n\tpublic static void Main(string[] args)\n\t{\n\t}\n");
+			}
+
+			foreach (var member in dialect.ExtraMembers(document))
+			{
+				body.Append('\t').Append(member).Append('\n');
+			}
 		}
 
 		var declaration = baseType is null

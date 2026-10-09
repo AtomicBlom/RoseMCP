@@ -566,14 +566,16 @@ public static class ToolDescriptions
 		""";
 
 	public const string WorkspaceStatus = """
-		What state a solution's workspace is in and whether its answers can be trusted: the projects
-		loaded, the MSBuild configuration it chose, the restore, load diagnostics, and degradedReasons
-		-- each with its fix -- when they cannot. Ask it when answers look wrong rather than assuming
-		the code is. Thousands of errors about System.Object being undefined means the solution loaded
-		under a configuration it does not declare, which rose_workspace_reload takes; a project whose
-		design-time build failed answers unreliably and is named. It waits for the load, unlike
+		What state a solution's workspace is in and whether its answers can be trusted: the MSBuild
+		configuration it chose, the restore, load diagnostics, projects with problems, and
+		degradedReasons -- each with its fix. Ask it when answers look wrong rather than assuming the
+		code is. Thousands of errors about System.Object undefined mean a configuration the solution
+		does not declare; rose_workspace_reload takes another. It waits for the load, unlike
 		rose_workspace_open.
 		""";
+
+	public const string IncludeProjectsArgument =
+		"Also list the projects that loaded cleanly.";
 
 	public const string WorkspaceReload = """
 		Restarts a solution's Roslyn host from scratch. Rarely needed -- edits by other tools are

@@ -194,6 +194,21 @@ public sealed class SolutionResolverTests
 		SolutionResolver.SiblingsSharing(repository.Main, [changed]).ShouldBeEmpty();
 	}
 
+	/// <summary>
+	/// A sibling made of a subset of the loaded solution's projects compiles the changed file too, but
+	/// every reference it could hold was in the compilation the change ran against. Naming it is a
+	/// warning on every edit with nothing for the caller to finish.
+	/// </summary>
+	[Test]
+	public void Says_nothing_about_a_sibling_whose_projects_the_loaded_solution_all_has()
+	{
+		using var repository = new TwoSolutionRepository();
+		repository.Solution("Repo.Core.slnx", "Core");
+		var changed = Path.Combine(repository.Root, "Core", "Core.cs");
+
+		SolutionResolver.SiblingsSharing(repository.Main, [changed]).ShouldBeEmpty();
+	}
+
 	[Test]
 	public void An_uncontested_choice_says_so()
 	{
@@ -363,7 +378,7 @@ public sealed class SolutionResolverTests
 				Path.Combine(directory, $"{name}.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />");
 		}
 
-		private string Solution(string fileName, params string[] projects)
+		public string Solution(string fileName, params string[] projects)
 		{
 			var entries = projects.Select(name => $"  <Project Path=\"{name}/{name}.csproj\" />");
 			var path = Path.Combine(Root, fileName);

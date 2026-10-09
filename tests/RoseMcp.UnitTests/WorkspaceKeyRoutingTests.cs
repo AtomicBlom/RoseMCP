@@ -184,8 +184,8 @@ public sealed class WorkspaceKeyRoutingTests
 		{
 			var name = method.GetCustomAttribute<McpServerToolAttribute>()!.Name;
 
-			var error = await Should.ThrowAsync<McpException>(() => Invoke(tool, method), $"{name} did not refuse")
-				.OfExactType();
+			var thrown = await Should.ThrowAsync<Exception>(() => Invoke(tool, method), $"{name} did not refuse");
+			var error = thrown.ShouldBeOfType<McpException>($"{name} failed before it could refuse: {thrown.Message}");
 
 			error.Message.ShouldContain("Both workspace", Case.Sensitive, $"{name} answered something else: {error.Message}");
 		}

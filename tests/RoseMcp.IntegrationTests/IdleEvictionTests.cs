@@ -229,15 +229,15 @@ public sealed class IdleEvictionTests
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		using var fixture = FixtureSolution.Copy("Siblings", "Repo.slnx");
+
+		// Idle is decided on a clock the test moves, so the sibling is evicted only when the test says,
+		// however long the held solution takes to load. The limit is also how long the stopped row
+		// stays, which has to outlast stopping the process and the rename that follows; the clock holds
+		// still until the test is done with it.
 		var clock = new SteerableClock();
-		var idleAfter = TimeSpan.FromMinutes(30);
 		await using var manager = CreateManager(configure: options =>
 		{
-			// Far past anything the test waits in real time -- the held solution's load included --
-			// so the sibling is evicted only when the clock is moved past the limit. The limit is also
-			// how long the stopped row stays, which has to outlast stopping the process and the rename
-			// that follows, and nothing moves the clock again after the eviction.
-			options.IdleEvictionAfter = idleAfter;
+			options.IdleEvictionAfter = TimeSpan.FromMinutes(30);
 			options.EvictionSweepInterval = SweepInterval;
 			options.TimeProvider = clock;
 		});
@@ -261,8 +261,7 @@ public sealed class IdleEvictionTests
 			// a jump made before it.
 			await WaitUntilAsync(
 				() => manager.Workers.All(worker => worker.LoadDuration is not null), TimeSpan.FromMinutes(2), cancellationToken);
-			clock.Jump(idleAfter);
-
+			clock.Jump(TimeSpan.FromHours(1));
 			await WaitUntilAsync(() => EvictionNote(manager) is not null, TimeSpan.FromSeconds(60), cancellationToken);
 
 			var tools = new RoseMcp.Broker.Tools.BrokerAnalysisTools(manager, CreatePaths());

@@ -91,9 +91,10 @@ jobs:
           unseen='^(docs/|wiki/|tools/|\.claude/|src/RoseMcp\.Xaml(\.Uwp|\.WinUi)?\.Tap/|\.github/workflows/release\.yml$|[^/]+\.md$)'
           # What a probe-app test reaches: the broker and the projects it references, the live-app
           # host and the projects it loads, both taps and their shared headers, the probe apps, the
-          # test project, and the build inputs every one of them reads. A project added to either
-          # graph belongs here too, or a change to it skips the only job that would notice.
-          probes='^(src/RoseMcp\.(Broker|Contracts|Logging|Settings|Solutions|LiveApp|Symbols|XamlDiff)/|src/RoseMcp\.Xaml(\.Uwp|\.WinUi)?\.Tap/|tests/apps/|tests/RoseMcp\.IntegrationTests/|Directory\.(Build|Packages)\.props$|global\.json$|\.github/workflows/ci\.yml$)'
+          # test project and its shared doubles, and the build inputs every one of them reads.
+          # ProbeAppCategoryTests holds this against the test project's reference graph, so a new
+          # reference fails there until it is added here or named as one no probe-app test reaches.
+          probes='^(src/RoseMcp\.(Broker|Contracts|Logging|Settings|Solutions|LiveApp|Symbols|XamlDiff)/|src/RoseMcp\.Xaml(\.Uwp|\.WinUi)?\.Tap/|tests/apps/|tests/RoseMcp\.(IntegrationTests|TestSupport)/|Directory\.(Build|Packages)\.props$|global\.json$|\.github/workflows/ci\.yml$)'
 
           if grep -Eq "$providers" <<< "$changed"; then p=true; else p=false; fi
           if grep -Evq "$unseen" <<< "$changed"; then i=true; else i=false; fi
@@ -460,9 +461,28 @@ jobs:
           if (-not (Test-Path $msixDir)) { throw "No x64 MSIX packages at $msixDir in $library." }
           Write-Host "Installing the Windows App Runtime from $library ($msixDir)"
 
+          # What each package is, read out of its own manifest, so the check below asks for exactly
+          # these packages: a runner carrying some other Windows App Runtime cannot pass for one
+          # carrying this one, and a dynamic dependency package that failed to install is named
+          # rather than surfacing as an unpackaged probe that never opens a window.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          function Read-Identity($msix)
+          {
+              $zip = [System.IO.Compression.ZipFile]::OpenRead($msix.FullName)
+              try
+              {
+                  $reader = [System.IO.StreamReader]::new($zip.GetEntry('AppxManifest.xml').Open())
+                  try { ([xml]$reader.ReadToEnd()).Package.Identity }
+                  finally { $reader.Dispose() }
+              }
+              finally { $zip.Dispose() }
+          }
+
           # The framework first, since the others depend on it.
-          $failed = @()
           $packages = Get-ChildItem $msixDir -Filter '*.msix' | Sort-Object { $_.BaseName -notmatch '^Microsoft\.WindowsAppRuntime\.\d+$' }, Name
+          if (-not $packages) { throw "No .msix files in $msixDir." }
+
+          $failed = @()
           foreach ($msix in $packages)
           {
               try
@@ -472,33 +492,36 @@ jobs:
               }
               catch
               {
-                  # A version at least as high already installed is a refusal that leaves the machine
-                  # with what the probe needs, and is not a failure.
-                  $failed += "$($msix.Name): $($_.Exception.Message)"
+                  # 0x80073D06 is "a higher version is already installed", which leaves the machine
+                  # with what the probe needs; the check below confirms it. Anything else is a failure.
+                  $hresult = '{0:X8}' -f $_.Exception.HResult
+                  $newerInstalled = $hresult -eq '80073D06' -or $_.Exception.Message -match '0x80073D06'
+                  if ($newerInstalled) { Write-Host "  $($msix.Name): a higher version is already installed" }
+                  else { $failed += "$($msix.Name) did not install: $($_.Exception.Message)" }
               }
           }
 
-          # The check is the framework package's own identity, read out of its manifest, so a runner
-          # carrying some other Windows App Runtime cannot pass for one carrying this one.
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $framework = $packages | Select-Object -First 1
-          $zip = [System.IO.Compression.ZipFile]::OpenRead($framework.FullName)
-          try
+          foreach ($msix in $packages)
           {
-              $reader = [System.IO.StreamReader]::new($zip.GetEntry('AppxManifest.xml').Open())
-              $identity = ([xml]$reader.ReadToEnd()).Package.Identity
-              $reader.Dispose()
-          }
-          finally { $zip.Dispose() }
+              $identity = Read-Identity $msix
+              $wanted = [version]$identity.Version
+              # The dynamic dependency package carries its version in its name as well
+              # (Microsoft.WinAppRuntime.DDLM.2.4.0.0-x6), so a newer one is a different name. The
+              # bootstrapper takes any at the version or later, so the check does too.
+              $name = $identity.Name.Replace($identity.Version, '*')
+              $present = Get-AppxPackage -Name $name |
+                  Where-Object { "$($_.Architecture)" -eq "$($identity.ProcessorArchitecture)" -and [version]$_.Version -ge $wanted } |
+                  Sort-Object { [version]$_.Version } -Descending | Select-Object -First 1
 
-          $wanted = [version]$identity.Version
-          $runtime = Get-AppxPackage -Name $identity.Name | Where-Object { $_.Architecture -eq 'X64' -and [version]$_.Version -ge $wanted }
-          if (-not $runtime)
-          {
-              throw ("$($identity.Name) $wanted or later for x64 is not registered after installing from $msixDir.`n  " + ($failed -join "`n  "))
+              if ($present) { Write-Host "  present: $($present.Name) $($present.Version) ($($identity.ProcessorArchitecture)), wanted $wanted or later" }
+              else
+              {
+                  Write-Host "  missing: $name $wanted or later ($($identity.ProcessorArchitecture)), from $($msix.Name)"
+                  $failed += "$name $wanted or later for $($identity.ProcessorArchitecture) is not registered"
+              }
           }
-          $runtime | ForEach-Object { Write-Host "  present: $($_.Name) $($_.Version), which the probe needs at $wanted or later" }
-          if ($failed) { Write-Host "Not installed, though the runtime the probe needs is present:`n  $($failed -join "`n  ")" }
+
+          if ($failed) { throw ("The Windows App Runtime from $msixDir is not fully installed:`n  " + ($failed -join "`n  ")) }
 
       # The fixtures build both taps themselves, once a run, and skip on build.ps1's exit 3 -- which
       # this job's switch turns into a failure without the build's output. Building them here first

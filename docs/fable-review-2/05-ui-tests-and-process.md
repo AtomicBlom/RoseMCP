@@ -416,21 +416,10 @@ result of any timed-out verb that changes the app.
   the result carries a non-zero `revision` and the expected `workspace`/`workspaceKey`. One broker
   over one fixture serves every call, so it costs one load.
 
-### UIP-18 The stdout rule -- the one that corrupts the protocol -- has no guard of its own
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `CLAUDE.md` "Rules that bind everywhere"; `tests/RoseMcp.IntegrationTests/RoseServerProcess.cs:26-30`
-- **What:** "Nothing writes to stdout in stdio mode except protocol frames" is the rule whose
-  violation is hardest to diagnose, and the only thing enforcing it is that `RoseServerProcess`
-  parses the child's stdout as JSON-RPC, so garbage there fails `BrokerTests` for a reason that reads
-  as a protocol bug. The review's own ground truth ("No `Console.Write` in `src`") was established by
-  hand.
-- **Why it matters:** It is a one-line grep, it is the rule stated first in CLAUDE.md, and it is the
-  one a new contributor or an agent is most likely to break while debugging.
-- **Suggested change:** A unit test that reflects over every launchable host assembly for calls to
-  `Console.Write*`/`Console.Out`, or -- cheaper and honest -- a CI step:
-  `! grep -rn 'Console\.Write\|Console\.Out' src --include=*.cs`. The same step can carry the comment
-  grep #171 asks for (see UIP-23).
+### ~~UIP-18 The stdout rule -- the one that corrupts the protocol -- has no guard of its own~~
+**#386.** The rule whose violation is hardest to diagnose was held by review, and by a protocol error
+a long way from the cause. A unit test reads every line of source a stdio process loads and names the
+write.
 
 ### UIP-19 The unit suite is 83 files in one flat folder with one namespace
 - **Severity:** Low
@@ -493,7 +482,7 @@ means tests that would catch a regression in existing code but not an omission i
 
 | Rule (CLAUDE.md / `docs/invariants/`) | Guard | Kind |
 |---|---|---|
-| Nothing writes to stdout in stdio mode | none directly; `RoseServerProcess` parses the child's stdout, so garbage fails `BrokerTests` for the wrong stated reason | **review-only** (UIP-18) |
+| Nothing writes to stdout in stdio mode | a unit test over the source of every project a stdio process loads (#386) | **structural** |
 | Reads never observe a snapshot older than disk (`WorkspaceSession` barrier) | `StalenessTests`, `NewFileTests`, `DiskSynchronizerTests`, `SolutionWatcherTests`, and 17 classes that go through `WorkspaceSession` | by example, strong |
 | Every result carries a `revision` and names the workspace | `BrokerTests.cs:53-54,717-718,735` on three tools; `Revision` asserted in four files total | **review-only** for ~42 of ~45 tools (UIP-17) |
 | An error says what went wrong; convert at the MCP boundary | `ForwardedErrorTests`, `ArgumentValueTests`, `ToolDescriptionTests` | by example |
@@ -505,7 +494,7 @@ means tests that would catch a regression in existing code but not an omission i
 | `writing-csharp` | as the formatting row | by example, strong |
 | `analyzers-and-generators` | `AnalyzerLockTests`, `SolutionLoaderTests`, `WorkspaceStatusTests`, `XamlStubTests`, `WinUiXamlStubTests`, `WpfXamlStubTests`, `XamlStubChannelTests` | by example, strong |
 | `xaml-live-edit` | `XamlDiffTests`, `XamlApplyBaselineTests`, `XamlMaterialiserTests` (fast) + `LiveAppUwpTests` (never in CI) | by example; the apply half is CI-uncovered |
-| `tap-tiers` (which header may name what) | **none** -- a pure include-graph rule over C++ headers, checked by review | **review-only** |
+| `tap-tiers` (which header may name what) | a unit test over the headers, their include graph and both providers' include order (#386) | **structural** |
 | `xaml-tap-lifecycle` | `LiveAppUwpTests`, `LiveAppWinUiTests` only -- never run in CI | **review-only in practice** |
 | `overlay` | `LiveAppUwpTests` only -- never run in CI | **review-only in practice** |
 | `hosts-and-deploy` | `PublishedLayoutTests`, `RepositoryHostBuildTests`, `XamlStackModulesTests`, `TargetArchitectureProbeTests` for the C# resolvers; `Assert-WindowsPackage` in `deploy.ps1` for the package | split across two mechanisms that never meet (UIP-25) |
@@ -565,6 +554,13 @@ baseline that may only go down.
   `Invoke-ScriptAnalyzer` over `tools/` and `src/**/build.ps1` in the same job, five lines. For
   `tap-tiers` itself, a small script asserting the allowed `#include` edges is a better guard than
   either -- the tiers are a graph, and a graph is checkable.
+
+**#386 built the include-graph guard, in the unit suite. Declined: the formatter and the linter.** A
+`.clang-format` and PSScriptAnalyzer would each open with one large diff restyling the existing C++
+and PowerShell, with no behaviour in it, and then catch mostly what review and the C# conventions
+already hold the code to. The structural rule this finding worried about is the one now checked, and
+the one bug it cites, `-f` binding tighter than `+`, is a precedence mistake rather than a style a
+linter looks for.
 
 ### UIP-25 The newest third of the product -- debugger, tap, live edit -- has no CI coverage at all
 - **The debugger third is done, #295**, by splitting the suite on what each test needs. What is left
@@ -694,13 +690,12 @@ unenforced, and a voluntary rewrite loses to a new feature every time. Warn for 
 fail. Extend the file set beyond `*.cs` -- two of the violations found in this review are in
 `ci.yml` and a `.csproj`. *(UIP-23, UIP-12)*
 
-**7. "Nothing writes to stdout in stdio mode" -> the same grep step.** The first rule in CLAUDE.md,
-the hardest failure to diagnose, one line to check. *(UIP-18)*
+**~~7. "Nothing writes to stdout in stdio mode" -> the same grep step.~~**
+**#386.** Built, as a unit test over the source rather than a grep, so it reads code and not comments.
 
-**8. "The tap's four header tiers may only include downward" -> a script over the include graph.**
-`tap-tiers.md` describes a directed graph and asks a reviewer to hold it in their head. Parsing
-`#include` lines out of `src/RoseMcp.Xaml.Tap/*.h` and asserting the allowed edges is twenty lines
-and runs in the job that already has the C++ toolset. *(UIP-24)*
+**~~8. "The tap's four header tiers may only include downward" -> a script over the include graph.~~**
+**#386.** Built, in the unit suite, so it runs on every runner rather than only the one with the C++
+toolset.
 
 **~~9~~ #39.** A fresh load was the one-liner every test reached for, and sharing needed knowing how.
 A reading test names its fixture's shared workspace, and a fresh load is documented as the path for

@@ -141,9 +141,8 @@ And then the test review found the boundary exactly:
 So: "every result carries a revision" was guarded on 3 tools out of ~45 and review-only for the rest;
 it is now enumerated over the declared surface, and its other half is a compile-time constraint
 (card 0c). The comment conventions had no CI grep and now have one against a baseline (card 0e).
-The published layout is one file every party reads or is tested against (card 21a). What is still an
-arrangement nobody checks: the stdout rule, the one that corrupts the protocol, has no guard of its
-own, and the tap's tier rule is prose. Those two are card 21.
+The published layout is one file every party reads or is tested against (card 21a), and the stdout
+rule and the tap's tier rule are each checked over the source rather than held by review (card 21).
 
 **About fifty inversions are proposed across the eight files**; the ones that had to come first were
 Tier 0, and are built (PR #295). The seven highest-leverage:
@@ -370,7 +369,7 @@ Highest leverage on adoption. Cheap relative to impact.
 | 18 | **Share fixtures on the Roslyn half: the tests that write.** A test that only reads shares one load per fixture (#39). The tests that write still copy and load a fixture each, which is most of the loads left. What remains is a copy that keeps its restore output for all but the generator tests, then a pool of loaded workspaces handed out the way the live-app slots are, with a hand-back check. The broker-process classes (`BrokerForwardingTests`, `IdleEvictionTests`, `WorkspaceRoutingTests`) start real workers rather than load through a test session, and are their own question. | UIP-13 | #39 | L |
 | 19 | *(moved to card 0d -- it is worth having before the work starts, not after.)* | IPC-02, BRK-05 | new | -- |
 | ~~20~~ | **#385.** A call could not be traced across the processes it crossed, and nothing said which file was a workspace's worker log. Every log line carries the id of the call it was written for, the same in every process, and a workspace names its worker's log. | BRK-15, IPC-07 | — | — |
-| 21 | **Guard the remaining arrangements**, after cards 0c and 0e take the two urgent ones: a stdout test of its own, and tap tier purity checked rather than described. | UIP-18, UIP-24 | new | M |
+| ~~21~~ | **#386.** The stdout rule, whose violation reads as a protocol error far from its cause, and the tap's header tiers were each held by review alone. Both are checked over the source by the unit suite, on every runner; formatting and linting the C++ and the PowerShell is declined. | UIP-18, UIP-24 | — | — |
 | ~~21a~~ | **#387.** Five parties each wrote the published layout down for themselves, two of them packaged content a user runs, so a layout change passed every test and failed at install time. They all read one committed layout, or are tested against it. | UIP-22 | — | — |
 
 ### Tier 5 — re-aim the UIs

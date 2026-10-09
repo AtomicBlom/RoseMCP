@@ -33,7 +33,7 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 | `RoseMcp.XamlStubs` | The XAML stub generator, loaded by the worker as an analyzer assembly rather than referenced as a library. |
 | `RoseMcp.XamlDiff` | Takes markup apart for the live-edit path. Plain `net10.0`, so a test can see inside it. |
 | `RoseMcp.LiveApp` | The live-app host: one ICorDebug session and one XAML diagnostics session, for one debugged process. |
-| `RoseMcp.Xaml.Tap` | The native in-app provider, shared between frameworks: the tap, the overlay, the pipe. Headers only, in four tiers by what each names -- see [tap-tiers.md](docs/invariants/tap-tiers.md). Only `tap_render.h` and `tap_overlay.h` are compiled per framework; the COM object names no projection. |
+| `RoseMcp.Xaml.Tap` | The native in-app provider, shared between frameworks: the tap, the overlay, the pipe. Headers only, in four tiers by what each names -- see [tap-tiers.md](docs/invariants/tap-tiers.md). Only tier 3 -- `tap_render.h`, the overlay and the toolbar's pieces -- is compiled per framework; the COM object names no projection, and `TapTierTests` fails if it does. |
 | `RoseMcp.Xaml.Uwp.Tap`, `RoseMcp.Xaml.WinUi.Tap` | The two bindings of that provider, one per XAML framework. Which one serves a target is decided by the framework the target runs. |
 | `RoseMcp.Ui.Core` | The half of both windows that is not WinUI: rows, formatting, the poll loop, the in-place merge, and `OperatorClient`. Plain `net10.0`, so it runs in the fast suite. |
 | `RoseMcp.Ui` | WinUI class library. Themes, window chrome, the crash handler and the icon assets, shared so a second window is the same product rather than a lookalike. |
@@ -60,7 +60,7 @@ why they are here and the rest are behind a trigger.
 
 - **Nothing writes to stdout in stdio mode** except protocol frames. All logging goes to stderr and
   to a file. A stray `Console.WriteLine` corrupts the stream, and the failure looks like a protocol
-  bug rather than a print statement.
+  bug rather than a print statement. `StdoutRuleTests` fails on one, naming the file and the line.
 - **Reads never observe a snapshot older than disk.** If you add a read path, it goes through the
   `WorkspaceSession` barrier. No exceptions.
 - **Every result carries a `revision` and names the workspace that answered.** Attribution is added

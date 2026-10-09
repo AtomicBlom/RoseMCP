@@ -30,6 +30,33 @@ job. So the job says the machine was meant to have everything, and a skip become
 what was missing. The integration job sets the same switch for the same reason, and
 `ProbeAppCategoryTests` checks that both do and that no test skips around it.
 
+**The UWP probes' frameworks come from their own build, not from a setup step.** A UWP debug build
+depends on framework packages that Visual Studio installs the first time it deploys one, so a machine
+it has never deployed from -- a hosted runner -- refuses to register the probes with 0x80073CF3. The
+built manifests ask for these, each from `CN=Microsoft Corporation`:
+
+| Probe | Framework | Minimum version | Where the build found it |
+|---|---|---|---|
+| classic UWP | `Microsoft.VCLibs.140.00.Debug` | 14.0.33519.0 | the Windows SDK's `ExtensionSDKs\Microsoft.VCLibs\14.0\AppX\Debug\<arch>` |
+| classic UWP | `Microsoft.NET.CoreRuntime.2.2` | 2.2.31331.1 | the `runtime.win10-<arch>.microsoft.net.uwpcoreruntimesdk` package, `tools\Appx` |
+| classic UWP | `Microsoft.NET.CoreFramework.Debug.2.2` | 2.2.31327.1 | the same package |
+| modern UWP | `Microsoft.VCLibs.140.00.Debug` | 14.0.33519.0 | the Windows SDK, as above |
+
+Each build's `.build.appxrecipe` names the same packages as `ResolvedSDKReference` items, with the
+architecture and the `.appx` each installs from -- the list Visual Studio's own deploy installs. So the
+fixtures install from it: a registration refused for a missing framework installs everything the
+recipe holds for the architecture Windows named, and registers again, once. The frameworks are named
+by the build that linked against them rather than kept in a list here or in the job, so a probe that
+gains a dependency needs no change to either, and a developer machine without Visual Studio's deploy
+history registers the probes the same way the runner does. The second registration is the check that
+the install took: it succeeds only when every framework the manifest names is present. They go in as
+packages of their own before the layout because `Add-AppxPackage -Register -DependencyPath` treats each
+dependency as another loose layout and refuses an `.appx`.
+
+When a registration fails anyway, the failure carries the deployment engine's whole message and the
+errors from its log for that activity, so it names the framework it wanted, and the job keeps the
+AppX deployment event log and the runner's framework packages in its evidence.
+
 **Why hosted rather than self-hosted.** A self-hosted runner is a machine somebody keeps up, and
 this repository is public: a self-hosted runner serving its pull requests runs a fork's code on that
 machine, which GitHub advises against for public repositories. Nothing the tests need is beyond what

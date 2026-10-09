@@ -192,10 +192,15 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 	/// AppxManifest.xml beside the exe, with none of the staging the classic UWP probe needs, because
 	/// it has no split between a managed assembly and a native CoreCLR apphost.
 	/// </para>
+	/// <para>
+	/// No recipe is passed, because the framework this probe depends on is the Windows App Runtime,
+	/// which is installed from the Windows App SDK's own packages rather than from a build's
+	/// references; a machine without it is told so by the refusal, which names it.
+	/// </para>
 	/// </summary>
 	private static string? Register(string layoutDirectory, out string? failure)
 	{
-		var family = RegisterAppxLayout(Path.Combine(layoutDirectory, "AppxManifest.xml"), PackageName, out failure);
+		var family = RegisterAppxLayout(Path.Combine(layoutDirectory, "AppxManifest.xml"), PackageName, recipe: null, out failure);
 
 		return family is null ? null : $"{family}!App";
 	}

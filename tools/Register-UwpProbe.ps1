@@ -86,6 +86,29 @@ foreach ($entry in $entries)
     Copy-Item $source $destination -Force
 }
 
+# The framework packages the build resolved for this platform -- VCLibs and the UWP CoreCLR runtime and
+# framework, debug flavours -- installed before the layout, because a machine Visual Studio has never
+# deployed from has none of them and the registration is refused with 0x80073CF3. Each is a package of
+# its own: -Register -DependencyPath takes loose layouts rather than .appx files. Installing one already
+# present is a no-op, and 0x80073D06 is a newer one already there, which serves just as well.
+$frameworks = Select-Xml -Xml $recipe -Namespace $ns -XPath '//msb:ResolvedSDKReference' |
+    ForEach-Object { $_.Node } |
+    Where-Object { $_.Architecture -eq $Platform -and $_.AppxLocation }
+foreach ($framework in $frameworks)
+{
+    $appx = [System.IO.Path]::GetFullPath([uri]::UnescapeDataString($framework.AppxLocation))
+    try
+    {
+        Add-AppxPackage -Path $appx -ErrorAction Stop
+        "framework $($framework.Name) ($Platform) is installed"
+    }
+    catch
+    {
+        if ($_.Exception.Message -notmatch '0x80073D06') { throw "Installing $($framework.Name) from $appx failed: $($_.Exception.Message)" }
+        "framework $($framework.Name) ($Platform): a newer version is already installed"
+    }
+}
+
 Add-AppxPackage -Register (Join-Path $layout 'AppxManifest.xml') -ErrorAction Stop
 $package = Get-AppxPackage $packageName
 if (-not $package) { throw 'Registration reported success but the package is not present.' }

@@ -201,12 +201,17 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 	/// probe. That one produces a managed assembly and a native CoreCLR apphost in different folders and
 	/// needs its AppX layout staged from a build recipe before anything can register it. A modern UWP
 	/// build writes AppxManifest.xml beside a native apphost and coreclr.dll in one flat, self-contained
-	/// folder, so registering it needs no staging at all.
+	/// folder, so registering it needs no staging at all. It still writes a recipe there, which is
+	/// where the framework packages it depends on are found.
 	/// </para>
 	/// </summary>
 	private static string? Register(string layoutDirectory, out string? failure)
 	{
-		var family = RegisterAppxLayout(Path.Combine(layoutDirectory, "AppxManifest.xml"), PackageName, out failure);
+		var family = RegisterAppxLayout(
+			Path.Combine(layoutDirectory, "AppxManifest.xml"),
+			PackageName,
+			Path.Combine(layoutDirectory, "Rose.ProbeApp.UwpModern.build.appxrecipe"),
+			out failure);
 
 		return family is null ? null : $"{family}!App";
 	}

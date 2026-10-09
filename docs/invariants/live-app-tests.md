@@ -17,7 +17,10 @@ component fails naming it instead of reporting the same green as one that ran ev
 is that each job has to install what its tests need: a runner has no x86 .NET runtime, so the
 integration job installs one for `Attaches_to_an_x86_target` and points `DOTNET_ROOT_X86` at it; it
 has no developer mode, Windows App Runtime or, sometimes, UWP tooling, so the probe-apps job sets
-those up, each in a step that checks its result and says what it found. A skip is how a capability
+those up, each in a step that checks its result and says what it found. The UWP probes' debug
+frameworks are the exception: the fixtures install them from their own build's recipe when a
+registration is refused for one, so a developer machine gets them the same way (see
+[the decision](../decisions/the-probe-app-tests-run-on-a-hosted-runner.md)). A skip is how a capability
 stops being tested while the build stays green, so the answer to one is a runtime, a toolchain or an
 exclusion that says out loud what is not covered -- never a skip left in place. A test that calls the
 framework's skip directly is out of the switch's reach, and `ProbeAppCategoryTests` fails on one.

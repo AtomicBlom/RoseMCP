@@ -99,8 +99,9 @@ public sealed class UwpProbeApp : IAsyncDisposable
 				_registered = true;
 				try
 				{
-					_layoutDirectory = Stage(Build(msbuild!));
-					_aumid = Register(_layoutDirectory, out _registrationFailure);
+					var buildOutput = Build(msbuild!);
+					_layoutDirectory = Stage(buildOutput);
+					_aumid = Register(_layoutDirectory, buildOutput, out _registrationFailure);
 				}
 				catch (Exception exception)
 				{
@@ -776,10 +777,15 @@ public sealed class UwpProbeApp : IAsyncDisposable
 
 	/// <summary>
 	/// Registers the staged UWP layout and returns its AUMID, or null with the reason it could not.
+	/// The recipe is the build's, read for the framework packages the layout depends on.
 	/// </summary>
-	private static string? Register(string layoutDirectory, out string? failure)
+	private static string? Register(string layoutDirectory, string buildOutputDirectory, out string? failure)
 	{
-		var family = RegisterAppxLayout(Path.Combine(layoutDirectory, "AppxManifest.xml"), PackageName, out failure);
+		var family = RegisterAppxLayout(
+			Path.Combine(layoutDirectory, "AppxManifest.xml"),
+			PackageName,
+			Path.Combine(buildOutputDirectory, "Rose.ProbeApp.UwpClassic.build.appxrecipe"),
+			out failure);
 
 		return family is null ? null : $"{family}!App";
 	}

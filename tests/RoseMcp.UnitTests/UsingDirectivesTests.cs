@@ -96,6 +96,33 @@ public sealed class UsingDirectivesTests
 			"using System.Text;\n\nnamespace First\n{\n\tusing System.Text;\n", Case.Sensitive, insertion.Root.ToFullString());
 	}
 
+	/// <summary>
+	/// A list that opens with the project's own namespaces, then System, then the rest, is not in the order
+	/// the placement compares against. Its first directive sorts after every System import, so asking for
+	/// "the first that sorts after it" puts each one at the top of the file. Each import goes beside the
+	/// directives sharing the most of its name instead, and one related to none goes after the last.
+	/// </summary>
+	[Test]
+	public void Places_imports_beside_their_relatives_where_the_list_is_not_sorted()
+	{
+		var (root, model) = Compile(
+			"using Probe.Services;\nusing Probe.Views;\nusing System;\nusing System.Linq;\n"
+				+ "using Probe.Controls;\n\npublic static class Coded\n{\n}\n");
+
+		var insertion = UsingDirectives.Ensure(
+			root,
+			model,
+			["System.Text", "Probe.Views.Parts", "Zeta.Tools"],
+			Style with { SeparateGroups = false },
+			TestContext.Current!.Execution.CancellationToken);
+
+		insertion.Added.ShouldBe(["System.Text", "Probe.Views.Parts", "Zeta.Tools"]);
+
+		insertion.Root.ToFullString().ShouldBe(
+			"using Probe.Services;\nusing Probe.Views;\nusing Probe.Views.Parts;\nusing System;\nusing System.Linq;\n"
+				+ "using System.Text;\nusing Probe.Controls;\nusing Zeta.Tools;\n\npublic static class Coded\n{\n}\n");
+	}
+
 	/// <summary>Compiled against everything this test host runs on, which is every namespace these name.</summary>
 	private static (CompilationUnitSyntax Root, SemanticModel Model) Compile(string source)
 	{

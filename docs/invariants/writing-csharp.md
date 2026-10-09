@@ -17,7 +17,9 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   content and a raw literal's indentation decides how much is stripped from it. Both passes take a
   span when the caller wrote one member rather than a file: a repository whose endings are already
   inconsistent would otherwise have every line rewritten by a one-member change, which buries the
-  edit in a diff nobody can review.
+  edit in a diff nobody can review. A deletion writes no code, so neither pass runs on it: the only
+  span it has is the type the member came out of, and formatting that re-indents every member left
+  in a file whose indentation the formatter disagrees with -- one removal, a whole-file diff.
 - **A file's layout is decided once per write, from the file as it was, and the formatter is told
   it.** When each pass worked a file's indentation and ending out for itself, the answers disagreed,
   on lines nothing asked to change:
@@ -211,7 +213,9 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   `dotnet_separate_import_directive_groups = false` and every file separates its groups anyway,
   because the setting only stops the analyzer insisting -- and going in first means inheriting
   whatever sat above the old first line, since a licence header under an import changes what the
-  file means to other tools. Whether it is needed is asked of the *compilation*, not of the import
+  file means to other tools. A list that is not in sorted order has no "first that sorts after it":
+  in one opening with the project's own namespaces, that rule puts every System import at the top. There
+  an import goes beside the directives sharing most of its name, or after the last. Whether it is needed is asked of the *compilation*, not of the import
   block: a global using, an implicit using from the SDK, and the namespace the file is in are all
   ways to be in scope without appearing there, and importing one of those again is IDE0005. Both
   halves of getting it wrong are build errors, which is the only reason it is worth this much code.

@@ -247,6 +247,48 @@ public sealed class IdleEvictionTests
 	}
 
 	/// <summary>
+	/// The key of a workspace whose worker was evicted, sent under the wrong argument, is refused as
+	/// the misread argument it is -- without calling the workspace loaded, because nothing is, and the
+	/// call that follows the advice pays a full load. Sent as <c>workspaceKey</c> it still names the
+	/// workspace, since the row that remembers its path is still there.
+	/// </summary>
+	[Test]
+	public async Task A_key_sent_as_workspace_for_an_evicted_worker_is_not_called_loaded()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager(configure: options =>
+		{
+			// Also how long the stopped row stays, which the assertions below need to outlast.
+			options.IdleEvictionAfter = TimeSpan.FromSeconds(15);
+			options.EvictionSweepInterval = SweepInterval;
+		});
+
+		await manager.CallAsync<WorkspaceStatusReport>(
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
+			ToolNames.WorkspaceStatus,
+			NoArguments,
+			retryIfWorkerDied: true,
+			cancellationToken);
+
+		var worker = manager.Workers.ShouldHaveSingleItem();
+		var misread = WorkspaceHints.From(RootedPath.Absolute(Path.Combine(Path.GetDirectoryName(fixture.SolutionPath)!, worker.Key)));
+
+		var whileLoaded = Should.Throw<McpException>(() => manager.WorkspaceFor(misread));
+		whileLoaded.Message.ShouldContain("which is loaded");
+
+		await WaitUntilAsync(() => EvictionNote(manager) is not null, TimeSpan.FromSeconds(60), cancellationToken);
+		worker.ExitReason.ShouldBe(WorkerExitReason.Evicted);
+
+		var afterEviction = Should.Throw<McpException>(() => manager.WorkspaceFor(misread));
+		afterEviction.Message.ShouldContain($"It is the key of {worker.SolutionPath}");
+		afterEviction.Message.ShouldContain("has stopped (Evicted)");
+		afterEviction.Message.ShouldNotContain("which is loaded");
+
+		manager.WorkspaceFor(WorkspaceHints.From(null, worker.Key)).ShouldBe(worker.SolutionPath);
+	}
+
+	/// <summary>
 	/// A call holds its worker from the moment it is handed over to the moment it is called. In between,
 	/// nothing is running on the worker yet, so the hold is the only thing that says somebody is about
 	/// to use it -- and a sweep that lands there, with its clock far past the idle limit, must leave it.

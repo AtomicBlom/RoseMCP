@@ -547,9 +547,17 @@ public sealed class WorkspaceManager(
 			return Resolved(named.Value);
 		}
 
-		// Named by the key a result carried, and strict for the same reason. Only a loaded workspace
-		// can be found that way, since a key cannot be turned back into the path it was taken from.
-		if (hints.WorkspaceKey is { } key) return ByKey(key, [.. _workers.Keys]);
+		// Named by the key a result carried, and strict for the same reason. Only a workspace this broker
+		// holds a row for can be found that way, since a key cannot be turned back into the path it was
+		// taken from -- a stopped row included, whose path is still known, though not called loaded.
+		if (hints.WorkspaceKey is { } key)
+		{
+			var workers = Workers;
+			var loaded = workers.Where(worker => worker.IsAlive).Select(worker => worker.SolutionPath).ToList();
+			var stopped = workers.Where(worker => !worker.IsAlive).Select(worker => worker.SolutionPath).ToList();
+
+			return ByKey(key, loaded, stopped);
+		}
 
 		// Paths the call carries for its own reasons. The first that decides wins; an ambiguous one is
 		// remembered rather than thrown, because a later hint may still settle it and, failing that,
@@ -600,7 +608,9 @@ public sealed class WorkspaceManager(
 	/// -- an answer from a workspace that may not be the one the key named, with nothing in it saying
 	/// the argument was misread. A path that exists is honoured whatever its name looks like; only one
 	/// naming nothing on disk whose last segment has the key's shape is refused, and it is named as the
-	/// key of a loaded workspace where it is one.
+	/// key of a workspace this broker knows where it is one -- as loaded only while its worker serves,
+	/// since a stopped row is not loaded and calling it loaded would promise a warm answer where the
+	/// next call pays a full load.
 	/// </para>
 	/// </summary>
 	private void RefuseAKeySentAsAPath(RootedPath named)
@@ -610,9 +620,17 @@ public sealed class WorkspaceManager(
 		var isShapedLikeAKey = !exists && Solutions.WorkspaceKey.HasShape(sent);
 		if (!isShapedLikeAKey) return;
 
-		var owner = _workers.Keys.FirstOrDefault(
-			path => string.Equals(Solutions.WorkspaceKey.For(path), sent, StringComparison.OrdinalIgnoreCase));
-		var whose = owner is null ? string.Empty : $" It is the key of {owner}, which is loaded.";
+		var owner = _workers.Values.FirstOrDefault(
+			worker => string.Equals(Solutions.WorkspaceKey.For(worker.SolutionPath), sent, StringComparison.OrdinalIgnoreCase));
+
+		var whose = owner switch
+		{
+			null => string.Empty,
+			{ IsAlive: true } => $" It is the key of {owner.SolutionPath}, which is loaded.",
+			_ => $" It is the key of {owner.SolutionPath}, whose worker has stopped ({owner.ExitReason}) and is "
+				+ "not loaded. Sent as workspaceKey it still names that workspace, and a call that needs the worker "
+				+ "starts a fresh one.",
+		};
 
 		throw new McpException(
 			$"workspace was given {sent}, which names nothing on disk and is shaped like a workspace key.{whose} "
@@ -620,16 +638,19 @@ public sealed class WorkspaceManager(
 	}
 
 	/// <summary>
-	/// The loaded solution carrying <paramref name="key"/>, the way <see cref="Solutions.WorkspaceKey"/>
-	/// derives it.
+	/// The solution carrying <paramref name="key"/>, the way <see cref="Solutions.WorkspaceKey"/>
+	/// derives it, among the workspaces this broker holds a row for.
 	/// <para>
-	/// Only what is loaded can answer, because a key is a hash and cannot be turned back into the path
-	/// it came from. That is enough for the caller the key exists for: one that read it off a result,
-	/// which a loaded worker produced. A broker that has restarted since has forgotten it, which is a
-	/// failure naming what is loaded and the argument that works regardless, not a guess.
+	/// Only what the broker knows can answer, because a key is a hash and cannot be turned back into
+	/// the path it came from. That is enough for the caller the key exists for: one that read it off a
+	/// result, which a loaded worker produced. A worker stopped since -- evicted, or crashed -- keeps its
+	/// row for a while, and its key still names it: the path is known, and the next call that needs the
+	/// worker starts a fresh one, as it would for the path. A broker that has restarted, or dropped the
+	/// row, has forgotten the key, which is a failure naming what is loaded and the argument that works
+	/// regardless, not a guess.
 	/// </para>
 	/// <para>
-	/// The hash is four bytes, so two loaded solutions can share a key, however rarely; that is refused
+	/// The hash is four bytes, so two known solutions can share a key, however rarely; that is refused
 	/// with both paths rather than settled by whichever the dictionary yielded first. Matched without
 	/// regard to case, since the hex half is never upper case and a solution name differing only in
 	/// case already differs in its hash.
@@ -640,12 +661,18 @@ public sealed class WorkspaceManager(
 	/// </para>
 	/// </summary>
 	/// <param name="key">The key the caller sent.</param>
-	/// <param name="loaded">The solution paths of the loaded workers.</param>
-	/// <exception cref="McpException">No loaded solution carries the key, or more than one does.</exception>
-	public static string ByKey(string key, IReadOnlyCollection<string> loaded)
+	/// <param name="loaded">The solution paths of the workers that are serving.</param>
+	/// <param name="stopped">
+	/// The solution paths of stopped rows, which a key still names but a failure must not call loaded.
+	/// </param>
+	/// <exception cref="McpException">No known solution carries the key, or more than one does.</exception>
+	public static string ByKey(string key, IReadOnlyCollection<string> loaded, IReadOnlyCollection<string>? stopped = null)
 	{
+		stopped ??= [];
+
 		var wanted = key.Trim();
 		var matching = loaded
+			.Concat(stopped)
 			.Where(path => string.Equals(Solutions.WorkspaceKey.For(path), wanted, StringComparison.OrdinalIgnoreCase))
 			.ToArray();
 
@@ -654,11 +681,11 @@ public sealed class WorkspaceManager(
 		if (matching.Length > 1)
 		{
 			throw new McpException(
-				$"The workspaceKey {wanted} belongs to {matching.Length} loaded workspaces, which happen to hash alike: "
+				$"The workspaceKey {wanted} belongs to {matching.Length} workspaces, which happen to hash alike: "
 					+ $"{string.Join(", ", matching)}. Pass workspace with the path of the one you mean instead.");
 		}
 
-		if (loaded.Count == 0)
+		if (loaded.Count == 0 && stopped.Count == 0)
 		{
 			throw new McpException(
 				$"No loaded workspace has the workspaceKey {wanted}, and none is loaded: a key names a workspace only "
@@ -667,11 +694,20 @@ public sealed class WorkspaceManager(
 		}
 
 		var known = loaded.Select(path => $"{Solutions.WorkspaceKey.For(path)} ({path})");
+		var cold = stopped.Select(path => $"{Solutions.WorkspaceKey.For(path)} ({path})");
+
+		var loadedPart = loaded.Count == 0
+			? "none is loaded"
+			: $"the loaded ones are: {string.Join(", ", known)}";
+		var stoppedPart = stopped.Count == 0
+			? string.Empty
+			: $"; stopped, and loaded again by the next call that needs one: {string.Join(", ", cold)}";
 
 		throw new McpException(
-			$"No loaded workspace has the workspaceKey {wanted}. A key names a workspace only while it is loaded, and "
-				+ $"the loaded ones are: {string.Join(", ", known)}. Pass one of those keys, or workspace with the "
-				+ "solution's path, which loads it if it is not.");
+			$"No workspace this broker holds has the workspaceKey {wanted}. A key names a workspace only while the "
+				+ "broker holds it, loaded or stopped, and "
+				+ $"{loadedPart}{stoppedPart}. Pass one of those keys, or workspace with the solution's path, which "
+				+ "loads it if it is not.");
 	}
 
 	/// <summary>

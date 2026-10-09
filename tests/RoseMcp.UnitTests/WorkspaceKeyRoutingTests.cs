@@ -83,6 +83,31 @@ public sealed class WorkspaceKeyRoutingTests
 	}
 
 	/// <summary>
+	/// A worker evicted since the result was read keeps its row for a while, and the key still names
+	/// it: the path is known, and the call that needs the worker starts a fresh one.
+	/// </summary>
+	[Test]
+	public void A_key_still_names_a_workspace_whose_worker_has_stopped()
+	{
+		WorkspaceManager.ByKey(WorkspaceKey.For(Beta), [Alpha], stopped: [Beta]).ShouldBe(Beta);
+	}
+
+	/// <summary>
+	/// A stopped row is offered as somewhere the key could have meant, but never as loaded: calling it
+	/// loaded promises a warm answer where the next call pays a full load.
+	/// </summary>
+	[Test]
+	public void An_unknown_key_does_not_call_a_stopped_workspace_loaded()
+	{
+		var error = Should.Throw<McpException>(() => WorkspaceManager.ByKey("Shop-00000000", [], stopped: [Beta]))
+			.ShouldBeOfType<McpException>();
+
+		error.Message.ShouldContain("none is loaded", Case.Sensitive);
+		error.Message.ShouldContain($"stopped, and loaded again by the next call that needs one: {WorkspaceKey.For(Beta)} ({Beta})", Case.Sensitive);
+		error.Message.ShouldNotContain("the loaded ones are", Case.Sensitive);
+	}
+
+	/// <summary>
 	/// Four bytes of hash collide, however rarely, and a key two loaded solutions share is no answer
 	/// about either: the caller hears both paths. The pair is found by search rather than written
 	/// down, so the test proves the case it names rather than one somebody computed once.

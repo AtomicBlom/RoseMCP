@@ -230,11 +230,13 @@ public sealed class IdleEvictionTests
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		using var fixture = FixtureSolution.Copy("Siblings", "Repo.slnx");
 		var clock = new SteerableClock();
-		var idleAfter = TimeSpan.FromSeconds(15);
+		var idleAfter = TimeSpan.FromMinutes(30);
 		await using var manager = CreateManager(configure: options =>
 		{
-			// Also how long the stopped row stays, which has to outlast stopping the process and
-			// the rename that follows. The clock is moved past the limit rather than waited past it.
+			// Far past anything the test waits in real time -- the held solution's load included --
+			// so the sibling is evicted only when the clock is moved past the limit. The limit is also
+			// how long the stopped row stays, which has to outlast stopping the process and the rename
+			// that follows, and nothing moves the clock again after the eviction.
 			options.IdleEvictionAfter = idleAfter;
 			options.EvictionSweepInterval = SweepInterval;
 			options.TimeProvider = clock;

@@ -14,10 +14,6 @@ namespace RoseMcp.IntegrationTests;
 /// forgotten as it ends, and whatever is left when the run is cancelled, interrupted or exits is written
 /// to stderr.
 /// </para>
-/// <para>
-/// A test that ends cancelled stays listed: when the run is cancelled, the tests it was running may
-/// unwind before the process exits, and forgetting them then would leave nothing to name.
-/// </para>
 /// </summary>
 internal static class RunningTests
 {
@@ -25,6 +21,11 @@ internal static class RunningTests
 
 	private static int _named;
 
+	/// <summary>
+	/// Listens for the three ways a run ends early: the session's own cancellation, which the runner's
+	/// <c>--timeout</c> raises; Ctrl+C; and the process exiting, which also covers a normal end, when
+	/// nothing is left to name.
+	/// </summary>
 	[Before(HookType.TestSession)]
 	public static void Watch(TestSessionContext session)
 	{
@@ -33,6 +34,7 @@ internal static class RunningTests
 		AppDomain.CurrentDomain.ProcessExit += (_, _) => NameWhatIsRunning("ending");
 	}
 
+	/// <summary>Notes a test as running, by class and display name, with the time it started.</summary>
 	[BeforeEvery(HookType.Test)]
 	public static void Started(TestContext context)
 	{
@@ -40,6 +42,11 @@ internal static class RunningTests
 		Running[context.Id] = (name, DateTimeOffset.UtcNow);
 	}
 
+	/// <summary>
+	/// Forgets a test that has finished, unless it ended cancelled. A cancelled run unwinds the tests it
+	/// was running before the process exits, so forgetting those here would leave the exit with nothing
+	/// to name -- and they are exactly the tests the run stopped in.
+	/// </summary>
 	[AfterEvery(HookType.Test)]
 	public static void Finished(TestContext context)
 	{

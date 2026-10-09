@@ -17,8 +17,10 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   here has its own.
 - **A call is one id in every process it crosses, and only while it lasts.** The outermost Rose
   process to see a tool call mints a `CallCorrelation` id -- the stdio relay, else the broker, else a
-  child driven directly -- and every later process takes the one it was sent. The first call filter
-  in each pipeline sets it; `CancellableToolCall` sends it on in `_meta["rosemcp/correlationId"]`,
+  child driven directly -- and every later process takes the one it was sent. An operator API request
+  is an entry point as well, and gets an id of its own, since an inspector's step is forwarded to a
+  live-app host like any tool call. The first call filter in each pipeline sets it, and the operator
+  group's first endpoint filter; `CancellableToolCall` sends it on in `_meta["rosemcp/correlationId"]`,
   read from the ambient, so a hop added later carries it without asking; the file sink writes it on
   every line, a dash outside any call. A line can then be matched across files by one search rather
   than by timestamp and tool name, which fails the moment two sessions ask one worker the same thing.
@@ -28,7 +30,11 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   then, so a loop started by the first call of the day does not file its lines under that call until
   the process exits. Work that is not the call's at all -- a poll loop, a sweep, a child's transport,
   whose read loop carries every later call's replies -- is started through `Detached`, inheriting no
-  ambient of the call that started it. Each child names the log file it writes (`WorkerInfo.LogPath`,
+  ambient of the call that started it. Work a call queues and waits on is the opposite case: a queue
+  whose loop runs on its own context -- the worker's `WorkspaceSession` writer, which runs every
+  reload, restore and mutation -- carries `CallCorrelation.Capture()` on each item and resumes it
+  around the item, or every line of that work is written as though no call had asked for it. Each
+  child names the log file it writes (`WorkerInfo.LogPath`,
   `LiveAppInfo.HostLogPath`), so the row that shows it can open the right file rather than a folder
   of twenty. See [the decision](../decisions/a-call-is-traced-by-an-id-minted-where-it-enters-rose.md).
 - **A stdio session relays to a tray when one is running.** `TrayRelay` forwards both listing and

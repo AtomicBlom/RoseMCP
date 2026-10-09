@@ -157,6 +157,44 @@ public sealed class CallCorrelationTests
 	}
 
 	/// <summary>
+	/// A queue's loop runs on a context of its own, so the call that queued an item is carried with the
+	/// item and resumed around it: the item is logged as that call's while the call waits, the loop goes
+	/// back to no call afterwards, and an item that outlives its call stops naming it.
+	/// </summary>
+	[Test]
+	public async Task A_captured_call_is_resumed_by_the_loop_that_runs_its_work()
+	{
+		CallCorrelation.Captured captured;
+		using (CallCorrelation.Begin(Meta(Sent)))
+		{
+			captured = CallCorrelation.Capture();
+
+			var onTheLoop = await Detached.Run(() =>
+			{
+				string? during;
+				using (captured.Resume())
+				{
+					during = CallCorrelation.Id;
+				}
+
+				return Task.FromResult((during, CallCorrelation.Id));
+			});
+
+			onTheLoop.ShouldBe((Sent, null));
+		}
+
+		var afterTheCall = await Detached.Run(() =>
+		{
+			using (captured.Resume())
+			{
+				return Task.FromResult(CallCorrelation.Id);
+			}
+		});
+
+		afterTheCall.ShouldBeNull();
+	}
+
+	/// <summary>
 	/// The hop itself, through a real server and the SDK's own transport: the far side's ambient is
 	/// set from what crossed the wire and nothing else, since the two ends share no execution context.
 	/// </summary>

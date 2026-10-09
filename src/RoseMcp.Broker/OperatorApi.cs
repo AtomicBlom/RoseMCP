@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using RoseMcp.Contracts;
+using RoseMcp.Logging;
 
 namespace RoseMcp.Broker;
 
@@ -61,7 +62,17 @@ public static class OperatorApi
 				await next(context);
 			}));
 
-		var operators = app.MapGroup(Prefix).AddEndpointFilter(new Failures());
+		// An operator request is a call entering Rose as surely as a tool call is: an inspector's step or
+		// pick is forwarded to a live-app host like any tool, so it gets an id here, first, for the lines
+		// it writes on both sides of that hop.
+		var operators = app.MapGroup(Prefix)
+			.AddEndpointFilter(async (context, next) =>
+			{
+				using var correlation = CallCorrelation.Begin(null);
+
+				return await next(context);
+			})
+			.AddEndpointFilter(new Failures());
 
 		MapSessions(operators);
 		MapDebugging(operators);

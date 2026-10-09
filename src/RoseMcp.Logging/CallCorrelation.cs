@@ -78,6 +78,44 @@ public static class CallCorrelation
 	public static string Mint() => Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(MintedBytes));
 
 	/// <summary>
+	/// The call in flight on this execution context, for work handed to a queue that a long-lived loop
+	/// runs later on a context of its own. Resuming it there files that work's lines under the call that
+	/// queued it and is waiting on it, and under nothing once that call has ended -- and it moves only
+	/// this id onto the loop, none of the caller's other ambient state.
+	/// </summary>
+	public static Captured Capture() => new(Ambient.Value);
+
+	/// <summary>A call taken from one execution context to resume on another. See <see cref="Capture"/>.</summary>
+	public readonly struct Captured
+	{
+		// Held as an object because the call's own type is private to the class, and a struct the
+		// class's callers can hold cannot name it in a member they could see.
+		private readonly object? _call;
+
+		internal Captured(object? call) => _call = call;
+
+		/// <summary>
+		/// Makes the captured call the one in flight until the result is disposed, then puts back whatever
+		/// was. Resuming does not end the call: the call it came from is the one that ends it.
+		/// </summary>
+		public IDisposable Resume() => new Resumed(_call as Call);
+	}
+
+	/// <summary>A captured call resumed on another context, restored on dispose without ending it.</summary>
+	private sealed class Resumed : IDisposable
+	{
+		private readonly Call? _previous;
+
+		public Resumed(Call? call)
+		{
+			_previous = Ambient.Value;
+			Ambient.Value = call;
+		}
+
+		public void Dispose() => Ambient.Value = _previous;
+	}
+
+	/// <summary>
 	/// One call's id, shared by reference with everything that inherited the execution context it was
 	/// set on, which is what lets ending it reach them all.
 	/// </summary>

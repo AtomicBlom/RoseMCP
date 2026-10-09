@@ -28,6 +28,7 @@ public static class RoseFileLogging
 	/// </summary>
 	private const string OutputTemplate =
 		"{Utc:yyyy-MM-dd HH:mm:ss.fff}Z [{Level:u3}] {CorrelationId} {SourceContext}: {Message:lj}{NewLine}{Exception}";
+
 	/// <summary>
 	/// The file this process is writing to, for a UI that offers to open it. Set once during
 	/// startup and never again, which is what makes a static safe here: a process configures its

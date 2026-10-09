@@ -13,7 +13,9 @@ to timestamps. An id of Rose's own, sent alongside the request, is the same stri
 **Why minted where it enters, and only accepted in Rose's own shape.** The outermost Rose process is
 the only one that sees the call before any hop, so its id is the one the rest can repeat. A process
 with nothing in front of it -- a broker with no relay, a worker under a test -- is the outermost one
-and mints for itself, which leaves no line without an id inside a call. A client may send anything in
+and mints for itself, which leaves no line without an id inside a call. An operator request is an
+entry point too: an inspector's step or pick reaches a live-app host the way a tool call does, so the
+operator API mints for each request it serves. A client may send anything in
 `_meta`, and the id is written verbatim into every line of the call, so only lowercase hex of a
 length a Rose process could mint is accepted: a value carrying a newline would otherwise forge lines
 in the log, and one carrying a few kilobytes would bury every message under it.
@@ -33,7 +35,10 @@ over when it closes, and everything that inherited it stops reporting it at that
 anybody having to find every place work is started. Work that is never the call's -- a poll loop, a
 sweep, a child's transport -- is started through `Detached` as well, so it does not carry the id even
 while the call that happened to start it is still running. Work a call causes and waits on, such as
-the load a first call starts, does carry it, because that is the call it belongs to.
+the load a first call starts, does carry it, because that is the call it belongs to -- including work
+handed to a queue whose loop runs on a context of its own, like the worker's single writer: the item
+captures the call when it is queued and the loop resumes it around the item, moving that id and no
+other ambient state onto the loop.
 
 **Why not the session id.** Which session made a call is already decided per call by `CallSession`
 for owning a live-app session, and logging it would put a value that acts as a credential over http

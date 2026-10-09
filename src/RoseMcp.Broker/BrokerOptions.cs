@@ -93,8 +93,18 @@ public sealed class BrokerOptions
 	public TimeSpan EvictionSweepInterval { get; set; } = TimeSpan.FromMinutes(1);
 
 	/// <summary>
+	/// How long a live-app session whose host has stopped answering stays listed, as ended, before the
+	/// session manager drops it. On in every host, stdio included: a dead host has nothing left to read
+	/// and is otherwise polled every second for the life of the broker. Long enough that a person
+	/// glancing at the tray, an inspector and an agent's next <c>rose_debug_list</c> all see the session
+	/// ended and why, rather than finding it simply gone.
+	/// </summary>
+	public TimeSpan EndedSessionGrace { get; set; } = TimeSpan.FromSeconds(30);
+
+	/// <summary>
 	/// The clock idle eviction reads: when a worker started, was last used and stopped, when the sweep
-	/// ticks and what it takes "now" to be. The system clock everywhere but a test, which replaces it to
+	/// ticks and what it takes "now" to be -- and when the session manager found a live-app host gone
+	/// and how long ago that was. The system clock everywhere but a test, which replaces it to
 	/// put a sweep at a moment it chooses -- far past the idle limit, inside the instant a hold covers --
 	/// rather than waiting for real time to land there, which it practically never does.
 	/// </summary>

@@ -294,6 +294,77 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
+	/// A session whose host has died is listed as ended, with the reason on its row, and then dropped:
+	/// out of the registry, its client disposed, and no longer polled. Nothing else removes it -- no
+	/// caller is going to close a session they cannot reach -- so without the drop it is carried, and
+	/// asked how it is every second, for the life of the broker.
+	/// <para>
+	/// The host is killed outright rather than told to exit, because that is the case: a host that
+	/// crashed, or that something on the machine ended, says nothing on its way out.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_session_whose_host_dies_is_shown_ended_then_dropped()
+	{
+		await using var manager = CreateManager(configure: options => options.EndedSessionGrace = TimeSpan.FromSeconds(2));
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+			var hostProcessId = session.Describe().HostProcessId.ShouldNotBeNull();
+
+			using (var host = Process.GetProcessById(hostProcessId))
+			{
+				host.Kill(entireProcessTree: false);
+				await host.WaitForExitAsync(cancellationToken);
+			}
+
+			// Listed as ended, with the reason where a person reads it, before it goes.
+			LiveAppSessionSummary? ended = null;
+			await WaitUntilAsync(
+				() =>
+				{
+					ended = manager.Describe().SingleOrDefault(row => row.SessionId == session.SessionId);
+					return ended?.Recent.Any(activity => activity.Operation == LiveAppSessionManager.DropOperation) ?? false;
+				},
+				cancellationToken);
+
+			ended!.State.ShouldBe(LiveAppSessionState.Ended);
+			ended.Recent.First(activity => activity.Operation == LiveAppSessionManager.DropOperation)
+				.Message.ShouldNotBeNull().ShouldContain("stopped answering");
+			session.IsAlive.ShouldBeFalse();
+
+			await WaitUntilAsync(() => manager.Describe().All(row => row.SessionId != session.SessionId), cancellationToken);
+
+			manager.Sessions.ShouldBeEmpty();
+			manager.Find(session.SessionId).ShouldBeNull();
+			manager.Activities.Recent(session.SessionId).ShouldBeEmpty();
+
+			// Ended without asking a host that was not there to detach.
+			session.DetachFailure.ShouldNotBeNull().ShouldContain("already stopped answering");
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>Waits for a condition the manager's own poll makes true, failing after a generous bound.</summary>
+	private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+
+		while (!condition())
+		{
+			if (DateTime.UtcNow > deadline) throw new TimeoutException("The condition did not hold within 30 s.");
+
+			await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+		}
+	}
+
+	/// <summary>
 	/// #219: ICorDebug refuses to detach while any breakpoint the session bound is still active, so a
 	/// session that did the one thing a debug session is for could not let go of the user's process --
 	/// and what it left behind said nothing, since the session is gone from the list while the debugger

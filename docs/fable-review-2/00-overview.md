@@ -61,10 +61,10 @@ still to decide.
 Issues filed after the review, up to #362, are triaged into the cards below. The ones no card fits
 are listed after tier 6, so none of them is re-derived from scratch.
 
-Three cards came out of closing others: the layout half of **21**, **11f** (closing 1b lets a
-worktree go while its worker runs on), and card 0e's finding that three of the phrases the comment
-convention lists are not history clauses at all. Card 9 also found a wrong answer the review missed
--- four write tools reporting a project clean while the caller's errors sat in it.
+Three cards came out of closing others: the layout half of **21**, **11f**, and card 0e's finding
+that three of the phrases the comment convention lists are not history clauses at all. Card 9 also
+found a wrong answer the review missed -- four write tools reporting a project clean while the
+caller's errors sat in it.
 
 Each closed finding is struck in its own file: the pull request, the problem, the state.
 
@@ -353,7 +353,7 @@ Highest leverage on adoption. Cheap relative to impact.
 | ~~11c~~ | **#376.** Every result named its workspace by a short key that no argument accepted. Every tool that takes `workspace` accepts the key too, but the one that starts a load. | AGT-21 | — | — |
 | ~~11d~~ | **#377.** The four debug bookkeeping tools took one location or id each, so instrumenting a path cost a model turn per method. Each takes a list and answers every entry with its own status, and one bad entry never fails the rest. | AGT-22 | — | — |
 | ~~11e~~ | **#378.** An answer past its cap was the first few references and a truncation flag, and three of the four facets on every reference could not be asked about. Past its cap the answer is the shape of the references, every facet is a filter, and a filter that keeps nothing says so. | AGT-23, AGT-05 | — | — |
-| 11f | **An ended live-app session is never dropped.** The worker half is done in #157: a long-lived broker evicts an idle worker and retires one whose solution has been gone past a grace period, says so in the activity log, and `rose_workspace_list` shows what is loaded with each workspace's key. What is left is the live-app half: drop an ended session, which is otherwise polled every second for the life of the broker, and say so in the session manager's activity log the way a worker's eviction is said. | BRK-04 | #379 | S |
+| ~~11f~~ | **#157, #379.** A worker outlived the worktree it was opened on and an idle one held its memory for the life of the broker, a session whose debug host had died was polled every second for as long, and no session could see what was warm. A long-lived broker stops idle and orphaned workers, a dead host's session is shown ended and then dropped, each says why where a person looks, and a session can list what is loaded by the key that names it. | BRK-04 | — | — |
 | 11g | **A path that does not exist yet is passed over as a routing hint**, so `rose_add_file` into another checkout is answered by the calling session's workspace every time, although the routing invariant says an absolute path is honoured wherever it points. It fails safely, and the refusal is the defect: it says the path is inside no project, which is false, and suggests an argument that would not help rather than `solution`, which would. Route a path that names nothing by its nearest existing ancestor, the way the tool will place the file. | new | #357 | S |
 | ~~11h~~ | **#358.** A typed tool's text was escaped by the SDK's default encoder, `+` and `<` included, except on a call carrying an undeclared argument, whose text was rewritten readably. Every host writes tool text with one relaxed encoder. | new | — | — |
 | ~~12~~ | **#249.** An argument sent under a name the tool does not declare was dropped in silence, and the refusal then reported the value as missing. A refusal names the argument and the declared name it most likely meant, and a call that succeeds without it says so in its notices. AGT-08's other suggestion, one word for imports everywhere, is undecided. | AGT-08 | — | — |

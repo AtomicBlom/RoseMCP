@@ -23,7 +23,10 @@ public sealed class LiveAppSession : IAsyncDisposable
 	private readonly ActivityLog _activities;
 	private readonly ILogger _logger;
 	private LiveAppInfo? _info;
-	private bool _alive = true;
+
+	// Volatile because a poll writes it and the manager's loop reads it on another thread to decide
+	// whether the session is dropped.
+	private volatile bool _alive = true;
 
 	// When the self-report above was read. Everything in a summary except the activity lists comes
 	// from it, so a reader acting on those fields needs to know which moment they describe -- a host
@@ -68,6 +71,21 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public DateTime StartedUtc { get; }
 
 	public int? HostProcessId => _info?.HostProcessId;
+
+	/// <summary>
+	/// Whether the host is still there to answer: false once a poll has found its transport gone, and
+	/// once the session has been disposed. Never true again after that, which is what lets the manager
+	/// act on it without asking twice. A host that is alive and reports its target as exited is still
+	/// alive here -- its event log can still be read.
+	/// </summary>
+	public bool IsAlive => _alive;
+
+	/// <summary>
+	/// When <see cref="LiveAppSessionManager"/> first found the host gone, on its own clock, or null
+	/// while the host answers. Set by the manager's poll and read only there; the session is dropped
+	/// once this is older than <see cref="BrokerOptions.EndedSessionGrace"/>.
+	/// </summary>
+	public DateTime? EndedSeenUtc { get; internal set; }
 
 	/// <summary>
 	/// Why the detach did not happen, once this session has been disposed of, and null when it did.
@@ -796,34 +814,47 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 	public async ValueTask DisposeAsync()
 	{
+		var hostGone = !_alive;
 		_alive = false;
 
-		try
+		if (hostGone)
 		{
-			// Detach while the host is still alive, so the target is left running. An ICorDebug
-			// debuggee whose debugger just dies is taken down with it, so this must precede closing
-			// the host rather than relying on the host's own shutdown winning the race.
-			var info = await SendAsync<LiveAppInfo>(ToolNames.LiveAppDetach, CancellationToken.None);
-
-			// A host that could not detach reports Faulted rather than Ended, and that has to survive
-			// disposal: a caller told the session closed and not told the debugger is still on their
-			// process has been given the same silence this whole change exists to remove.
-			if (info.State == LiveAppSessionState.Faulted)
+			// A poll already found the transport closed, so there is nobody to ask, and the debugger
+			// went with the host. The request could only fail, on the one call here that waits with no
+			// token -- and a warning about a detach failing is noise when the host's death is the news.
+			DetachFailure = "The live-app host had already stopped answering, so no detach could be asked for.";
+			_logger.LogDebug("The live-app host for {Target} was gone before its session closed.", Target.Description);
+		}
+		else
+		{
+			try
 			{
-				DetachFailure = info.Detail ?? "The host could not detach from the target.";
-				_logger.LogWarning(
-					"The live-app host for {Target} could not detach: {Detail}", Target.Description, DetachFailure);
+				// Detach while the host is still alive, so the target is left running. An ICorDebug
+				// debuggee whose debugger just dies is taken down with it, so this must precede closing
+				// the host rather than relying on the host's own shutdown winning the race.
+				var info = await SendAsync<LiveAppInfo>(ToolNames.LiveAppDetach, CancellationToken.None);
+
+				// A host that could not detach reports Faulted rather than Ended, and that has to survive
+				// disposal: a caller told the session closed and not told the debugger is still on their
+				// process has been given the same silence this whole change exists to remove.
+				if (info.State == LiveAppSessionState.Faulted)
+				{
+					DetachFailure = info.Detail ?? "The host could not detach from the target.";
+					_logger.LogWarning(
+						"The live-app host for {Target} could not detach: {Detail}", Target.Description, DetachFailure);
+				}
+			}
+			catch (Exception exception)
+			{
+				DetachFailure = exception.Message;
+				_logger.LogWarning(exception, "Detaching the live-app host for {Target} failed.", Target.Description);
 			}
 		}
-		catch (Exception exception)
-		{
-			DetachFailure = exception.Message;
-			_logger.LogWarning(exception, "Detaching the live-app host for {Target} failed.", Target.Description);
-		}
 
 		try
 		{
-			// Disposing the client closes the host's stdin, which tells it to exit.
+			// Disposing the client closes the host's stdin, which tells it to exit -- and releases the
+			// pipes of one that has already gone.
 			await _client.DisposeAsync();
 		}
 		catch (Exception exception)

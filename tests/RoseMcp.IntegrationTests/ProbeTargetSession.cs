@@ -34,10 +34,17 @@ internal static class ProbeTargetSession
 	/// A factory to record what the session logged, for an assertion that can only be made about
 	/// which path the work took rather than about the answer it produced.
 	/// </param>
-	internal static LiveAppSessionManager CreateManager(ILoggerFactory? logs = null) => new(
-		Options.Create(new BrokerOptions()),
-		logs ?? NullLoggerFactory.Instance,
-		NullLogger<LiveAppSessionManager>.Instance);
+	/// <param name="configure">Changes to the default options, for a test about one of them.</param>
+	internal static LiveAppSessionManager CreateManager(ILoggerFactory? logs = null, Action<BrokerOptions>? configure = null)
+	{
+		var options = new BrokerOptions();
+		configure?.Invoke(options);
+
+		return new LiveAppSessionManager(
+			Options.Create(options),
+			logs ?? NullLoggerFactory.Instance,
+			NullLogger<LiveAppSessionManager>.Instance);
+	}
 
 	/// <summary>
 	/// A dedicated child process to attach to, rather than this test runner: attaching a debugger to

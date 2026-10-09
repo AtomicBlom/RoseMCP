@@ -42,13 +42,9 @@ session's directory now, and the hop on from there carries absolute paths only.
 - **Why it matters:** In the tray -- the shared, multi-session host the relay exists for -- one agent opening a large solution stalls every other agent on the machine for the length of a handshake. It reads as Rose being slow on a solution that is already warm, which is the reflex-to-grep failure CLAUDE.md is most worried about.
 - **Suggested change:** Per-key coordination. Replace `ConcurrentDictionary<string, WorkspaceWorker>` with `ConcurrentDictionary<string, Lazy<Task<WorkspaceWorker>>>` (or `AsyncLazy`), so the alive fast path is a lock-free `TryGetValue` and a start blocks only callers of that same solution. Keep a gate per solution for the check-dispose-replace sequence. If serialising *starts* across solutions is deliberate (to stop design-time builds competing), make that a separately named `SemaphoreSlim _starting` with that reason on it, and keep it off the fast path. `BrokerTests.Reuses_one_warm_worker_across_calls` should gain a sibling: open A, begin opening B with a slow handshake, assert a call on A completes before B's handshake does.
 
-### BRK-04 An ended live-app session is never evicted and is polled forever
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Broker/LiveAppSessionManager.cs:235-256`, `src/RoseMcp.Broker/LiveAppSession.cs:121-138`
-- **What:** `RefreshInfoAsync` sets `_alive = false` on a transport failure and `Describe` reports `Ended`, but nothing removes the session from `_sessions` or disposes its `McpClient`. `RefreshLoopAsync` iterates `Sessions` every second and calls `RefreshInfoAsync` on the dead client, which fails the same way, indefinitely. Only `CloseAsync`/`CloseForOperatorAsync` (a caller's explicit act) or manager disposal removes anything. Issue #157 makes the same observation about workers ("a worker lives until its broker does"); for sessions it is worse because a dead one is also actively polled.
-- **Why it matters:** A tray that has been up for a day carries every session any agent ever started, each costing a failed round trip per second and a row in `GET /admin/sessions` and the inspector. The `Ended` state is honest, but "ended and still here" is a state nothing acts on.
-- **Suggested change:** Make eviction the manager's job. On the `_alive` transition, the manager removes the session after one more `Describe` cycle (so a window sees `Ended` once), disposes the client, and records the eviction in `Activities`, as the workspace manager's sweep does for a worker. Test: attach to a child process, kill the child's host, assert the session leaves `Describe()` within a few ticks and the poll stops.
+### ~~BRK-04 An ended live-app session is never evicted and is polled forever~~
+**#379.** A session whose debug host had died stayed listed, and was polled every second, for the life
+of the broker. It is shown ended, with the reason, for a short grace period and then dropped.
 
 ### ~~BRK-05 `WorkerLauncher` still has the stale-binary trap the other two launchers fixed~~
 **#295.** The worker was resolved by recency alone, so a Release publish left in bin answered for a

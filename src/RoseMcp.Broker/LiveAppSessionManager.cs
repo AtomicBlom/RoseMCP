@@ -318,14 +318,7 @@ public sealed class LiveAppSessionManager(
 
 			if (verdict == EndedSessionVerdict.MarkEnded)
 			{
-				session.EndedSeenUtc = now;
-				Activities.Note(session.SessionId, DropOperation, EndedSessionEviction.Explain(grace));
-
-				logger.LogInformation(
-					"The host of live-app session {SessionId} for {Target} stopped answering; the session is dropped in {Grace}.",
-					session.SessionId,
-					session.Target.Description,
-					WorkerEviction.Duration(grace));
+				await MarkEndedAsync(session, now, grace, cancellationToken);
 				continue;
 			}
 
@@ -342,6 +335,39 @@ public sealed class LiveAppSessionManager(
 				session.Target.Description,
 				WorkerEviction.Duration(now - (session.EndedSeenUtc ?? now)));
 		}
+	}
+
+	/// <summary>
+	/// Records that a session's host has gone, and files the reason on its row, if the session is still
+	/// registered.
+	/// <para>
+	/// Under the gate a close takes, because a close also leaves its session not alive: one that ran
+	/// between this tick's snapshot and here has already forgotten the session's activities, and a note
+	/// filed after that would sit in the log under an id nothing lists, with a line in the broker's log
+	/// blaming a host that was in fact closed on purpose.
+	/// </para>
+	/// </summary>
+	private async Task MarkEndedAsync(LiveAppSession session, DateTime now, TimeSpan grace, CancellationToken cancellationToken)
+	{
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			var stillRegistered = _sessions.TryGetValue(session.SessionId, out var current) && ReferenceEquals(current, session);
+			if (!stillRegistered) return;
+
+			session.EndedSeenUtc = now;
+			Activities.Note(session.SessionId, DropOperation, EndedSessionEviction.Explain(grace));
+		}
+		finally
+		{
+			_gate.Release();
+		}
+
+		logger.LogInformation(
+			"The host of live-app session {SessionId} for {Target} stopped answering; the session is dropped in {Grace}.",
+			session.SessionId,
+			session.Target.Description,
+			WorkerEviction.Duration(grace));
 	}
 
 	/// <summary>Now, on the clock an ended session's grace is read from.</summary>

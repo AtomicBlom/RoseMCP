@@ -187,6 +187,42 @@ public sealed class XamlStubTests
 		emission.SkipReason!.ShouldContain("already in the compilation", Case.Sensitive);
 	}
 
+	/// <summary>
+	/// The partial a build left in obj is as old as that build. An element named since is in no partial at
+	/// all, and every use of it is CS0103 until the next build, so its field is supplied beside the built
+	/// partial -- and nothing else, since everything else is already declared there.
+	/// </summary>
+	[Test]
+	public void Supplies_the_fields_a_built_partial_is_missing()
+	{
+		var markup = """
+			<UserControl x:Class="App.Widget"
+				xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+				xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+				<StackPanel>
+					<Button x:Name="Older" />
+					<Button x:Name="Newer" />
+				</StackPanel>
+			</UserControl>
+			""";
+
+		var built = "#nullable disable\n#pragma warning disable 0649\n"
+			+ "namespace App { partial class Widget : Windows.UI.Xaml.Controls.UserControl "
+			+ "{ internal Windows.UI.Xaml.Controls.Button Older; public void InitializeComponent() { } } }";
+
+		var emission = Emit(markup, built);
+
+		emission.Source!.ShouldContain("Button Newer;", Case.Sensitive);
+		emission.Source!.ShouldNotContain("Older", Case.Sensitive);
+		emission.Source!.ShouldNotContain("InitializeComponent", Case.Sensitive);
+		emission.Source!.ShouldContain("partial class Widget\n", Case.Sensitive);
+
+		Compile(FakeFramework, built, emission.Source!)
+			.GetDiagnostics()
+			.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+			.ShouldBeEmpty();
+	}
+
 	/// <summary>Two partials naming different base classes is CS0263, so the other part wins.</summary>
 	[Test]
 	public void Leaves_the_base_type_alone_when_the_code_behind_declares_one()

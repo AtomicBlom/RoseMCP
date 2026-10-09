@@ -642,8 +642,8 @@ at all.
   3. Give the crash class a guard rather than a paragraph. The two recorded crashes, reading
      `PixelWidth` in a completion handler and capturing a `RenderTargetBitmap` in a lambda destroyed
      on a pool thread, are the strongest argument in the file for the lens being *hard*, not for it
-     being *unwanted*. They are also untested, in the third of the product that never runs in CI
-     (UIP-25).
+     being *unwanted*. They are also untested: no test opens the lens, though the overlay's other
+     tests run in CI.
 
   Surface the reason to the user too. The lens's tooltip says "a nearest-neighbour magnifier that
   follows the pointer, leaving the app untouched", which describes the mechanism. "Exact pixels and

@@ -28,7 +28,7 @@ attribute, "every result carries a revision" -- is review-only, and three of the
 a split, 100 history clauses where #171 counted 90, and four doc claims that describe code that has
 moved. The one structural hole is that the newest, least conventional and most bug-dense third of the
 product -- debugger, tap, live edit, 55 tests -- never ran in CI at all; the debugger part does now
-(#295), and the tap and live-edit part does not. The one growing debt is `TestSession.OpenAsync`:
+(#295), and the tap and live-edit part does too (#384). The one growing debt is `TestSession.OpenAsync`:
 a real solution load for every test that writes, while the tests that only read share one load per
 fixture (#39) and the live-app half next door shares its apps. None of this is vibe-coded; it is carefully built and
 under-mechanised, which is a much better problem to have.
@@ -492,10 +492,10 @@ means tests that would catch a regression in existing code but not an omission i
 | `result-shapes` | `ToolSurfaceTests`, `ToolDescriptionTests`, `ToolBudgetTests`, `SecurityModelTests`, `ToolArgumentShapeTests`, `ToolParityTests` | **structural** -- the best-guarded rule in the repo |
 | `writing-csharp` | as the formatting row | by example, strong |
 | `analyzers-and-generators` | `AnalyzerLockTests`, `SolutionLoaderTests`, `WorkspaceStatusTests`, `XamlStubTests`, `WinUiXamlStubTests`, `WpfXamlStubTests`, `XamlStubChannelTests` | by example, strong |
-| `xaml-live-edit` | `XamlDiffTests`, `XamlApplyBaselineTests`, `XamlMaterialiserTests` (fast) + `LiveAppUwpTests` (never in CI) | by example; the apply half is CI-uncovered |
+| `xaml-live-edit` | `XamlDiffTests`, `XamlApplyBaselineTests`, `XamlMaterialiserTests` (fast) + the UWP live-edit tests, in CI since #384 | by example |
 | `tap-tiers` (which header may name what) | a unit test over the headers, their include graph and both providers' include order (#386) | **structural** |
-| `xaml-tap-lifecycle` | `LiveAppUwpTests`, `LiveAppWinUiTests` only -- never run in CI | **review-only in practice** |
-| `overlay` | `LiveAppUwpTests` only -- never run in CI | **review-only in practice** |
+| `xaml-tap-lifecycle` | the probe-app tests, in CI since #384 | by example |
+| `overlay` | the UWP overlay tests, in CI since #384 | by example |
 | `hosts-and-deploy` | `PublishedLayoutTests`, `RepositoryHostBuildTests`, `XamlStackModulesTests`, `TargetArchitectureProbeTests` for the C# resolvers; `Assert-WindowsPackage` in `deploy.ps1` for the package | split across two mechanisms that never meet (UIP-25) |
 | `live-app-tests` (hand-back, slots, one gate) | the fixtures assert it themselves (`UwpProbeApp.SessionTurn.DisposeAsync`) | **structural**, and the best idea in the test suite |
 | Conventions: tabs, file-scoped namespaces, Allman, IDE0130 | `.editorconfig` + `EnforceCodeStyleInBuild` + `TreatWarningsAsErrors` + `dotnet format --verify-no-changes` in CI | **structural** |
@@ -517,7 +517,7 @@ applied outside `Contracts`.
 | `linux` | publish broker + worker for `linux-x64`/`linux-arm64`, unit suite Release | same | |
 | `integration` | only if a changed file is outside `docs/ wiki/ tools/ .claude/ src/*.Tap/ release.yml *.md`; `--maximum-parallel-tests 3`, `[Category!=LiveApp]`, plus `IntegrationTests.Windows` | always | |
 | `xaml-providers` | only if a tap folder / `Directory.*.props` / `global.json` / `ci.yml` changed; **x64 Debug only**, compile and link, no tests | all six of {Uwp,WinUi} x {x86,x64,arm64} as Release | |
-| live-app suite | | | **`LiveAppSessionTests` (19), `LiveAppUwpTests` (25), `LiveAppWinUiTests` (8), `LiveAppUwpModernTests` (2), one `OperatorApiTests` method -- 55 tests** |
+| `probe-apps` | only if a probe-app test's inputs changed; sets the runner up and runs `[Category=ProbeApp]`, failing on a skip (#384) | always | |
 | `tools/*.ps1` (1,496 lines) | | | never linted, never executed except `deploy.ps1 -Mode package` on a tag |
 
 The CI file is the best-commented thing in the repository: the fail-open `!= 'false'` condition, the
@@ -561,28 +561,10 @@ already hold the code to. The structural rule this finding worried about is the 
 the one bug it cites, `-f` binding tighter than `+`, is a precedence mistake rather than a style a
 linter looks for.
 
-### UIP-25 The newest third of the product -- debugger, tap, live edit -- has no CI coverage at all
-- **The debugger third is done, #295**, by splitting the suite on what each test needs. What is left
-  is the XAML, C++ and UWP half -- card 16's self-hosted runner -- and the flake rate nothing measures.
-- **Severity:** High
-- **Effort:** L
-- **Where:** `.github/workflows/ci.yml:129-132,181` (category exclusion), `:238-264` (providers compile only)
-- **What:** The live-app tests that need a tap never run in CI: the `xaml-providers` job compiles both
-  taps but runs nothing against them. So the injection, the visual tree, the overlay, the pick, the
-  properties read and the live-edit apply are verified only when one person runs the suite on one
-  machine with a C++ toolset, the Windows App SDK and developer mode. The exclusion is well-reasoned in the file -- a hosted runner genuinely lacks the toolchains,
-  and skips reading as passes is worse -- but the consequence is that the invariants `overlay.md`,
-  `xaml-tap-lifecycle.md` and half of `xaml-live-edit.md` are review-only in practice, and
-  `live-app-tests.md`'s own hardest-won rule ("green once is not green") cannot be applied at all,
-  because nothing samples repeatedly.
-- **Why it matters:** This is the half the review brief calls "largely vibe-coded", it is the half
-  with the most open bugs (8 `live-app` labels), and it is the half with the least automated
-  evidence.
-- **Suggested change:** A self-hosted runner is the honest answer and the expensive one. Short of
-  that, one thing that costs little and recovers most of the value: a scheduled `workflow_dispatch` /
-  nightly job on the developer machine's own runner, or a documented `./tools/Rose.ps1 live-app` that
-  runs the suite N times and reports a flake rate -- the measurement `live-app-tests.md` says is
-  required and that nothing currently produces.
+### ~~UIP-25 The newest third of the product -- debugger, tap, live edit -- has no CI coverage at all~~
+**#295, #384.** The debugger, the tap and live edit ran in no CI job. The debugger tests run in the
+integration job and the probe-app tests in a job that sets its runner up for them, and neither may
+skip; a flake rate is still measured by nothing (open question 4).
 
 ### UIP-26 The docs are strong and the index has already drifted: twelve spot-checks, seven hold
 - **Severity:** Medium

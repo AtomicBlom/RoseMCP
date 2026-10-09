@@ -364,7 +364,7 @@ Highest leverage on adoption. Cheap relative to impact.
 
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
-| 16 | **Put the XAML and tap half into CI**, the part card 0a leaves out: a C++ toolset, the Windows App SDK and developer mode. Three invariant documents are review-only until this lands. | UIP-25 | new | L |
+| ~~16~~ | **#384.** The tap, the visual tree, the overlay and the live-edit apply ran in no CI job, so three invariant documents were held by review alone. A job sets the runner up for the probe apps and runs their tests, and fails rather than skips where anything is missing. | UIP-25 | — | — |
 | 17 | *(moved to card 0a -- the accidental inclusion turned out to be proof that debugger tests run fine on a hosted runner, so it is widened deliberately rather than reverted.)* | UIP-14 | new | -- |
 | 18 | **Share fixtures on the Roslyn half: the tests that write.** A test that only reads shares one load per fixture (#39). The tests that write still copy and load a fixture each, which is most of the loads left. What remains is a copy that keeps its restore output for all but the generator tests, then a pool of loaded workspaces handed out the way the live-app slots are, with a hand-back check. The broker-process classes (`BrokerForwardingTests`, `IdleEvictionTests`, `WorkspaceRoutingTests`) start real workers rather than load through a test session, and are their own question. | UIP-13 | #39 | L |
 | 19 | *(moved to card 0d -- it is worth having before the work starts, not after.)* | IPC-02, BRK-05 | new | -- |

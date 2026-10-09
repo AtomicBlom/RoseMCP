@@ -46,7 +46,7 @@ public sealed class BrokerForwardingTests
 			await manager.CallAsync<ReadBatch<OutlineResult>>(
 				WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 				ToolNames.Outline,
-				new Dictionary<string, object?> { ["filePath"] = fixture.Path("Core", "Calculator.cs") },
+				new Dictionary<string, object?> { ["filePath"] = Path.Combine(Path.GetDirectoryName(fixture.SolutionPath)!, "Core", "Calculator.cs") },
 				retryIfWorkerDied: true,
 				cancellationToken);
 		}

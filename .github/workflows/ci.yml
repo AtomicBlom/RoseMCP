@@ -156,7 +156,10 @@ jobs:
     # suite. A skipped required check passes, and a broken filter must not be a way to pass it.
     if: ${{ !cancelled() && needs.changes.outputs.integration != 'false' }}
     runs-on: windows-latest
-    timeout-minutes: 30
+    # The probe-free step's own limit plus ten minutes for the rest of the job around it -- setup,
+    # the build, the Windows half and an evidence upload, about three minutes together -- so a step
+    # that times out still leaves the job the time to keep what it found.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -225,11 +228,30 @@ jobs:
       # start a worker during the spike -- a different set each run, which is what makes it read as
       # flakiness rather than as load. Three and not four, because one test can hold several workers.
       #
+      # Every test is printed as it finishes, with its time, and the slowest are ranked at the end, so
+      # a run that grows says where it grew. A finished test is all the runner prints, though, so the
+      # suite's RunningTests names on stderr the tests still unfinished when a run is cut short.
+      #
       # Bounded below the job's own limit, so a suite that hangs fails this step and leaves the job
-      # the time to keep its evidence, rather than being cancelled with nothing uploaded.
+      # the time to keep its evidence, rather than being cancelled with nothing uploaded. The runner's
+      # own --timeout sits three minutes inside the step's, so the run normally ends itself -- naming
+      # what it was running and writing its report into TestResults -- before the step is killed.
+      #
+      # A hang inside one test is bounded sooner, by the ten-minute ceiling each test has (TestDeadline),
+      # and fails that test by name. What these limits are for is the whole run, and the step's is
+      # scaled from a runner rather than from a developer box. Timed locally, three at a time, where the
+      # wall time is a third of the test time, the suite takes 2330 s of test time; a subset of it
+      # taking 1893 s took 19 minutes on a runner, so the whole is about 24 minutes there. 35 leaves
+      # about half as much again, for a slow runner and for the tests still to come.
       - name: Integration tests, excluding the ones that need a probe app
-        timeout-minutes: 20
-        run: ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe --maximum-parallel-tests 3 --treenode-filter '/*/*/*/*[Category!=ProbeApp]'
+        timeout-minutes: 35
+        run: >-
+          ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe
+          --maximum-parallel-tests 3
+          --treenode-filter '/*/*/*/*[Category!=ProbeApp]'
+          --output Detailed
+          --show-slowest-tests 20
+          --timeout 32m
 
       # The Windows-only half, which is its own project because it takes a compile reference on
       # RoseMcp.LiveApp (net10.0-windows). Keeping that out of the project above is what leaves the

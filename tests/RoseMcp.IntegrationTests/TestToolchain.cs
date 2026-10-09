@@ -185,7 +185,25 @@ internal static class TestToolchain
 	/// process. Removing a variable that was never set costs nothing, so there is no condition on it.
 	/// </para>
 	/// </summary>
-	internal static (int ExitCode, string Output) RunProcess(string fileName, string arguments)
+	internal static (int ExitCode, string Output) RunProcess(string fileName, string arguments) =>
+		RunProcess(fileName, arguments, Timeout.InfiniteTimeSpan, fileName);
+
+	/// <summary>
+	/// Runs a tool as <see cref="RunProcess(string, string)"/> does, but gives up on it after
+	/// <paramref name="timeout"/>: the tool and everything it started are killed, and a
+	/// <see cref="TimeoutException"/> names what it was doing, how long it ran, and what it had written.
+	/// </summary>
+	/// <param name="fileName">The tool.</param>
+	/// <param name="arguments">Its command line.</param>
+	/// <param name="timeout">How long to wait; <see cref="Timeout.InfiniteTimeSpan"/> waits for ever.</param>
+	/// <param name="purpose">What the tool is doing, as the failure names it.</param>
+	/// <remarks>
+	/// For a tool run under a lock other work queues on, where one that never returns would hold every
+	/// waiter until the job's own limit kills the run and names whichever test happened to be waiting.
+	/// The output is read as it arrives rather than after the exit, so a tool that fills a pipe cannot
+	/// stall itself and a killed one still says how far it got.
+	/// </remarks>
+	internal static (int ExitCode, string Output) RunProcess(string fileName, string arguments, TimeSpan timeout, string purpose)
 	{
 		var start = new ProcessStartInfo(fileName, arguments)
 		{
@@ -196,10 +214,38 @@ internal static class TestToolchain
 
 		foreach (var inherited in MSBuildEnvironment) start.Environment.Remove(inherited);
 
+		var elapsed = Stopwatch.StartNew();
 		using var process = Process.Start(start) ?? throw new InvalidOperationException($"{fileName} did not start.");
-		var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-		process.WaitForExit();
-		return (process.ExitCode, output);
+		var standardOutput = process.StandardOutput.ReadToEndAsync();
+		var standardError = process.StandardError.ReadToEndAsync();
+
+		if (process.WaitForExit(timeout))
+		{
+			process.WaitForExit();
+			return (process.ExitCode, standardOutput.Result + standardError.Result);
+		}
+
+		var id = process.Id;
+		try
+		{
+			process.Kill(entireProcessTree: true);
+		}
+		catch (InvalidOperationException)
+		{
+			// It exited between the wait giving up and the kill, which is the outcome the kill wanted.
+		}
+
+		process.WaitForExit(TimeSpan.FromSeconds(10));
+
+		// The pipes close once everything holding them is dead; a grandchild the kill could not reach
+		// would hold them open, so the reads get a bound of their own rather than a second hang.
+		var drained = Task.WaitAll([standardOutput, standardError], TimeSpan.FromSeconds(10));
+		var written = drained ? (standardOutput.Result + standardError.Result).Trim() : string.Empty;
+
+		throw new TimeoutException(
+			$"{purpose} did not finish within {timeout.TotalSeconds:0} s: {Path.GetFileName(fileName)} (pid {id}) and the "
+				+ $"processes it started were killed after {elapsed.Elapsed.TotalSeconds:0.0} s. "
+				+ (written.Length == 0 ? "It had written nothing." : $"It had written: {written}"));
 	}
 
 	internal static string RepositoryRoot()
@@ -261,7 +307,9 @@ internal static class TestToolchain
 	/// <para>
 	/// Under one gate for every fixture, because the UWP probes register in parallel and share their
 	/// frameworks: two fixtures installing <c>Microsoft.VCLibs.140.00.Debug</c> at once would race a
-	/// machine-wide deployment for no gain, when the second only needs to find it done.
+	/// machine-wide deployment for no gain, when the second only needs to find it done. Every script
+	/// run under it has a time limit, so a deployment that never returns fails the registration it
+	/// belongs to, naming the step, rather than holding every other fixture until the job is killed.
 	/// </para>
 	/// </remarks>
 	internal static string? RegisterAppxLayout(string manifest, string packageName, string? recipe, out string? failure)
@@ -334,7 +382,17 @@ internal static class TestToolchain
 			if ($p) { 'PFN: ' + $p.PackageFamilyName }
 			""";
 
-		var (_, output) = RunPowerShell(script);
+		string output;
+		try
+		{
+			(_, output) = RunPowerShell(script, $"Registering {manifest}");
+		}
+		catch (TimeoutException timeout)
+		{
+			reported = timeout.Message;
+			return null;
+		}
+
 		var result = ReadRegistration(output);
 
 		reported = result.Reported;
@@ -394,7 +452,7 @@ internal static class TestToolchain
 		var packages = RecipeFrameworks(recipe, wanted.Architecture);
 		if (!packages.Any(package => string.Equals(package.Name, wanted.Name, StringComparison.OrdinalIgnoreCase)))
 		{
-			if (SdkFramework(wanted) is not { } fromSdk)
+			if (SdkFramework(wanted, SdkExtensionRoots()) is not { } fromSdk)
 			{
 				failure = $"the build's recipe ({recipe ?? "none"}) holds no {wanted.Name} for {wanted.Architecture}, and no "
 					+ $"package for it was found under the Windows SDK's ExtensionSDKs either. Install it by hand, or "
@@ -421,7 +479,17 @@ internal static class TestToolchain
 					+ "catch { if ($_.Exception.Message -notmatch '0x80073D06') "
 					+ $"{{ 'ERROR: {package.Name.Replace("'", "''")} from ' + {Quoted(package.Path)} + ': ' + ($_.Exception.Message -replace '\\s+', ' ') }} }}\n"));
 
-		var (_, output) = RunPowerShell(script);
+		string output;
+		try
+		{
+			(_, output) = RunPowerShell(script, $"Installing {string.Join(", ", packages.Select(package => package.Name))}");
+		}
+		catch (TimeoutException timeout)
+		{
+			failure = timeout.Message;
+			return null;
+		}
+
 		var errors = output.Split('\n')
 			.Select(line => line.Trim())
 			.Where(line => line.StartsWith("ERROR: ", StringComparison.Ordinal))
@@ -472,25 +540,23 @@ internal static class TestToolchain
 	/// <summary>
 	/// A framework package from the Windows SDK's <c>ExtensionSDKs</c>, or null where it has none.
 	/// </summary>
+	/// <param name="wanted">The framework and architecture the deployment engine asked for.</param>
+	/// <param name="roots">The <c>ExtensionSDKs</c> folders to search.</param>
 	/// <remarks>
 	/// The SDK ships these one folder per architecture, and the file names do not match the package
 	/// names -- <c>Microsoft.VCLibs.140.00.Debug</c> is <c>Microsoft.VCLibs.arm64.Debug.14.00.appx</c>
 	/// on disk. So the search matches on the parts that do carry over: the family (the name up to its
-	/// version), the architecture folder, and whether the wanted package is the Debug flavour, which is
-	/// a different package identity rather than a different build of one.
+	/// version), the architecture, and whether the wanted package is the Debug flavour, which is a
+	/// different package identity rather than a different build of one.
+	/// <para>
+	/// The architecture is matched as the folder the file sits in or as a dotted segment of its name,
+	/// never anywhere in the path, because the SDK lives under <c>Program Files (x86)</c>: every file
+	/// there contains "x86", and an x86 ask would take the x64 package and report it installed the
+	/// x86 one.
+	/// </para>
 	/// </remarks>
-	private static string? SdkFramework(FrameworkDependency wanted)
+	internal static string? SdkFramework(FrameworkDependency wanted, IEnumerable<string> roots)
 	{
-		var roots = new[]
-		{
-			Path.Combine(
-				Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-				"Microsoft SDKs", "Windows Kits", "10", "ExtensionSDKs"),
-			Path.Combine(
-				Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-				"Microsoft SDKs", "Windows Kits", "10", "ExtensionSDKs"),
-		};
-
 		// "Microsoft.VCLibs.140.00.Debug" -> "Microsoft.VCLibs", which is the ExtensionSDKs folder.
 		var family = string.Join('.', wanted.Name.Split('.').Take(2));
 		var debug = wanted.Name.Contains(".Debug", StringComparison.OrdinalIgnoreCase);
@@ -498,11 +564,30 @@ internal static class TestToolchain
 		return roots
 			.Where(Directory.Exists)
 			.SelectMany(root => SafeFiles(Path.Combine(root, family), "*.appx"))
-			.Where(path => path.Contains(wanted.Architecture, StringComparison.OrdinalIgnoreCase))
-			.Where(path => path.Contains(".Debug", StringComparison.OrdinalIgnoreCase) == debug)
+			.Where(path => IsForArchitecture(path, wanted.Architecture))
+			.Where(path => Path.GetFileName(path).Contains(".Debug.", StringComparison.OrdinalIgnoreCase) == debug)
 			.OrderByDescending(File.GetLastWriteTimeUtc)
 			.FirstOrDefault();
+
+		static bool IsForArchitecture(string path, string architecture)
+		{
+			var folder = Path.GetFileName(Path.GetDirectoryName(path));
+			var inFolder = string.Equals(folder, architecture, StringComparison.OrdinalIgnoreCase);
+			var inName = Path.GetFileName(path).Contains($".{architecture}.", StringComparison.OrdinalIgnoreCase);
+			return inFolder || inName;
+		}
 	}
+
+	/// <summary>Where the Windows SDK keeps its extension SDKs, the framework packages among them.</summary>
+	private static string[] SdkExtensionRoots() =>
+	[
+		Path.Combine(
+			Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+			"Microsoft SDKs", "Windows Kits", "10", "ExtensionSDKs"),
+		Path.Combine(
+			Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+			"Microsoft SDKs", "Windows Kits", "10", "ExtensionSDKs"),
+	];
 
 	/// <summary>
 	/// What one registration attempt's output says: the package family name where it registered, and
@@ -566,12 +651,22 @@ internal static class TestToolchain
 	}
 
 	/// <summary>
-	/// Runs a Windows PowerShell script, passed encoded so that no path or quote in it has to survive a
-	/// command line.
+	/// How long one deployment script under <see cref="RegistrationGate"/> may run. A registration or a
+	/// framework install takes seconds and reading an activity's deployment log about ten, so a script
+	/// still running after this is stuck rather than slow -- and every probe fixture is queued behind it.
 	/// </summary>
-	private static (int ExitCode, string Output) RunPowerShell(string script) => RunProcess(
+	private static readonly TimeSpan DeploymentTimeout = TimeSpan.FromMinutes(4);
+
+	/// <summary>
+	/// Runs a Windows PowerShell script, passed encoded so that no path or quote in it has to survive a
+	/// command line, and gives up on it after <see cref="DeploymentTimeout"/>.
+	/// </summary>
+	/// <exception cref="TimeoutException">The script did not finish; it names <paramref name="purpose"/>.</exception>
+	private static (int ExitCode, string Output) RunPowerShell(string script, string purpose) => RunProcess(
 		"powershell",
-		$"-NoProfile -NonInteractive -EncodedCommand {Convert.ToBase64String(Encoding.Unicode.GetBytes(script))}");
+		$"-NoProfile -NonInteractive -EncodedCommand {Convert.ToBase64String(Encoding.Unicode.GetBytes(script))}",
+		DeploymentTimeout,
+		purpose);
 
 	/// <summary>A string as a single-quoted PowerShell literal.</summary>
 	private static string Quoted(string value) => $"'{value.Replace("'", "''")}'";

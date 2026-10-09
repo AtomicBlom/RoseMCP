@@ -567,7 +567,7 @@ jobs:
       # What the deployment engine did, for the evidence below. A refused registration's failure names
       # what Windows asked for and carries that activity's errors, but only the event log has every
       # step of every attempt -- the framework installs the fixtures make before retrying included --
-      # and the frameworks the runner ended up with say which of those installs took.
+      # and the frameworks the runner holds at the end say which of those installs took.
       - name: Keep the AppX deployment log
         if: ${{ failure() || cancelled() }}
         shell: pwsh

@@ -3,12 +3,14 @@ using System.Text.RegularExpressions;
 namespace RoseMcp.IntegrationTests;
 
 /// <summary>
-/// How a refused registration is read: which framework Windows asked for, and what the failure says.
+/// How a refused registration is read: which framework Windows asked for, what the failure says, and
+/// which package in the Windows SDK answers the ask.
 /// <para>
-/// Pure tests over the text the registration script writes, so they need no probe app, no developer
-/// mode and no registration, and run in the plain integration job on every change. The output below
-/// is what Windows wrote for a modern UWP probe built for x86 on a machine with no x86
-/// <c>Microsoft.VCLibs.140.00.Debug</c>: the refusal whose headline was all a hosted runner reported.
+/// Tests over the text the registration script writes and over a staged folder of empty files, so
+/// they need no probe app, no developer mode and no registration, and run in the plain integration
+/// job on every change. The output below is Windows' refusal of a modern UWP probe built for x86 on a
+/// machine with no x86 <c>Microsoft.VCLibs.140.00.Debug</c>: the refusal whose headline alone names
+/// no framework.
 /// </para>
 /// </summary>
 public sealed class AppxRegistrationReportTests
@@ -80,5 +82,46 @@ public sealed class AppxRegistrationReportTests
 		var read = TestToolchain.ReadRegistration("powershell : the term is not recognised");
 		read.FamilyName.ShouldBeNull();
 		read.Reported.ShouldContain("powershell : the term is not recognised");
+	}
+
+	/// <summary>
+	/// The SDK's framework packages are told apart by the folder they sit in or a dotted segment of
+	/// their name, never by the architecture appearing anywhere in the path: the SDK lives under
+	/// <c>Program Files (x86)</c>, so every path there contains "x86", and an x86 ask matched that way
+	/// takes whichever package is newest -- here the x64 one.
+	/// </summary>
+	[Test]
+	public void The_sdk_framework_for_an_architecture_is_the_one_in_its_folder_under_program_files_x86()
+	{
+		var root = Path.Combine(Path.GetTempPath(), $"rose-sdk-{Guid.NewGuid():N}", "Program Files (x86)", "ExtensionSDKs");
+		try
+		{
+			var appx = Path.Combine(root, "Microsoft.VCLibs", "14.0", "AppX");
+			var debugX86 = Stage(Path.Combine(appx, "Debug", "x86", "Microsoft.VCLibs.x86.Debug.14.00.appx"), minutesAgo: 30);
+			var debugX64 = Stage(Path.Combine(appx, "Debug", "x64", "Microsoft.VCLibs.x64.Debug.14.00.appx"), minutesAgo: 0);
+			var retailX86 = Stage(Path.Combine(appx, "Retail", "x86", "Microsoft.VCLibs.x86.14.00.appx"), minutesAgo: 20);
+			var retailX64 = Stage(Path.Combine(appx, "Retail", "x64", "Microsoft.VCLibs.x64.14.00.appx"), minutesAgo: 10);
+
+			Find("Microsoft.VCLibs.140.00.Debug", "x86").ShouldBe(debugX86);
+			Find("Microsoft.VCLibs.140.00.Debug", "x64").ShouldBe(debugX64);
+			Find("Microsoft.VCLibs.140.00", "x86").ShouldBe(retailX86);
+			Find("Microsoft.VCLibs.140.00", "X64").ShouldBe(retailX64);
+			Find("Microsoft.VCLibs.140.00.Debug", "arm64").ShouldBeNull();
+		}
+		finally
+		{
+			Directory.Delete(Path.GetDirectoryName(Path.GetDirectoryName(root))!, recursive: true);
+		}
+
+		string? Find(string name, string architecture) =>
+			TestToolchain.SdkFramework(new TestToolchain.FrameworkDependency(name, architecture), [root]);
+
+		static string Stage(string path, int minutesAgo)
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+			File.WriteAllText(path, "not a package");
+			File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(-minutesAgo));
+			return path;
+		}
 	}
 }

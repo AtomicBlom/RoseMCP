@@ -163,31 +163,45 @@ public sealed class SharedWorkspace : IAsyncDisposable
 			fixture = _fixture;
 		}
 
-		await _disposing.CancelAsync();
-
-		if (load is not null)
+		// Each step is attempted whatever the one before it did: a session that fails to close still has
+		// its copy deleted, and a copy whose attributes cannot all be cleared is still deleted as far as
+		// it can be.
+		try
 		{
-			WorkspaceSession? session = null;
+			await _disposing.CancelAsync();
+			await DisposeSessionAsync(load);
+		}
+		finally
+		{
 			try
 			{
-				session = (await load).Session;
+				if (fixture is not null) SetReadOnly(fixture.Root, readOnly: false);
 			}
-			catch (Exception)
+			finally
 			{
-				// A load that failed or was cancelled left no session behind, and its failure has
-				// already been reported to every test that read.
+				fixture?.Dispose();
+				_disposing.Dispose();
 			}
-
-			if (session is not null) await session.DisposeAsync();
 		}
+	}
 
-		if (fixture is not null)
+	private static async Task DisposeSessionAsync(Task<Loaded>? load)
+	{
+		if (load is null) return;
+
+		WorkspaceSession session;
+		try
 		{
-			SetReadOnly(fixture.Root, readOnly: false);
-			fixture.Dispose();
+			session = (await load).Session;
+		}
+		catch (Exception)
+		{
+			// A load that failed or was cancelled leaves no session behind, and every test that read
+			// was told why.
+			return;
 		}
 
-		_disposing.Dispose();
+		await session.DisposeAsync();
 	}
 
 	/// <summary>The session, and the revision it loaded at, which every later read must still be at.</summary>

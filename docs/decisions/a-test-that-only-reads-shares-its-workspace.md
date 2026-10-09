@@ -5,15 +5,15 @@
 and loaded at most once a run, the first time a test asks, and every reading test after that reads the
 same session. A test that writes -- through a tool, or to the fixture on disk -- or that needs a load
 of its own shape (other options, a build first, an analyzer loader it controls) opens its own with
-`TestSession.OpenAsync`, as before.
+`TestSession.OpenAsync`.
 
 **Why share at all.** A load is a design-time build. It costs seconds and competes for the same cores
 as every other test running beside it, where the read a test makes afterwards costs a fraction of
 that. Loaded per test, a read-only test spends most of its time getting to where it can begin, and a
-dozen loading at once slow each other down by as much again, so the suite's wall clock was made of
-contention rather than of work. Every new reading test added a load; now it adds its read.
+dozen loading at once slow each other down by as much again, so the suite's wall clock is made of
+contention rather than of work. Shared, a new reading test costs its read rather than a load.
 
-**Why it is safe for readers.** A read takes the session as pure input. `WorkspaceSession` was built
+**Why it is safe for readers.** A read takes the session as pure input. `WorkspaceSession` is built
 for concurrent reads: every read is a barrier on the single writer that returns an immutable snapshot,
 and the expensive part runs off the writer against it. Nothing a read does can change what the next
 reader sees.
@@ -49,7 +49,7 @@ is told what the one attempt hit, so a broken fixture costs one load rather than
   load. A shared copy is in whatever state its one load left it.
 - **A fixture only one test reads.** Sharing it saves nothing, so it is not on `SharedWorkspaces`.
 
-The tests that write still load once each. Sharing a warm copy or a pool of loaded workspaces between
-them is the larger remaining cost, and it is a different trade: what a writer hands back has to be
+A test that writes loads a fixture of its own. Sharing a warm copy or a pool of loaded workspaces
+between writers is a different trade: what a writer hands back has to be
 checked, the way a live-app slot is (see
 [the-live-app-suite-is-phased-by-what-tests-share](the-live-app-suite-is-phased-by-what-tests-share.md)).

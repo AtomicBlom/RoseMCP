@@ -56,7 +56,9 @@ public static class TraySummary
 
 		if (workspaces.Count > 0)
 		{
-			var workingSet = workspaces.Sum(summary => summary.WorkingSetBytes ?? 0);
+			// Live rows only: a stopped row's process is gone, and whatever figure it carries is not
+			// memory this broker holds.
+			var workingSet = workspaces.Where(summary => summary.Alive).Sum(summary => summary.WorkingSetBytes ?? 0);
 			parts.Add($"{Format.Bytes(workingSet)} working set");
 		}
 

@@ -99,4 +99,18 @@ public sealed class TraySummaryTests
 		TraySummary.Subtitle([Crashed()], NoSessions, running: 0).ShouldContain("1 needs attention");
 		TraySummary.Subtitle([], NoSessions, running: 0).ShouldBe("Waiting for a client to ask about one.");
 	}
+
+	/// <summary>
+	/// A stopped row's process is gone, and its id may by now be another process's, so whatever
+	/// working set it carries is not memory this broker holds and is left out of the total.
+	/// </summary>
+	[Test]
+	public void The_subtitle_counts_memory_only_for_live_rows()
+	{
+		const long Megabyte = 1024 * 1024;
+		var live = Loaded() with { WorkingSetBytes = 300 * Megabyte };
+		var stopped = Evicted() with { WorkingSetBytes = 5000 * Megabyte };
+
+		TraySummary.Subtitle([live, stopped], NoSessions, running: 0).ShouldStartWith("300 MB working set");
+	}
 }

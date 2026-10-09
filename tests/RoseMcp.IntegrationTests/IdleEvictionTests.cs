@@ -1,5 +1,7 @@
 using System.Diagnostics;
 
+using Microsoft.Extensions.Logging;
+
 using ModelContextProtocol;
 
 using RoseMcp.Broker;
@@ -70,7 +72,14 @@ public sealed class IdleEvictionTests
 		evicted.ExitReason.ShouldBe(nameof(WorkerExitReason.Evicted));
 		evicted.State.ShouldBe(WorkspaceState.Unloaded);
 
-		manager.Describe().ShouldHaveSingleItem().Alive.ShouldBeFalse();
+		var stoppedRow = manager.Describe().ShouldHaveSingleItem();
+		stoppedRow.Alive.ShouldBeFalse();
+
+		// The process is gone and its id free for another to take, so the row reports no memory
+		// rather than sampling whatever holds that id now.
+		stoppedRow.WorkingSetBytes.ShouldBeNull();
+		stoppedRow.PrivateMemoryBytes.ShouldBeNull();
+		stoppedRow.ManagedHeapBytes.ShouldBeNull();
 
 		// Status is answered from the stopped row: it says why, starts nothing, and leaves the
 		// reason where the tray reads it.
@@ -234,6 +243,214 @@ public sealed class IdleEvictionTests
 				.ShouldHaveSingleItem();
 
 			notice.ShouldContain("not open (its worker stopped: Evicted)");
+		}
+	}
+
+	/// <summary>
+	/// A call holds its worker from the moment it is handed over to the moment it is called. In between,
+	/// nothing is running on the worker yet, so the hold is the only thing that says somebody is about
+	/// to use it -- and a sweep that lands there, with its clock far past the idle limit, must leave it.
+	/// <para>
+	/// Real timing practically never puts a sweep in that instant, so the test makes one: the worker's
+	/// "Forwarding" log line is written after the call has its worker and before its activity begins,
+	/// and the logger pauses there while the clock jumps an hour and the sweep runs. That nothing is
+	/// running on the worker at the pause is asserted, so a line that moved after the activity began
+	/// would fail here rather than leave the test proving nothing.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_call_holds_its_worker_between_being_handed_it_and_calling_it()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		var clock = new SteerableClock();
+		using var pause = new Pause();
+		var armed = 0;
+
+		using var logs = new ListeningLoggerFactory((category, message) =>
+		{
+			var isTheCall = Volatile.Read(ref armed) == 1
+				&& category.EndsWith(nameof(WorkspaceWorker), StringComparison.Ordinal)
+				&& message.StartsWith("Forwarding ", StringComparison.Ordinal);
+			if (!isTheCall || !pause.TryTake()) return;
+
+			clock.Jump(TimeSpan.FromHours(1));
+			pause.Wait();
+		});
+
+		await using var manager = CreateManager(
+			loggerFactory: logs,
+			configure: options =>
+			{
+				options.IdleEvictionAfter = TimeSpan.FromMinutes(30);
+				options.EvictionSweepInterval = SweepInterval;
+				options.TimeProvider = clock;
+			});
+
+		var hints = WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath));
+		var worker = await manager.GetOrStartAsync(hints, cancellationToken);
+		await WaitUntilAsync(() => worker.LoadDuration is not null, TimeSpan.FromMinutes(2), cancellationToken);
+
+		Volatile.Write(ref armed, 1);
+
+		// On another thread, because the pause is a synchronous wait inside the call.
+		var call = Task.Run(
+			() => manager.CallAsync<WorkspaceStatusReport>(
+				hints, ToolNames.WorkspaceStatus, NoArguments, retryIfWorkerDied: false, cancellationToken),
+			cancellationToken);
+
+		await pause.Reached.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+
+		var runningAtPause = manager.Describe().ShouldHaveSingleItem().Running.Count;
+		await Task.Delay(SweepInterval * 8, cancellationToken);
+		var survived = worker.IsAlive;
+		var note = EvictionNote(manager);
+
+		pause.Release();
+
+		runningAtPause.ShouldBe(0, "the pause has to be before the call's activity begins, or the activity keeps the worker and the hold is not what is tested");
+		survived.ShouldBeTrue("a worker handed to a call must not be evicted before the call reaches it");
+		note.ShouldBeNull();
+
+		(await call).WorkspaceKey.ShouldBe(worker.Key);
+		manager.Workers.ShouldHaveSingleItem().ShouldBeSameAs(worker);
+	}
+
+	/// <summary>
+	/// The report that ends a load moves the worker out of Loading before the idle clock restarts, and
+	/// the worker holds itself across that gap. A sweep in it, an hour past the limit, sees a loaded
+	/// worker idle since its process started, and only the hold stops it evicting a solution the moment
+	/// it finished loading.
+	/// <para>
+	/// The gap is a few instructions, so the test makes it wide: the restart is the one clock read the
+	/// load makes, and the clock pauses that read -- picked out by <c>FollowLoadAsync</c> being on the
+	/// stack -- while it jumps an hour and the sweep runs. The worker being loaded with nothing running
+	/// at the pause is asserted, so the pause is known to be in the gap the hold covers.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_worker_whose_load_just_finished_is_not_evicted_before_its_clock_restarts()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		var clock = new SteerableClock();
+		using var pause = new Pause();
+		WorkspaceWorker? watched = null;
+
+		clock.OnRead = () =>
+		{
+			var isTheRestart = Volatile.Read(ref watched) is not null
+				&& Environment.StackTrace.Contains("FollowLoadAsync", StringComparison.Ordinal);
+			if (!isTheRestart || !pause.TryTake()) return;
+
+			clock.Jump(TimeSpan.FromHours(1));
+			pause.Wait();
+		};
+
+		await using var manager = CreateManager(configure: options =>
+		{
+			options.IdleEvictionAfter = TimeSpan.FromMinutes(30);
+			options.EvictionSweepInterval = SweepInterval;
+			options.TimeProvider = clock;
+		});
+
+		var worker = await manager.GetOrStartAsync(
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), cancellationToken);
+		Volatile.Write(ref watched, worker);
+
+		await pause.Reached.WaitAsync(TimeSpan.FromMinutes(2), cancellationToken);
+
+		var stateAtPause = worker.State;
+		var runningAtPause = manager.Describe().ShouldHaveSingleItem().Running.Count;
+		await Task.Delay(SweepInterval * 8, cancellationToken);
+		var survived = worker.IsAlive;
+		var note = EvictionNote(manager);
+
+		pause.Release();
+
+		stateAtPause.ShouldBe(WorkspaceState.Loaded);
+		runningAtPause.ShouldBe(0, "the load's own activity has to have ended, or it keeps the worker and the hold is not what is tested");
+		survived.ShouldBeTrue("a worker must not be evicted between its load finishing and its idle clock restarting");
+		note.ShouldBeNull();
+
+		await WaitUntilAsync(() => worker.LoadDuration is not null, TimeSpan.FromSeconds(30), cancellationToken);
+		worker.IsAlive.ShouldBeTrue();
+	}
+
+	/// <summary>
+	/// The real clock, moved forward on demand, with a hook on every read. Timers stay real, so the
+	/// sweep still ticks at its interval; only what it takes "now" to be is steered.
+	/// </summary>
+	private sealed class SteerableClock : TimeProvider
+	{
+		private long _offsetTicks;
+
+		/// <summary>Called on every read of the time, before it is taken.</summary>
+		public Action? OnRead { get; set; }
+
+		public void Jump(TimeSpan by) => Interlocked.Add(ref _offsetTicks, by.Ticks);
+
+		public override DateTimeOffset GetUtcNow()
+		{
+			OnRead?.Invoke();
+			return base.GetUtcNow() + TimeSpan.FromTicks(Interlocked.Read(ref _offsetTicks));
+		}
+	}
+
+	/// <summary>One place a thread stops until the test lets it go, taken by the first caller only.</summary>
+	private sealed class Pause : IDisposable
+	{
+		private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		private readonly ManualResetEventSlim _released = new();
+		private int _taken;
+
+		public Task Reached => _reached.Task;
+
+		public bool TryTake() => Interlocked.Exchange(ref _taken, 1) == 0;
+
+		/// <summary>Stops the calling thread until released, bounded so a failed test cannot hang the suite.</summary>
+		public void Wait()
+		{
+			_reached.TrySetResult();
+			_released.Wait(TimeSpan.FromMinutes(1));
+		}
+
+		public void Release() => _released.Set();
+
+		public void Dispose()
+		{
+			_released.Set();
+			_released.Dispose();
+		}
+	}
+
+	/// <summary>Hands every log line, with its category, to a callback, synchronously on the logging thread.</summary>
+	private sealed class ListeningLoggerFactory(Action<string, string> onMessage) : ILoggerFactory
+	{
+		public ILogger CreateLogger(string categoryName) => new Listener(categoryName, onMessage);
+
+		public void AddProvider(ILoggerProvider provider)
+		{
+		}
+
+		public void Dispose()
+		{
+		}
+
+		private sealed class Listener(string category, Action<string, string> onMessage) : ILogger
+		{
+			public IDisposable? BeginScope<TState>(TState state)
+				where TState : notnull => null;
+
+			public bool IsEnabled(LogLevel logLevel) => true;
+
+			public void Log<TState>(
+				LogLevel logLevel,
+				EventId eventId,
+				TState state,
+				Exception? exception,
+				Func<TState, Exception?, string> formatter) =>
+				onMessage(category, formatter(state, exception));
 		}
 	}
 

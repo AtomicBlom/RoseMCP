@@ -107,5 +107,7 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   a session checking status now and then would keep it warm and never learn it was evicted. A
   stopped row is not *open*: anything saying which workspaces are open or loaded -- the routing
   failure's list, a change's sibling notice, the tray's headline -- reads `IsAlive`, not the
-  registry. The manager stops the sweep, and waits for it, before it disposes the gate the sweep
+  registry. A stopped row reports no memory figures either: Windows hands a dead process's id to
+  the next process it starts, so sampling it would show somebody else's memory as the solution's.
+  The manager stops the sweep, and waits for it, before it disposes the gate the sweep
   takes.

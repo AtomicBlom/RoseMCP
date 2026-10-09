@@ -59,13 +59,22 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// <summary><see cref="LastUsedUtc"/> as ticks, so a call ending on one thread and the sweep reading on another cannot tear it.</summary>
 	private long _lastUsedTicks;
 
-	private WorkspaceWorker(string solutionPath, McpClient client, ActivityLog activities, ILogger logger)
+	/// <summary>The clock the idle times are read from, the one the eviction sweep reads too.</summary>
+	private readonly TimeProvider _clock;
+
+	private WorkspaceWorker(
+		string solutionPath,
+		McpClient client,
+		ActivityLog activities,
+		ILogger logger,
+		TimeProvider clock)
 	{
 		SolutionPath = solutionPath;
 		_client = client;
 		_activities = activities;
 		_logger = logger;
-		StartedUtc = DateTime.UtcNow;
+		_clock = clock;
+		StartedUtc = clock.GetUtcNow().UtcDateTime;
 		_lastUsedTicks = StartedUtc.Ticks;
 	}
 
@@ -238,7 +247,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			loggerFactory,
 			cancellationToken);
 
-		var worker = new WorkspaceWorker(solutionPath, client, activities, logger)
+		var worker = new WorkspaceWorker(solutionPath, client, activities, logger, options.TimeProvider)
 		{
 			VersionMismatch = ChildHostVersion.Mismatch(
 				client.ServerInfo?.Version, workerPath, typeof(WorkspaceWorker).Assembly),
@@ -321,7 +330,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		{
 			if (!IsAlive) return;
 
-			StoppedUtc = DateTime.UtcNow;
+			StoppedUtc = _clock.GetUtcNow().UtcDateTime;
 			StopDetail = detail;
 			ExitReason = reason;
 		}
@@ -416,7 +425,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		_ => "The worker was stopped.",
 	};
 
-	private void Touch() => Volatile.Write(ref _lastUsedTicks, DateTime.UtcNow.Ticks);
+	private void Touch() => Volatile.Write(ref _lastUsedTicks, _clock.GetUtcNow().UtcDateTime.Ticks);
 
 	/// <summary>
 	/// One caller's hold on the worker. Released once however often it is disposed, so a caller that
@@ -538,7 +547,10 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		long? workingSet = null;
 		long? privateMemory = null;
 
-		if (ProcessId is { } id)
+		// Only while it runs. A stopped worker's row stays for as long as the idle limit, and Windows
+		// hands a dead process's id to the next one it starts, so sampling it would report somebody
+		// else's memory as this solution's.
+		if (IsAlive && ProcessId is { } id)
 		{
 			try
 			{
@@ -564,11 +576,11 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			ExitReason = ExitReason.ToString(),
 			State = State,
 			StartedUtc = StartedUtc,
-			Uptime = DateTime.UtcNow - StartedUtc,
+			Uptime = _clock.GetUtcNow().UtcDateTime - StartedUtc,
 			ProcessId = ProcessId,
 			WorkingSetBytes = workingSet,
 			PrivateMemoryBytes = privateMemory,
-			ManagedHeapBytes = ManagedHeapBytes,
+			ManagedHeapBytes = IsAlive ? ManagedHeapBytes : null,
 			BuildConfiguration = status?.BuildConfiguration,
 			ProjectCount = status?.Projects.Count,
 			FailedProjects = status is null

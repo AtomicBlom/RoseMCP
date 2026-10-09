@@ -82,7 +82,7 @@ public sealed class WorkspaceManager(
 	/// </summary>
 	public Contracts.WorkspaceList List()
 	{
-		var now = DateTime.UtcNow;
+		var now = UtcNow;
 
 		return new Contracts.WorkspaceList
 		{
@@ -769,6 +769,9 @@ public sealed class WorkspaceManager(
 		return choice.SolutionPath;
 	}
 
+	/// <summary>Now, on the clock the workers' idle times are read from.</summary>
+	private DateTime UtcNow => _options.TimeProvider.GetUtcNow().UtcDateTime;
+
 	/// <summary>How an eviction is labelled in the activity log, beside "start worker" and "load solution".</summary>
 	public const string EvictOperation = "evict worker";
 
@@ -800,7 +803,7 @@ public sealed class WorkspaceManager(
 	/// </summary>
 	private async Task SweepLoopAsync(TimeSpan idleAfter, CancellationToken cancellationToken)
 	{
-		using var timer = new PeriodicTimer(_options.EvictionSweepInterval);
+		using var timer = new PeriodicTimer(_options.EvictionSweepInterval, _options.TimeProvider);
 
 		try
 		{
@@ -829,7 +832,7 @@ public sealed class WorkspaceManager(
 	/// </summary>
 	private async Task SweepAsync(TimeSpan idleAfter, CancellationToken cancellationToken)
 	{
-		var now = DateTime.UtcNow;
+		var now = UtcNow;
 
 		foreach (var worker in Workers)
 		{
@@ -865,7 +868,7 @@ public sealed class WorkspaceManager(
 			var stillRegistered = _workers.TryGetValue(worker.SolutionPath, out var current) && ReferenceEquals(current, worker);
 			if (!stillRegistered) return;
 
-			var now = DateTime.UtcNow;
+			var now = UtcNow;
 			var facts = worker.EvictionFacts();
 			var verdict = WorkerEviction.Decide(facts, idleAfter, _options.SolutionGoneGrace, now);
 

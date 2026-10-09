@@ -86,4 +86,12 @@ public sealed class BrokerOptions
 	/// counted in minutes need, and costs a file-existence check per worker.
 	/// </summary>
 	public TimeSpan EvictionSweepInterval { get; set; } = TimeSpan.FromMinutes(1);
+
+	/// <summary>
+	/// The clock idle eviction reads: when a worker started, was last used and stopped, when the sweep
+	/// ticks and what it takes "now" to be. The system clock everywhere but a test, which replaces it to
+	/// put a sweep at a moment it chooses -- far past the idle limit, inside the instant a hold covers --
+	/// rather than waiting for real time to land there, which it practically never does.
+	/// </summary>
+	public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 }

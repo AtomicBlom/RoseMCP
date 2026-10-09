@@ -370,10 +370,14 @@ public sealed class WorkspaceManager(
 	public async Task<Contracts.WorkspaceStatusReport> StatusOfAsync(
 		WorkspaceWorker worker,
 		CancellationToken cancellationToken,
-		IProgress<ProgressNotificationValue>? progress = null) =>
+		IProgress<ProgressNotificationValue>? progress = null,
+		bool includeProjects = false) =>
 		Attribute(
 			await worker.CallAsync<Contracts.WorkspaceStatusReport>(
-				Contracts.ToolNames.WorkspaceStatus, NoArguments, cancellationToken, progress),
+				Contracts.ToolNames.WorkspaceStatus,
+				new Dictionary<string, object?> { ["includeProjects"] = includeProjects },
+				cancellationToken,
+				progress),
 			worker);
 
 	/// <summary>
@@ -395,7 +399,8 @@ public sealed class WorkspaceManager(
 	public async Task<Contracts.WorkspaceStatusReport> StatusAsync(
 		WorkspaceHints hints,
 		CancellationToken cancellationToken,
-		IProgress<ProgressNotificationValue>? progress = null)
+		IProgress<ProgressNotificationValue>? progress = null,
+		bool includeProjects = false)
 	{
 		var solutionPath = WorkspaceFor(hints);
 
@@ -418,7 +423,7 @@ public sealed class WorkspaceManager(
 
 		using (hold)
 		{
-			return await StatusOfAsync(worker, cancellationToken, progress);
+			return await StatusOfAsync(worker, cancellationToken, progress, includeProjects);
 		}
 	}
 

@@ -44,6 +44,7 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 		var projects = SelectProjects(snapshot.Solution, request);
 
 		var collected = new List<DiagnosticEntry>();
+		var withheld = new List<(string Project, int Errors)>();
 		var analysed = 0;
 
 		foreach (var project in projects)
@@ -57,6 +58,14 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 				100.0 * analysed / projects.Count);
 
 			var diagnostics = await ForProjectAsync(project, request.IncludeAnalyzers, notices, cancellationToken);
+
+			if (request.WithholdUnrestored && Unrestored(project, diagnostics) is { } errors)
+			{
+				withheld.Add((project.Name, errors));
+				analysed++;
+				continue;
+			}
+
 			var generatedNames = await GeneratedPathsAsync(project, diagnostics, cancellationToken);
 
 			foreach (var diagnostic in diagnostics)
@@ -78,6 +87,15 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 			.ThenBy(entry => entry.FilePath, StringComparer.OrdinalIgnoreCase)
 			.ThenBy(entry => entry.Line)
 			.ToArray();
+
+		if (withheld.Count > 0)
+		{
+			var named = string.Join(", ", withheld.Select(entry => $"{entry.Project} ({entry.Errors:N0} errors)"));
+
+			notices.Add($"Not listed: {named}. Each has no restore output, so its package references resolve to "
+				+ "nothing and its errors say only that -- restore it (with MSBuild for a non-SDK project) and they "
+				+ "become worth reading. Pass project to list one anyway.");
+		}
 
 		// Past the cap, the shape rather than the first few: which diagnostics come first is an accident of
 		// severity and path order, and a sample read as the whole sends the caller to fix the wrong file.
@@ -138,6 +156,25 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 		var generatedMatches = request.IsGenerated is not { } generated || (entry.GeneratedHintName is not null) == generated;
 
 		return idMatches && generatedMatches;
+	}
+
+	/// <summary>
+	/// How many errors a project has, where it has no restore output and those errors include references
+	/// resolving to nothing; null for any other project.
+	/// <para>
+	/// Both halves, because neither alone means the errors are restore's. A project with no package
+	/// references has no assets file and compiles anyway, so missing restore output is no evidence on its
+	/// own; and an unresolved type in a restored project is a real error somebody has to fix.
+	/// </para>
+	/// </summary>
+	private static int? Unrestored(Project project, ImmutableArray<Diagnostic> diagnostics)
+	{
+		var errors = diagnostics.Count(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+		if (errors == 0 || project.FilePath is not { } path) return null;
+
+		var unresolved = diagnostics.Any(diagnostic => diagnostic.Id is "CS0518" or "CS0246" or "CS0234");
+
+		return unresolved && RestoreRunner.HasNoRestoreOutput(path) ? errors : null;
 	}
 
 	private async Task<ImmutableArray<Diagnostic>> ForProjectAsync(

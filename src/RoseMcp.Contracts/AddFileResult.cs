@@ -13,7 +13,9 @@ public sealed record AddFileResult : WorkspaceMutationResult
 
 	/// <summary>
 	/// The namespace the file declares, whether the code said it or it was derived from the folder.
-	/// A namespace that does not match the folder is IDE0130, so which one this is matters.
+	/// A namespace that does not match the folder is IDE0130, so which one this is matters. Empty for
+	/// a file of top-level statements, which declares none: they and the types beside them are in the
+	/// global namespace.
 	/// </summary>
 	public required string Namespace { get; init; }
 

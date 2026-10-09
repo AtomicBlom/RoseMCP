@@ -335,9 +335,17 @@ public static class UsingDirectives
 	/// file looks like. A global using is walked past whatever it is, because the compiler requires
 	/// every one to come before the rest.
 	/// </para>
+	/// <para>
+	/// A list that is not in order has no "first that sorts after it" worth the name: the first
+	/// directive of a list that opens with the project's own namespaces sorts after every System
+	/// import, which puts each one at the top of the file. There it goes beside its nearest relatives
+	/// instead -- see <see cref="BesideRelatives"/>.
+	/// </para>
 	/// </summary>
 	private static int Position(SyntaxList<UsingDirectiveSyntax> existing, ImportDirective requested, UsingStyle style)
 	{
+		if (!InOrder(existing, style)) return BesideRelatives(existing, requested, style);
+
 		for (var index = 0; index < existing.Count; index++)
 		{
 			var present = ImportDirective.From(existing[index]);
@@ -353,6 +361,62 @@ public static class UsingDirectives
 
 		return existing.Count;
 	}
+
+	/// <summary>
+	/// Whether the file's directives already stand in the order <see cref="Position"/> would put them
+	/// in: kinds in declaration order, and each kind sorted.
+	/// </summary>
+	private static bool InOrder(SyntaxList<UsingDirectiveSyntax> existing, UsingStyle style)
+	{
+		var directives = existing.Select(ImportDirective.From).Where(directive => !directive.Global).ToList();
+
+		return directives.Zip(directives.Skip(1)).All(pair =>
+			pair.First.Kind < pair.Second.Kind
+			|| (pair.First.Kind == pair.Second.Kind
+				&& Sorts(pair.First.SortKey, pair.Second.SortKey, style.SystemFirst) <= 0));
+	}
+
+	/// <summary>
+	/// Where a directive goes among a list that is not in order: with the directives sharing the most of
+	/// its name, before the first of them that sorts after it or else after the last of them, and after
+	/// the last of its own kind where nothing shares even the first segment.
+	/// </summary>
+	private static int BesideRelatives(SyntaxList<UsingDirectiveSyntax> existing, ImportDirective requested, UsingStyle style)
+	{
+		var segments = requested.SortKey.Split('.');
+
+		var ofItsKind = existing
+			.Select((directive, index) => (Directive: ImportDirective.From(directive), Index: index))
+			.Where(entry => !entry.Directive.Global && entry.Directive.Kind == requested.Kind)
+			.ToList();
+
+		var shared = ofItsKind
+			.Select(entry => (entry.Directive, entry.Index, Shared: SharedSegments(entry.Directive.SortKey, segments)))
+			.ToList();
+
+		var closest = shared.Count > 0 ? shared.Max(entry => entry.Shared) : 0;
+
+		if (closest == 0)
+		{
+			if (ofItsKind.Count > 0) return ofItsKind[^1].Index + 1;
+
+			var later = existing.Select(ImportDirective.From).ToList().FindIndex(directive =>
+				!directive.Global && directive.Kind > requested.Kind);
+
+			return later < 0 ? existing.Count : later;
+		}
+
+		var relatives = shared.Where(entry => entry.Shared == closest).ToList();
+
+		var after = relatives.FirstOrDefault(entry =>
+			Sorts(requested.SortKey, entry.Directive.SortKey, style.SystemFirst) < 0);
+
+		return after.Directive is null ? relatives[^1].Index + 1 : after.Index;
+	}
+
+	/// <summary>How many leading dotted segments a name has in common with <paramref name="segments"/>.</summary>
+	private static int SharedSegments(string name, string[] segments) =>
+		name.Split('.').Zip(segments).TakeWhile(pair => pair.First == pair.Second).Count();
 
 	/// <summary>
 	/// Whether an import the compilation already has is the one asked for: the same name, and the

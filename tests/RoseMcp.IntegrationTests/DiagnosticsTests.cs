@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using RoseMcp.Contracts;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -19,6 +20,42 @@ public sealed class DiagnosticsTests
 		result.Diagnostics.ShouldBeEmpty();
 		result.Truncated.ShouldBeFalse("a clean solution's answer is complete rather than truncated");
 		result.IncludedAnalyzers.ShouldBeFalse("analyzers stay off unless they are asked for");
+	}
+
+	/// <summary>
+	/// A project whose packages never restored has an error for every name it takes from them, and two of
+	/// them bury every real error in a solution-wide pass under tens of thousands that say only that.
+	/// Such a project is named with its count rather than listed, the real error elsewhere still is, and
+	/// naming the project lists its errors after all.
+	/// </summary>
+	[Test]
+	public async Task Names_an_unrestored_project_rather_than_listing_its_errors()
+	{
+		using var fixture = FixtureSolution.Copy("Unrestored", "Unrestored.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var service = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		var solution = await service.AnalyseAsync(
+			await session.ReadAsync(cancellationToken),
+			new DiagnosticsRequest { MinimumSeverity = Microsoft.CodeAnalysis.DiagnosticSeverity.Error, WithholdUnrestored = true },
+			cancellationToken);
+
+		solution.Diagnostics.ShouldContain(entry => entry.Project == "App" && entry.Id == "CS0029");
+		solution.Diagnostics.ShouldNotContain(entry => entry.Project == "Broken");
+		solution.Notices.ShouldContain(notice => notice.StartsWith("Not listed: Broken (", StringComparison.Ordinal));
+
+		var named = await service.AnalyseAsync(
+			await session.ReadAsync(cancellationToken),
+			new DiagnosticsRequest
+			{
+				Scope = DiagnosticScope.Project,
+				Target = "Broken",
+				MinimumSeverity = Microsoft.CodeAnalysis.DiagnosticSeverity.Error,
+			},
+			cancellationToken);
+
+		named.Diagnostics.ShouldContain(entry => entry.Id == "CS0246");
 	}
 
 	[Test]

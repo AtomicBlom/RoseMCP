@@ -223,8 +223,18 @@ public static class MemberEditService
 			SyntaxRemoveOptions.KeepNoTrivia | SyntaxRemoveOptions.KeepUnbalancedDirectives)
 			?? throw new InvalidOperationException($"Removing {target.Signature} left nothing to write.");
 
-		// Annotating the container rather than the member, because the member is what has gone. It is
-		// what the formatting passes are pointed at, so they stay off the rest of the file.
+		// The first member's own blank line went with it, and the one the next member carries above itself
+		// would otherwise open the type with a gap under its brace.
+		var wasFirst = parent is TypeDeclarationSyntax { Members: [var first, ..] } && first == target.Declaration;
+
+		if (wasFirst && without is TypeDeclarationSyntax { Members: [var follower, ..] } remaining)
+		{
+			without = remaining.ReplaceNode(
+				follower, follower.WithLeadingTrivia(WithoutBlankLinesAbove(follower.GetLeadingTrivia())));
+		}
+
+		// Annotating the container rather than the member, because the member is what has gone. It names
+		// the line reported back and nothing else: a deletion writes no code, so it is not formatted.
 		var marker = new SyntaxAnnotation();
 
 		return new Written(
@@ -235,12 +245,27 @@ public static class MemberEditService
 			[NameOfDeclaration(target.Declaration)],
 			target.Symbol,
 			[target.Declaration.FullSpan],
-			rules);
+			rules,
+			Formats: false);
 	}
 
 	/// <summary>The name a removed declaration went by, for reporting what was taken out.</summary>
 	private static string NameOfDeclaration(MemberDeclarationSyntax declaration) =>
 		NamesOf(declaration).FirstOrDefault() ?? declaration.Kind().ToString();
+
+	/// <summary>
+	/// The trivia with the blank lines at the front of it dropped and the indentation of the line it
+	/// starts on kept, so the member stays where it was and only the gap above it goes.
+	/// </summary>
+	private static SyntaxTriviaList WithoutBlankLinesAbove(SyntaxTriviaList trivia)
+	{
+		var layout = trivia.TakeWhile(candidate =>
+			candidate.Kind() is SyntaxKind.WhitespaceTrivia or SyntaxKind.EndOfLineTrivia).ToList();
+
+		var lastBreak = layout.FindLastIndex(candidate => candidate.IsKind(SyntaxKind.EndOfLineTrivia));
+
+		return lastBreak < 0 ? trivia : SyntaxFactory.TriviaList(trivia.Skip(lastBreak + 1));
+	}
 
 	/// <summary>
 	/// Replaces a body by rebuilding the member from its own signature text and the supplied body,
@@ -695,28 +720,39 @@ public static class MemberEditService
 		// trivia, in which case it is already separated and adding another gives two.
 		var followerIsSeparated = index >= type.Members.Count || StartsBlank(type.Members[index]);
 
-		// Fields written one under another with no blank line between them are a block, and a field
-		// added into one joins it: no blank line above where the field it follows is packed against a
-		// neighbour, and none below where the next field is packed against it. Spacing the new field
-		// out instead opens a gap either side of it in the middle of the block, which the overreach
-		// sentence cannot see because the lines it adds are the insertion's own.
+		// Fields and properties written one under another with no blank line between them are a block --
+		// a run of fields, or a backing field and the property over it -- and one added into a block joins
+		// it: no blank line above where the member it follows is packed against a neighbour, and none
+		// below where the next member is packed against it. Spacing the new member out instead opens a gap
+		// either side of it in the middle of the block, which the overreach sentence cannot see because
+		// the lines it adds are the insertion's own.
 		var anchor = index > 0 ? type.Members[index - 1] : null;
 		var follower = index < type.Members.Count ? type.Members[index] : null;
 		var anchorIsPacked = (index > 1 && !StartsBlank(anchor!)) || (follower is not null && !followerIsSeparated);
 
-		var joinsAbove = anchor is BaseFieldDeclarationSyntax
-			&& parsed[0] is BaseFieldDeclarationSyntax
-			&& anchorIsPacked;
+		// A field after a property begins the next pair rather than continuing the one above it, unless
+		// the type already packs a field straight under a property somewhere.
+		var pairsRunOn = type.Members.Zip(type.Members.Skip(1))
+			.Any(pair => pair.First is BasePropertyDeclarationSyntax
+				&& pair.Second is BaseFieldDeclarationSyntax
+				&& !StartsBlank(pair.Second));
 
-		var joinsBelow = follower is BaseFieldDeclarationSyntax
-			&& parsed[^1] is BaseFieldDeclarationSyntax
-			&& !followerIsSeparated;
+		var startsPair = !pairsRunOn && anchor is BasePropertyDeclarationSyntax && parsed[0] is BaseFieldDeclarationSyntax;
+		var endsPair = !pairsRunOn && parsed[^1] is BasePropertyDeclarationSyntax && follower is BaseFieldDeclarationSyntax;
+
+		var joinsAbove = Packs(anchor) && Packs(parsed[0]) && anchorIsPacked && !startsPair;
+		var joinsBelow = Packs(follower) && Packs(parsed[^1]) && !followerIsSeparated && !endsPair;
 
 		for (var position = 0; position < parsed.Count; position++)
 		{
+			// Between the members the caller sent, the caller's own layout says whether they are a block.
+			var blankBefore = position > 0
+				? StartsBlank(parsed[position]) || !Packs(parsed[position - 1]) || !Packs(parsed[position])
+				: index > 0 && !joinsAbove;
+
 			prepared.Add(MemberSyntax.Prepared(
 				parsed[position],
-				blankBefore: position > 0 || (index > 0 && !joinsAbove),
+				blankBefore,
 				blankAfter: position == parsed.Count - 1 && !followerIsSeparated && !joinsBelow,
 				lineEnding,
 				IndentFor(type, text, rules),
@@ -747,6 +783,20 @@ public static class MemberEditService
 
 		var document = edited.GetDocument(written.Document.Id)
 			?? throw new InvalidOperationException("The document being written left the solution mid-edit.");
+
+		// A deletion writes no code, so there is nothing to lay out. Pointed at the type the member came
+		// out of, the formatter re-indents every member left in it wherever the file disagrees with its
+		// rules, and one removal becomes a diff of the whole type.
+		if (!written.Formats)
+		{
+			var removed = await document.GetTextAsync(cancellationToken);
+			var (_, container) = WrittenLines(await RootOf(document, cancellationToken), removed, written.Marker);
+
+			return new Finished(
+				EveryCopy(edited, written.Document.FilePath!, removed),
+				removed.Lines.GetLineFromPosition(container).LineNumber + 1,
+				[]);
+		}
 
 		// Pointed at the written spans alone. The formatter honours .editorconfig but reindents
 		// whatever it is given, so pointing it at the whole file would turn a one-member change into
@@ -784,17 +834,25 @@ public static class MemberEditService
 		var rules = written.Rules;
 		var final = Whitespace.Apply(root, text, rules, [span]);
 
-		// Every project holding this file gets the same text. A linked document left on the old text
-		// would answer the next question from a file that no longer exists, which is the staleness
-		// this server exists to prevent.
-		var solution = spliced.Project.Solution;
+		return new Finished(
+			EveryCopy(spliced.Project.Solution, written.Document.FilePath!, final),
+			line,
+			[.. LiteralEndingNotices(root, span, text, rules)]);
+	}
 
-		foreach (var id in solution.GetDocumentIdsWithFilePath(written.Document.FilePath!))
+	/// <summary>
+	/// Gives every project holding the file the same text. A linked document left on the old text would
+	/// answer the next question from a file that no longer exists, which is the staleness this server
+	/// exists to prevent.
+	/// </summary>
+	private static Solution EveryCopy(Solution solution, string filePath, SourceText text)
+	{
+		foreach (var id in solution.GetDocumentIdsWithFilePath(filePath))
 		{
-			solution = solution.WithDocumentText(id, final);
+			solution = solution.WithDocumentText(id, text);
 		}
 
-		return new Finished(solution, line, [.. LiteralEndingNotices(root, span, text, rules)]);
+		return solution;
 	}
 
 	/// <summary>
@@ -1304,6 +1362,13 @@ public static class MemberEditService
 			.IsKind(SyntaxKind.EndOfLineTrivia);
 
 	/// <summary>
+	/// Whether a member is the kind written packed against its neighbours: a field, or a property, which
+	/// is how a backing field and the property over it are laid out.
+	/// </summary>
+	private static bool Packs(MemberDeclarationSyntax? member) =>
+		member is BaseFieldDeclarationSyntax or BasePropertyDeclarationSyntax;
+
+	/// <summary>
 	/// What a declaration is called, which for a field is every variable it declares. Used both to
 	/// report what was written and to find the member an <c>after</c> or <c>before</c> names.
 	/// </summary>
@@ -1359,7 +1424,8 @@ public static class MemberEditService
 
 	/// <summary>
 	/// The edit, ready to be formatted: which document, the new root, what to call it, and the spans of
-	/// the document as it was that the edit was asked to change.
+	/// the document as it was that the edit was asked to change. <paramref name="Formats"/> is false where
+	/// nothing was written, only taken away, so there is nothing to lay out.
 	/// </summary>
 	internal sealed record Written(
 		Document Document,
@@ -1369,7 +1435,8 @@ public static class MemberEditService
 		IReadOnlyList<string> Members,
 		ISymbol? Reaches,
 		IReadOnlyList<TextSpan> Asked,
-		WhitespaceRules Rules);
+		WhitespaceRules Rules,
+		bool Formats = true);
 
 	private sealed record Finished(Solution Solution, int Line, IReadOnlyList<string> Notices);
 

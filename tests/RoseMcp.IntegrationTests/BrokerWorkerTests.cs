@@ -342,7 +342,7 @@ public sealed class BrokerWorkerTests
 			cancellationToken);
 
 		status.State.ShouldBe(WorkspaceState.Loaded);
-		status.Projects.ShouldNotBeEmpty();
+		status.ProjectCount.ShouldBeGreaterThan(0);
 
 		var replacement = manager.Workers.ShouldHaveSingleItem();
 

@@ -112,6 +112,7 @@ public sealed class AnalysisTools(
 			MaxResults = maxResults <= 0 ? 200 : maxResults,
 			Id = string.IsNullOrWhiteSpace(id) ? null : id.Trim(),
 			IsGenerated = isGenerated,
+			WithholdUnrestored = wanted.Scope == DiagnosticScope.Solution,
 		};
 
 		return await calls.ReadAsync(

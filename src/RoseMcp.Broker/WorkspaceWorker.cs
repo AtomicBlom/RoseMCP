@@ -383,7 +383,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			WorkspaceKey = Key,
 			State = State,
 			ExitReason = IsAlive ? null : ExitReason.ToString(),
-			ProjectCount = LastStatus?.Projects.Count,
+			ProjectCount = LastStatus?.ProjectCount,
 			IdleFor = idle < TimeSpan.Zero ? TimeSpan.Zero : idle,
 			Running = _activities.Running(SolutionPath).Count,
 		};
@@ -582,7 +582,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			PrivateMemoryBytes = privateMemory,
 			ManagedHeapBytes = IsAlive ? ManagedHeapBytes : null,
 			BuildConfiguration = status?.BuildConfiguration,
-			ProjectCount = status?.Projects.Count,
+			ProjectCount = status?.ProjectCount,
 			FailedProjects = status is null
 				? []
 				: [.. status.Projects.Where(project => !project.LoadedSuccessfully).Select(project => project.Name)],

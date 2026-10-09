@@ -681,6 +681,68 @@ public sealed class AddFileTests
 		unlisted.Notices.ShouldContain(notice => notice.Contains("lists the files it compiles", StringComparison.Ordinal));
 	}
 
+	/// <summary>
+	/// A program's top-level statements declare no namespace and can follow none, so the file is written
+	/// without one. Wrapped in the folder's namespace, the statements become members a namespace cannot
+	/// hold -- twenty errors on a file that is correct as sent -- and the types beside them land in the
+	/// global namespace anyway, so the namespace reported is one nothing is declared in, and every lookup
+	/// by that name misses.
+	/// </summary>
+	[Test]
+	public async Task Writes_top_level_statements_without_a_namespace()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		var path = fixture.Path("Simple", "App", "Program.cs");
+
+		File.Delete(path);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await AddAsync(
+			session,
+			path,
+			"using Core;\n\nvar greeter = new Greeter(\"Hello\");\nConsole.WriteLine(greeter.Greet(args.Length > 0 ? args[0] : \"world\"));\n"
+				+ "Console.WriteLine(Calculator.Add(2, 3));\n\npublic sealed class Greeter(string prefix)\n{\n    "
+				+ "public string Greet(string name) => $\"{prefix}, {name}!\";\n}");
+
+		result.Applied.ShouldBeTrue();
+		result.Namespace.ShouldBeEmpty();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.Notices.ShouldContain(notice => notice.Contains("top-level statements", StringComparison.Ordinal));
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		text.ShouldNotContain("namespace", Case.Sensitive);
+		text.ShouldStartWith("using Core;\r\n\r\nvar greeter", Case.Sensitive);
+
+		// The type is where the result says: in the global namespace, by its own name.
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var greeter = await DeclarationLocator.FindSymbolAsync(
+			snapshot.Solution, "Greeter", null, TestContext.Current!.Execution.CancellationToken);
+
+		greeter.FilePath.ShouldBe(path, StringCompareShould.IgnoreCase);
+	}
+
+	/// <summary>
+	/// The class the compiler writes around top-level statements has no declaration of its own -- the
+	/// file is it -- and asking for it is answered with that, rather than with a claim that it is
+	/// source-generated code with no file on disk.
+	/// </summary>
+	[Test]
+	public async Task Says_the_class_around_top_level_statements_has_no_declaration_to_write()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var error = await Should.ThrowAsync<ArgumentException>(() => DeclarationLocator.FindSymbolAsync(
+			snapshot.Solution, "Program", null, TestContext.Current!.Execution.CancellationToken));
+
+		error.Message.ShouldContain("top-level statements in Program.cs", Case.Sensitive);
+		error.Message.ShouldNotContain("source-generated", Case.Sensitive);
+	}
+
 	private static Task<AddFileResult> AddAsync(
 		WorkspaceSession session,
 		string filePath,

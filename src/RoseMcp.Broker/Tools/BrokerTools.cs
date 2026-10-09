@@ -106,9 +106,14 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
+		[Description(ToolDescriptions.IncludeProjectsArgument)] bool includeProjects = false,
 		CancellationToken cancellationToken = default)
 	{
-		return await workspaces.StatusAsync(WorkspaceHints.From(paths.Of(workspace), workspaceKey), cancellationToken, progress);
+		return await workspaces.StatusAsync(
+			WorkspaceHints.From(paths.Of(workspace), workspaceKey),
+			cancellationToken,
+			progress,
+			includeProjects);
 	}
 
 	[McpServerTool(

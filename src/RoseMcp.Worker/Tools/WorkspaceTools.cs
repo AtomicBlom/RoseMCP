@@ -19,8 +19,9 @@ public sealed class WorkspaceTools(WorkspaceCalls calls)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.WorkspaceStatus)]
-	public Task<WorkspaceStatusReport> StatusAsync(
+	public async Task<WorkspaceStatusReport> StatusAsync(
 		IProgress<ProgressNotificationValue> progress,
-		CancellationToken cancellationToken) =>
-		calls.StatusAsync(progress, cancellationToken);
+		[Description(ToolDescriptions.IncludeProjectsArgument)] bool includeProjects = false,
+		CancellationToken cancellationToken = default) =>
+		StatusProjects.Listed(await calls.StatusAsync(progress, cancellationToken), includeProjects);
 }

@@ -27,4 +27,12 @@ public sealed record DiagnosticsRequest
 
 	/// <summary>True for only diagnostics in source-generated code, false for only those in files.</summary>
 	public bool? IsGenerated { get; init; }
+
+	/// <summary>
+	/// Leaves out the projects with no restore output whose errors are references that resolve to nothing,
+	/// and names them in a notice instead. Only a solution-wide pass asks this: there two such projects
+	/// bury every real error in the solution under tens of thousands that say only that restore did not
+	/// run, and a project named on purpose still has them all listed.
+	/// </summary>
+	public bool WithholdUnrestored { get; init; }
 }

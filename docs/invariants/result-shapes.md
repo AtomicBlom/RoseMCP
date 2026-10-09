@@ -204,6 +204,15 @@ Read before adding a tool, adding a field to a result, or changing an error path
   plus the process's assembly faults, so no read pays for running every project's generators. Status and
   writes do not carry it: status lists the reasons itself, and a write's verdict is the compile it ran.
   A read that builds its notices without the snapshot's drops this with them.
+- **What says nothing is counted, not listed.** A status answer for a solution of two hundred
+  projects that all loaded was two hundred entries saying so, about 25k tokens before the part that
+  mattered; a solution-wide diagnostics pass over two unrestored projects was 44k errors saying only
+  that restore did not run, burying every real one. So status lists the projects with something wrong
+  and carries `projectCount` for the rest, and a solution-wide pass names an unrestored project with
+  its error count instead of listing them. The trimmed half stays one argument away (`includeProjects`,
+  or naming the project), and neither is trimmed where it is a diff's baseline -- verification
+  compares the whole solution before and after, and leaving a project out there hides what an edit
+  broke in it.
 - **A fixer that declines is the same as no fixer.** `rose_list_code_fixes` dropped a diagnostic
   whose providers offered nothing from `fixes` and from `unfixableIds` both, so it disappeared from
   the answer entirely -- which is exactly what the second list exists to prevent. CS0103 is what

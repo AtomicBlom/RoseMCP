@@ -20,7 +20,8 @@ Read before adding a tool, adding a field to a result, or changing an error path
   deepest frame that is not a throw helper, and only code in a RoseMcp assembly, the MCP SDK's binder,
   a JSON failure or an I/O failure counts as a refusal and keeps its words. Anything else is framed as
   the named component's failure inside the named tool, with its message kept and its parameter name
-  gone. By frame rather than by a marker type, because a marker needs every throw site to remember it
+  gone -- and so is a fault the runtime raises, a null dereference or a bad cast, even inside Rose,
+  since nobody throws one to tell a caller something. By frame rather than by a marker type, because a marker needs every throw site to remember it
   and calls the one that forgot a fault; the frame is known for every exception with nothing to
   remember. `ParameterNameBoundaryTests` holds all three boundaries to it.
 - **Every tool answers with a record, and the live-app prefixes excuse only workspace

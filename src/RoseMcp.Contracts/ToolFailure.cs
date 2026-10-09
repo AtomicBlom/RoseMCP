@@ -17,7 +17,8 @@ namespace RoseMcp.Contracts;
 /// <para>
 /// Told apart by where the exception was thrown rather than by its type, because that needs nothing of
 /// the throw sites: the deepest frame that is not a throw helper says whose code decided to throw. Code
-/// in a RoseMcp assembly throwing is a refusal, written for the caller and forwarded verbatim. The MCP
+/// in a RoseMcp assembly throwing is a refusal, written for the caller and forwarded verbatim -- unless
+/// it is a fault the runtime raised, a null dereference or a bad cast, which is Rose failing. The MCP
 /// SDK's binder throwing is a refusal too -- an argument missing or the wrong shape -- and so is any
 /// <see cref="JsonException"/>, which the boundary already explains from the schema. An I/O failure is
 /// a fact about the machine that names the path involved, usually one the caller sent, so it stands as
@@ -47,14 +48,26 @@ public static class ToolFailure
 			: exception.Message;
 
 	/// <summary>
-	/// The assembly a framework exception escaped from, or null where the exception is a refusal: one
-	/// thrown by Rose's own code, by the MCP SDK's argument binder, or a JSON or I/O failure, whose
-	/// message is already about what the caller sent.
+	/// The assembly a failure escaped from, or null where the exception is a refusal: one thrown by Rose's
+	/// own code, by the MCP SDK's argument binder, or a JSON or I/O failure, whose message is already about
+	/// what the caller sent.
+	/// <para>
+	/// A fault the runtime raises is never a refusal, wherever it was raised: a null dereference, an index
+	/// past an array's end, a bad cast, an arithmetic fault or a member nobody wrote. Nobody throws one of
+	/// those to tell a caller something, so one raised inside Rose's own code is Rose failing, and is framed
+	/// as that rather than forwarded as "Object reference not set to an instance of an object". A
+	/// <see cref="KeyNotFoundException"/> is left to the frame: from a dictionary's indexer the frame is the
+	/// BCL's and it is already a leak, while one Rose throws on purpose is a refusal like any other.
+	/// </para>
 	/// </summary>
 	public static string? LeakedFrom(Exception exception)
 	{
 		if (exception is JsonException or IOException or UnauthorizedAccessException) return null;
-		if (ThrowingAssembly(exception) is not { } assembly) return null;
+
+		if (IsRuntimeFault(exception)) return FaultingAssembly(exception) ?? "RoseMcp";
+
+		var assembly = ThrowingAssembly(exception);
+		if (assembly is null) return null;
 
 		var isRefusal = IsRose(assembly) || IsBinder(assembly);
 
@@ -84,6 +97,29 @@ public static class ToolFailure
 	}
 
 	/// <summary>
+	/// The assembly whose code hit a runtime fault: the deepest frame outside the runtime's own library, or
+	/// the throwing one where every frame is inside it.
+	/// <para>
+	/// The runtime raises a bad unboxing cast from a helper of its own, and a null or an index fault inside a
+	/// collection is reached through code that was handed the bad value. Either way the code at fault is the
+	/// first caller outside the runtime, which is what the caller should be told failed.
+	/// </para>
+	/// </summary>
+	private static string? FaultingAssembly(Exception exception)
+	{
+		foreach (var frame in new StackTrace(exception, fNeedFileInfo: false).GetFrames())
+		{
+			var type = frame.GetMethod()?.DeclaringType;
+			if (type is null || IsThrowHelper(type)) continue;
+
+			var name = type.Assembly.GetName().Name;
+			if (name is not "System.Private.CoreLib") return name;
+		}
+
+		return ThrowingAssembly(exception);
+	}
+
+	/// <summary>
 	/// A framework's message framed as the fault it is: the tool, the component the exception came from,
 	/// and its own words without any parameter name.
 	/// <para>
@@ -107,11 +143,12 @@ public static class ToolFailure
 	}
 
 	/// <summary>
-	/// What to call the component an assembly belongs to, in words a caller knows: Roslyn, MSBuild and
+	/// What to call the component an assembly belongs to, in words a caller knows: Rose, Roslyn, MSBuild and
 	/// .NET by those names, anything else by its assembly name.
 	/// </summary>
 	public static string Component(string assembly)
 	{
+		if (IsRose(assembly)) return "Rose";
 		if (assembly.StartsWith("Microsoft.CodeAnalysis", StringComparison.Ordinal)) return "Roslyn";
 		if (assembly.StartsWith("Microsoft.Build", StringComparison.Ordinal)) return "MSBuild";
 
@@ -125,6 +162,18 @@ public static class ToolFailure
 	private static bool IsRose(string assembly) =>
 		assembly.Equals("RoseMcp", StringComparison.Ordinal)
 		|| assembly.StartsWith("RoseMcp.", StringComparison.Ordinal);
+
+	/// <summary>
+	/// Whether an exception is a fault the runtime raises rather than one code throws to say something: these
+	/// mean the code that hit them is wrong, whoever wrote it.
+	/// </summary>
+	private static bool IsRuntimeFault(Exception exception) =>
+		exception is NullReferenceException
+			or IndexOutOfRangeException
+			or InvalidCastException
+			or ArithmeticException
+			or ArrayTypeMismatchException
+			or NotImplementedException;
 
 	/// <summary>
 	/// Whether an assembly is the MCP SDK's or the function binder beneath it, which throw when the

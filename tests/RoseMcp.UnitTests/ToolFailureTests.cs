@@ -69,6 +69,44 @@ public sealed class ToolFailureTests
 	}
 
 	/// <summary>
+	/// A null dereference inside Rose's own code is Rose failing, not a refusal: nobody throws one to tell a
+	/// caller something, so "Object reference not set" forwarded as it stands would read as advice.
+	/// </summary>
+	[Test]
+	public void A_runtime_fault_inside_Rose_is_framed_as_Rose_failing()
+	{
+		string? missing = null;
+		var exception = Thrown(() => _ = missing!.Length);
+
+		ToolFailure.LeakedFrom(exception).ShouldNotBeNull();
+
+		var message = ToolFailure.Message(exception, "rose_outline");
+		message.ShouldStartWith("`rose_outline` failed inside Rose rather than refusing the call.", Case.Sensitive);
+		message.ShouldContain("this is a fault in Rose worth reporting", Case.Sensitive);
+	}
+
+	/// <summary>A bad cast is the same: a fault the runtime raised in Rose's code, whatever frame it came from.</summary>
+	[Test]
+	public void A_bad_cast_inside_Rose_is_a_fault()
+	{
+		object boxed = "text";
+		var exception = Thrown(() => _ = (int)boxed);
+
+		ToolFailure.Message(exception, "rose_outline").ShouldStartWith("`rose_outline` failed inside Rose", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A missing key thrown on purpose by Rose's code is a refusal like any other; from a dictionary's indexer it
+	/// is the BCL's, and a leak.
+	/// </summary>
+	[Test]
+	public void A_missing_key_is_judged_by_who_threw_it()
+	{
+		ToolFailure.LeakedFrom(Thrown(() => throw new KeyNotFoundException("No session s1."))).ShouldBeNull();
+		ToolFailure.LeakedFrom(Thrown(() => _ = new Dictionary<string, int>()["s1"])).ShouldNotBeNull();
+	}
+
+	/// <summary>
 	/// An I/O failure names the path involved, which is usually one the caller sent, and a JSON failure is
 	/// the binder's, which the boundary explains from the schema; neither is framed as a fault.
 	/// </summary>

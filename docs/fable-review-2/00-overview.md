@@ -13,7 +13,7 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 02 Worker and Roslyn | 23 | 5/11/7 | Core strong, edges adequate, **editing stack fragile** |
 | 03 LiveApp, debugger, tap | 22 | 2/12/8 | Adequate leaning strong |
 | 04 Agentic citizenship | 23 | 7/14/2 | Adequate, and unusually self-aware about it |
-| 05 UI code, tests, process | 27 | 3/14/10 | **Strong**, one structural hole, one growing debt |
+| 05 UI code, tests, process | 27 | 3/14/10 | **Strong**, one growing debt; its structural hole closed (#384) |
 | 06 IPC and protocols | 10 | 1/3/6 | Adequate tending strong; 11 of 12 boundaries right |
 | 07 Hot-reload readiness | 12 | 4/7/1 | Fragile but well-aimed; 5-6.5 weeks to v1 |
 | 08 UI usability | 17 | 3/10/4 | Adequate, and **aimed at the wrong job** |

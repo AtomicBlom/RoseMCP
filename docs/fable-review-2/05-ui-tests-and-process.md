@@ -12,7 +12,7 @@ the `*Row` types, `Inspector/StopInspection`, `Inspector/XamlInspection`,
 `.github/workflows/{ci,release}.yml`, `tools/*.ps1`, `.editorconfig`, `Directory.Build.props`,
 `Directory.Packages.props`, `docs/decisions/` (34), `docs/invariants/` (12).
 
-**Verdict. Strong, with one structural hole and one growing debt.** This is the most deliberate third
+**Verdict. Strong, with one growing debt; its one structural hole is closed.** This is the most deliberate third
 of the repository, not the least. The `Ui.Core` / `Ui` split is real and paying: every behavioural
 class in the inspector is plain `net10.0` and every one has a test, `HoldKeeper` and `OperatorClient`
 are the two most carefully reasoned classes in the product, and the tray reads the live
@@ -26,9 +26,9 @@ mechanism. What holds it back is that it has only applied that trick where a rul
 `Contracts`. Every rule that is a property of an *arrangement* -- a test class's category
 attribute, "every result carries a revision" -- is review-only, and three of them have already drifted under review: a category lost in
 a split, 100 history clauses where #171 counted 90, and four doc claims that describe code that has
-moved. The one structural hole is that the newest, least conventional and most bug-dense third of the
-product -- debugger, tap, live edit, 55 tests -- never ran in CI at all; the debugger part does now
-(#295), and the tap and live-edit part does too (#384). The one growing debt is `TestSession.OpenAsync`:
+moved. The one structural hole was that the newest, least conventional and most bug-dense third of the
+product -- debugger, tap, live edit, 55 tests -- never ran in CI at all; the debugger part runs
+in the integration job (#295) and the tap and live-edit part in a job of its own (#384). The one growing debt is `TestSession.OpenAsync`:
 a real solution load for every test that writes, while the tests that only read share one load per
 fixture (#39) and the live-app half next door shares its apps. None of this is vibe-coded; it is carefully built and
 under-mechanised, which is a much better problem to have.
@@ -515,7 +515,7 @@ applied outside `Contracts`.
 |---|---|---|---|
 | `build-and-test` (Windows) | build, `dotnet format --verify-no-changes`, unit suite Debug | same | |
 | `linux` | publish broker + worker for `linux-x64`/`linux-arm64`, unit suite Release | same | |
-| `integration` | only if a changed file is outside `docs/ wiki/ tools/ .claude/ src/*.Tap/ release.yml *.md`; `--maximum-parallel-tests 3`, `[Category!=LiveApp]`, plus `IntegrationTests.Windows` | always | |
+| `integration` | only if a changed file is outside `docs/ wiki/ tools/ .claude/ src/*.Tap/ release.yml *.md`; `--maximum-parallel-tests 3`, `[Category!=ProbeApp]`, plus `IntegrationTests.Windows`, failing on a skip | always | |
 | `xaml-providers` | only if a tap folder / `Directory.*.props` / `global.json` / `ci.yml` changed; **x64 Debug only**, compile and link, no tests | all six of {Uwp,WinUi} x {x86,x64,arm64} as Release | |
 | `probe-apps` | only if a probe-app test's inputs changed; sets the runner up and runs `[Category=ProbeApp]`, failing on a skip (#384) | always | |
 | `tools/*.ps1` (1,496 lines) | | | never linted, never executed except `deploy.ps1 -Mode package` on a tag |

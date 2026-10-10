@@ -18,7 +18,9 @@ namespace RoseMcp.Settings;
 /// exclusive use -- and the write goes to a temporary file renamed over the real one, so a reader or a crash
 /// mid-write never meets half a file. A file that does not parse is moved aside rather than written over,
 /// since it is the person's acceptances that would go with it, and one written by a newer build is read but
-/// never written over, since this build would drop what it does not understand.
+/// never written over, since this build would drop what it does not understand. One that cannot be read at
+/// all -- another process holds it this moment -- is left alone and the change fails, since that says nothing
+/// about what is in it.
 /// </para>
 /// <para>
 /// Nothing here throws, for the reason <see cref="RoseSettingsFile"/> gives: none of it is load-bearing. A
@@ -53,12 +55,22 @@ public static class WorkspaceHealthFile
 
 	/// <summary>What is recorded, or nothing recorded where the file is missing or cannot be read.</summary>
 	public static WorkspaceHealthRecord Read(string? localAppData = null) =>
-		TryRead(PathFor(localAppData), out var record) ? record : new WorkspaceHealthRecord();
+		TryRead(localAppData, out var record) ? record : new WorkspaceHealthRecord();
+
+	/// <summary>
+	/// What is recorded, nothing recorded where the file is missing or does not parse, and false where it could not
+	/// be read at all -- held by another process, or not readable by this user -- so a reader keeping what it read
+	/// last can keep it rather than replace every acceptance with none for as long as a moment's sharing lasts.
+	/// </summary>
+	public static bool TryRead(string? localAppData, out WorkspaceHealthRecord record) =>
+		ReadAt(PathFor(localAppData), out record) != ReadOutcome.Unreadable;
 
 	/// <summary>
 	/// Applies <paramref name="change"/> to what is on disk now and writes the result, returning it, or null where
-	/// it could not be written -- the lock was held too long, the folder cannot be written, or the file is a newer
-	/// build's. A change that returns the record it was given writes nothing.
+	/// it could not be written -- the lock was held too long, the file or the folder could not be read or written,
+	/// or the file is a newer build's. Nothing is written over what could not be read: only a file that was read and
+	/// did not parse is moved aside, since that is the one whose acceptances are already lost to this build. A
+	/// change that returns the record it was given writes nothing.
 	/// </summary>
 	public static WorkspaceHealthRecord? Update(Func<WorkspaceHealthRecord, WorkspaceHealthRecord> change, string? localAppData = null)
 	{
@@ -74,8 +86,13 @@ public static class WorkspaceHealthFile
 				using var held = HoldLock(path + ".lock");
 				if (held is null) return null;
 
-				var readable = TryRead(path, out var current);
-				if (!readable && File.Exists(path)) File.Move(path, $"{path}.unreadable-{DateTime.UtcNow:yyyyMMddHHmmss}", overwrite: true);
+				var outcome = ReadAt(path, out var current);
+				if (outcome == ReadOutcome.Unreadable) return null;
+
+				if (outcome == ReadOutcome.Unparsable)
+				{
+					File.Move(path, $"{path}.unreadable-{DateTime.UtcNow:yyyyMMddHHmmss}", overwrite: true);
+				}
 
 				if (current.Version > CurrentVersion) return null;
 
@@ -87,7 +104,7 @@ public static class WorkspaceHealthFile
 				try
 				{
 					File.WriteAllText(temporary, JsonSerializer.Serialize(changed with { Version = CurrentVersion }, Options));
-					File.Move(temporary, path, overwrite: true);
+					ReplaceWith(temporary, path);
 				}
 				finally
 				{
@@ -103,24 +120,81 @@ public static class WorkspaceHealthFile
 		}
 	}
 
+	/// <summary>How reading the file went.</summary>
+	private enum ReadOutcome
+	{
+		/// <summary>There is no file, and nothing is recorded.</summary>
+		Missing,
+
+		/// <summary>The file was read and parsed.</summary>
+		Read,
+
+		/// <summary>The file was read and is not a record: hand-edited into nonsense, or cut short.</summary>
+		Unparsable,
+
+		/// <summary>The file could not be read at all, which says nothing about what is in it.</summary>
+		Unreadable,
+	}
+
 	/// <summary>
-	/// Whether <paramref name="path"/> held a record that parsed; false with nothing recorded where it is missing,
-	/// unreadable or nonsense.
+	/// Reads <paramref name="path"/>, nothing recorded unless it was read and parsed. Opened sharing everything,
+	/// deletion included, so a reader stands in a writer's way for no longer than the read takes, which the writer
+	/// waits out (<see cref="ReplaceWith"/>).
 	/// </summary>
-	private static bool TryRead(string path, out WorkspaceHealthRecord record)
+	private static ReadOutcome ReadAt(string path, out WorkspaceHealthRecord record)
 	{
 		record = new WorkspaceHealthRecord();
 
+		string text;
 		try
 		{
-			if (!File.Exists(path)) return false;
+			if (!File.Exists(path)) return ReadOutcome.Missing;
 
-			record = JsonSerializer.Deserialize<WorkspaceHealthRecord>(File.ReadAllText(path), Options) ?? record;
-			return true;
+			using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+			using var reader = new StreamReader(stream);
+			text = reader.ReadToEnd();
 		}
-		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
+		catch (FileNotFoundException)
 		{
-			return false;
+			return ReadOutcome.Missing;
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			return ReadOutcome.Unreadable;
+		}
+
+		try
+		{
+			record = JsonSerializer.Deserialize<WorkspaceHealthRecord>(text, Options) ?? record;
+			return ReadOutcome.Read;
+		}
+		catch (Exception exception) when (exception is JsonException or NotSupportedException)
+		{
+			return ReadOutcome.Unparsable;
+		}
+	}
+
+	/// <summary>
+	/// Renames <paramref name="temporary"/> over <paramref name="path"/>, waiting out a reader that has it open.
+	/// Windows refuses to replace a file any process has open, however that process shares it, and every reader
+	/// here holds it only for the moment a read takes -- so a refusal is retried until <see cref="LockWait"/>
+	/// rather than lose the change to a reader that was about to let go.
+	/// </summary>
+	private static void ReplaceWith(string temporary, string path)
+	{
+		var deadline = DateTime.UtcNow + LockWait;
+
+		while (true)
+		{
+			try
+			{
+				File.Move(temporary, path, overwrite: true);
+				return;
+			}
+			catch (Exception exception) when (exception is IOException or UnauthorizedAccessException && DateTime.UtcNow < deadline)
+			{
+				Thread.Sleep(20);
+			}
 		}
 	}
 

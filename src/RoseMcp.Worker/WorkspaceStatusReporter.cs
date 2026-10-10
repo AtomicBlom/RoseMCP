@@ -411,7 +411,7 @@ public static partial class WorkspaceStatusReporter
 		{
 			var match = heard.FirstOrDefault(hearing =>
 				string.Equals(hearing.Kind, reason.Kind, StringComparison.Ordinal)
-				&& string.Equals(hearing.Project, project, StringComparison.OrdinalIgnoreCase));
+				&& string.Equals(hearing.Covering, project, StringComparison.OrdinalIgnoreCase));
 
 			if (match is null) return null;
 
@@ -465,6 +465,7 @@ public static partial class WorkspaceStatusReporter
 				Kind = reason.Kind,
 				Effect = reason.Effect,
 				Projects = reason.Projects,
+				Subjects = reason.Subjects,
 				Line = LineOf(reason.Text),
 			});
 		}
@@ -505,12 +506,12 @@ public static partial class WorkspaceStatusReporter
 
 		return [.. report.Health
 			.Take(texts.Length)
-			.Select((health, index) => new WorkspaceReason(health.Kind, health.Effect, health.Projects, texts[index]))];
+			.Select((health, index) => new WorkspaceReason(health.Kind, health.Effect, health.Projects, texts[index]) { Subjects = health.Subjects })];
 	}
 
 	/// <summary>The reason <see cref="AssemblyLoadReason"/> words, as one blocking every tool that reaches the code; null for no faults.</summary>
 	public static WorkspaceReason? AssemblyLoadHealth(IReadOnlyList<AssemblyLoadFault> faults) =>
-		AssemblyLoadReason(faults) is { } text ? WorkspaceReason.Of(ReasonKinds.AssemblyLoadFault, HealthEffect.BlocksAnswers, text) : null;
+		AssemblyLoadReason(faults) is { } text ? WorkspaceReason.Of(ReasonKinds.AssemblyLoadFault, HealthEffect.BlocksAnswers, text, subjects: faults.Select(fault => fault.Assembly)) : null;
 
 	/// <summary>
 	/// The most of a reason a read's degraded notice repeats. Enough for every reason's opening sentence that
@@ -1004,6 +1005,19 @@ public static partial class WorkspaceStatusReporter
 	[GeneratedRegex(@"processing the file '(?<project>[^']+)'", RegexOptions.CultureInvariant)]
 	private static partial Regex ProcessedProject();
 
+	/// <summary>
+	/// The NuGet error codes a failed restore's output names, each once: what a failed restore is about, so a
+	/// restore accepted as failing on an unreachable feed is not taken to cover one that fails on a missing
+	/// package. Empty where the output names none, and the reason is then about its own wording.
+	/// </summary>
+	private static IEnumerable<string> RestoreErrorCodes(string? output) =>
+		string.IsNullOrEmpty(output)
+			? []
+			: NuGetErrorCode().Matches(output).Select(match => match.Value).Distinct(StringComparer.OrdinalIgnoreCase);
+
+	[GeneratedRegex(@"\bNU\d{4}\b", RegexOptions.CultureInvariant)]
+	private static partial Regex NuGetErrorCode();
+
 	private static IReadOnlyList<WorkspaceReason> CollectDegradedReasons(
 		IReadOnlyList<WorkspaceDiagnostic> workspaceDiagnostics,
 		IReadOnlyList<ProjectStatus> projects,
@@ -1020,7 +1034,8 @@ public static partial class WorkspaceStatusReporter
 				ReasonKinds.RestoreFailed,
 				HealthEffect.BlocksAnswers,
 				"Restore failed, so the design-time build could not resolve references or analyzers. "
-					+ "Run dotnet restore and inspect the output."));
+					+ "Run dotnet restore and inspect the output.",
+				subjects: RestoreErrorCodes(restore.Output)));
 		}
 		else if (UnrestoredReason(restore) is { } unrestored)
 		{
@@ -1033,7 +1048,7 @@ public static partial class WorkspaceStatusReporter
 
 		if (WrongPlatformSuspicion(build, workspaceDiagnostics) is { } platform)
 		{
-			reasons.Add(WorkspaceReason.Of(ReasonKinds.WrongPlatform, HealthEffect.BlocksAnswers, platform));
+			reasons.Add(WorkspaceReason.Of(ReasonKinds.WrongPlatform, HealthEffect.BlocksAnswers, platform, subjects: [build!.Platform ?? string.Empty]));
 		}
 
 		foreach (var project in projects.Where(project => !project.LoadedSuccessfully))
@@ -1074,7 +1089,11 @@ public static partial class WorkspaceStatusReporter
 		// reference an assembly is not known once it has failed, so the reason covers the solution.
 		if (AnalyzerReason(analyzerLoadFailures) is { } analyzers)
 		{
-			reasons.Add(WorkspaceReason.Of(ReasonKinds.AnalyzerLoadFailed, HealthEffect.MayAffectSomeProjects, analyzers));
+			reasons.Add(WorkspaceReason.Of(
+				ReasonKinds.AnalyzerLoadFailed,
+				HealthEffect.MayAffectSomeProjects,
+				analyzers,
+				subjects: analyzerLoadFailures.Select(failure => failure.Assembly)));
 		}
 
 		// The design-time build runs in Roslyn's build host, a process of its own, so it can load every project
@@ -1097,7 +1116,11 @@ public static partial class WorkspaceStatusReporter
 			// The worker being broken is a fact about every answer that resolves through MSBuild, so it covers the
 			// solution; projects failing in their own right are a fact about those projects.
 			reasons.Add(BlamesTheWorker(evaluationFailures, projectFiles, loadedProjects)
-				? WorkspaceReason.Of(ReasonKinds.WorkerMsBuildBroken, HealthEffect.BlocksAnswers, evaluation)
+				? WorkspaceReason.Of(
+				ReasonKinds.WorkerMsBuildBroken,
+				HealthEffect.BlocksAnswers,
+				evaluation,
+				subjects: evaluationFailures.Where(failure => failure.NamesSdk).Select(failure => failure.Message))
 				: WorkspaceReason.Of(
 					ReasonKinds.ProjectNotEvaluated,
 					HealthEffect.MayAffectSomeProjects,

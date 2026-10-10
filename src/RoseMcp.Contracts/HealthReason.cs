@@ -33,10 +33,17 @@ public sealed record HealthReason
 	public required HealthEffect Effect { get; init; }
 
 	/// <summary>
-	/// The projects it covers, by name. Empty for a reason about the whole solution or the worker, which an
-	/// acceptance covers as a whole.
+	/// The projects it covers, by name. Empty for a reason about the whole solution or the worker, whose
+	/// acceptance is keyed on its <see cref="Subjects"/> instead.
 	/// </summary>
 	public IReadOnlyList<string> Projects { get; init; } = [];
+
+	/// <summary>
+	/// What a reason naming no project is about -- the assemblies that would not load, the platform chosen, the
+	/// restore's error codes -- which an acceptance is keyed on in place of a project, so a different assembly
+	/// failing later is a reason nobody accepted. Empty where the reason names projects.
+	/// </summary>
+	public IReadOnlyList<string> Subjects { get; init; } = [];
 
 	/// <summary>Rose's line: the reason's opening sentence, cut to a ceiling, as a read from a degraded workspace quotes it.</summary>
 	public required string Line { get; init; }

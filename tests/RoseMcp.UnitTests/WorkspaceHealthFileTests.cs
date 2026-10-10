@@ -141,6 +141,58 @@ public sealed class WorkspaceHealthFileTests
 			.ShouldBe(["workspace-health.json", "workspace-health.json.lock"]);
 	}
 
+	/// <summary>
+	/// A file another process holds is not a file that holds nothing. A change that cannot read it, or cannot
+	/// replace it, fails and leaves it as it was, rather than moving it aside and writing a record holding only
+	/// the change -- which would lose every acceptance to a moment's sharing violation.
+	/// </summary>
+	[Test]
+	[Arguments(FileShare.Read)]
+	[Arguments(FileShare.None)]
+	public void A_file_another_process_holds_keeps_its_acceptances(FileShare share)
+	{
+		using var home = new TemporaryLocalAppData();
+		var path = WorkspaceHealthFile.PathFor(home.Path);
+		WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("Kept")] }, home.Path).ShouldNotBeNull();
+
+		using (new FileStream(path, FileMode.Open, FileAccess.Read, share))
+		{
+			// Where the holder's sharing allows the replace, as a Unix lock does, the change lands beside what was
+			// there; where it does not, the change fails. Either way nothing that was there is lost.
+			WorkspaceHealthFile.Update(record => record with { Solutions = [.. record.Solutions, Solution("Added")] }, home.Path);
+		}
+
+		WorkspaceHealthFile.Read(home.Path).Solutions.ShouldContain(solution => solution.Solution.EndsWith("Kept.slnx", StringComparison.Ordinal));
+		Directory.GetFiles(Path.GetDirectoryName(path)!, "workspace-health.json.unreadable-*").ShouldBeEmpty();
+	}
+
+	/// <summary>
+	/// A reader holds the record only for the moment a read takes, so a write that meets one waits it out rather
+	/// than losing the change: Windows refuses to replace a file anybody has open, however they share it.
+	/// </summary>
+	[Test]
+	public async Task A_write_waits_out_a_reader_rather_than_losing_its_change()
+	{
+		using var home = new TemporaryLocalAppData();
+		var path = WorkspaceHealthFile.PathFor(home.Path);
+		WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("A")] }, home.Path).ShouldNotBeNull();
+
+		WorkspaceHealthFile.TryRead(home.Path, out var read).ShouldBeTrue();
+		read.Solutions.ShouldHaveSingleItem();
+
+		Task<WorkspaceHealthRecord?> writing;
+
+		// A reader holding the file as this one opens it.
+		using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+		{
+			writing = Task.Run(() => WorkspaceHealthFile.Update(record => record with { Solutions = [.. record.Solutions, Solution("B")] }, home.Path));
+			await Task.Delay(200);
+		}
+
+		(await writing).ShouldNotBeNull();
+		WorkspaceHealthFile.Read(home.Path).Solutions.Count.ShouldBe(2);
+	}
+
 	private static SolutionHealthRecord Solution(string name, DateTime? accepted = null) => new()
 	{
 		Solution = Path.Combine(Path.GetTempPath(), $"{name}.slnx"),
@@ -149,7 +201,7 @@ public sealed class WorkspaceHealthFileTests
 			new AcceptedReasonRecord
 			{
 				Kind = "project-not-loaded",
-				Project = "Legacy.Tests",
+				Covering = "Legacy.Tests",
 				AcceptedUtc = accepted ?? DateTime.UtcNow,
 				AgentsRead = "Note",
 				Note = "Expected.",

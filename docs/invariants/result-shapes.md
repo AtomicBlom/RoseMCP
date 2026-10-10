@@ -209,7 +209,8 @@ Read before adding a tool, adding a field to a result, or changing an error path
   calling session acknowledged, is left out; one accepted with a note is said in the person's words. The
   broker knows those and the worker does not, so it sends them with every call it forwards
   (`ReasonHearing`, in `_meta`), and the worker leaves out only what that list covers **for the reason's
-  kind and every project the reason names** -- never a reason wholesale, never a kind wholesale. A reason
+  kind and every project the reason names**, or for a reason naming none every subject it is about -- the
+  assemblies that would not load, the platform chosen -- never a reason wholesale, never a kind wholesale. A reason
   nobody accepted leads, and a kind or a project nobody accepted is said as it always was, because the
   failure this way round is a clean answer from a workspace somebody quieted for a different reason. See
   [the decision](../decisions/a-reason-is-accepted-by-the-person-per-solution-kind-and-project.md).

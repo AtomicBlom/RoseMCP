@@ -29,7 +29,8 @@ namespace RoseMcp.Broker;
 /// tells the broker an http client has gone -- the transport serves each request on its own -- so a session
 /// that has made no call for <see cref="SessionIdleLimit"/> is taken to have ended, which is the limit the
 /// MCP transport itself holds an idle session to; <see cref="ForgetSession"/> drops one at once for a host
-/// that does learn of an end.
+/// that does learn of an end. The one client of a stdio broker is the exception: its session is the
+/// process's, and lasts as long as it does however long it is quiet.
 /// </para>
 /// </summary>
 public sealed class WorkspaceHealth
@@ -66,6 +67,9 @@ public sealed class WorkspaceHealth
 
 	private readonly Dictionary<string, SessionState> _sessions = new(StringComparer.Ordinal);
 	private readonly List<Pending> _proposals = [];
+
+	/// <summary>Whether this host serves the operator API, where a person decides proposals. See <see cref="OfferToThePerson"/>.</summary>
+	private volatile bool _personCanDecide;
 
 	/// <summary>Takes the clock, where the record is kept, and whether a call with no session is the one client, from <paramref name="options"/>.</summary>
 	public WorkspaceHealth(IOptions<BrokerOptions> options, ILogger<WorkspaceHealth> logger)
@@ -125,10 +129,10 @@ public sealed class WorkspaceHealth
 
 			foreach (var accepted in Entry(_record, solution)?.Accepted ?? [])
 			{
-				hearing[(accepted.Kind, accepted.Project)] = new ReasonHearing
+				hearing[(accepted.Kind, accepted.Covering)] = new ReasonHearing
 				{
 					Kind = accepted.Kind,
-					Project = accepted.Project,
+					Covering = accepted.Covering,
 					Read = ReadOf(accepted.AgentsRead),
 					Note = accepted.Note,
 				};
@@ -136,7 +140,7 @@ public sealed class WorkspaceHealth
 
 			foreach (var key in acknowledged?.Keys.ToArray() ?? [])
 			{
-				hearing[key] = new ReasonHearing { Kind = key.Kind, Project = key.Project, Read = AgentsRead.Nothing };
+				hearing[key] = new ReasonHearing { Kind = key.Kind, Covering = key.Project, Read = AgentsRead.Nothing };
 			}
 
 			return [.. hearing.Values];
@@ -181,6 +185,14 @@ public sealed class WorkspaceHealth
 	public ReasonProposal Propose(string solution, HealthReason reason, string? note)
 	{
 		var now = UtcNow;
+		if (!_personCanDecide)
+		{
+			throw new InvalidOperationException(
+				"Nobody could confirm a proposal here: this RoseMCP host is a stdio server running on its own, with no window "
+					+ "and no operator API for a person to decide it on. Start the tray, which every later session relays to, and "
+					+ "propose it there; or acknowledge it for this session instead.");
+		}
+
 		var proposedNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
 
 		lock (_gate)
@@ -191,7 +203,8 @@ public sealed class WorkspaceHealth
 			var existing = _proposals.FindIndex(pending =>
 				PathCasing.Comparer.Equals(pending.Proposal.Workspace, solution)
 				&& string.Equals(pending.Proposal.Kind, reason.Kind, StringComparison.Ordinal)
-				&& pending.Proposal.Projects.SequenceEqual(reason.Projects, StringComparer.OrdinalIgnoreCase));
+				&& pending.Proposal.Projects.SequenceEqual(reason.Projects, StringComparer.OrdinalIgnoreCase)
+				&& pending.Proposal.Subjects.SequenceEqual(reason.Subjects, StringComparer.OrdinalIgnoreCase));
 
 			var proposal = new ReasonProposal
 			{
@@ -200,6 +213,7 @@ public sealed class WorkspaceHealth
 				WorkspaceKey = WorkspaceKey.For(solution),
 				Kind = reason.Kind,
 				Projects = reason.Projects,
+				Subjects = reason.Subjects,
 				Line = reason.Line,
 				AgentsRead = proposedNote is null ? AgentsRead.RoseLine : AgentsRead.Note,
 				Note = proposedNote,
@@ -229,10 +243,12 @@ public sealed class WorkspaceHealth
 
 	/// <summary>
 	/// Accepts what proposal <paramref name="id"/> proposed, with what agents read changed where the person
-	/// changes it, and drops the proposal.
+	/// changes it, and only then drops the proposal: a confirmation refused for want of a note, or one whose
+	/// write could not land, leaves the proposal waiting to be decided again rather than gone.
 	/// </summary>
 	/// <exception cref="KeyNotFoundException">No proposal with that id is waiting.</exception>
 	/// <exception cref="ArgumentException">Agents are to read a note and there is none.</exception>
+	/// <exception cref="InvalidOperationException">The record could not be written.</exception>
 	public AcceptedReasons Confirm(string id, AgentsRead? read, string? note)
 	{
 		ReasonProposal proposal;
@@ -240,13 +256,23 @@ public sealed class WorkspaceHealth
 		lock (_gate)
 		{
 			ExpireSessions(UtcNow);
-			proposal = Take(id);
+			proposal = _proposals[IndexOf(id)].Proposal;
 		}
 
-		var chosenNote = note ?? proposal.Note;
-		var chosenRead = read ?? proposal.AgentsRead;
+		var accepted = Accept(
+			proposal.Workspace,
+			proposal.Kind,
+			proposal.Projects,
+			read ?? proposal.AgentsRead,
+			note ?? proposal.Note,
+			proposal.Subjects);
 
-		return Accept(proposal.Workspace, proposal.Kind, proposal.Projects, chosenRead, chosenNote);
+		lock (_gate)
+		{
+			_proposals.RemoveAll(pending => string.Equals(pending.Proposal.Id, id, StringComparison.Ordinal));
+		}
+
+		return accepted;
 	}
 
 	/// <summary>Drops proposal <paramref name="id"/> without accepting anything.</summary>
@@ -267,7 +293,13 @@ public sealed class WorkspaceHealth
 	/// </summary>
 	/// <exception cref="ArgumentException">No kind, a solution that is not an absolute path, or a note asked for and not given.</exception>
 	/// <exception cref="InvalidOperationException">The record could not be written.</exception>
-	public AcceptedReasons Accept(string solution, string kind, IReadOnlyList<string> projects, AgentsRead read, string? note)
+	public AcceptedReasons Accept(
+		string solution,
+		string kind,
+		IReadOnlyList<string> projects,
+		AgentsRead read,
+		string? note,
+		IReadOnlyList<string>? subjects = null)
 	{
 		var path = Solution(solution);
 		if (string.IsNullOrWhiteSpace(kind)) throw new ArgumentException("A reason is accepted by its kind, and none was given.", nameof(kind));
@@ -279,7 +311,7 @@ public sealed class WorkspaceHealth
 		}
 
 		var now = UtcNow;
-		var keys = KeysOf(projects);
+		var keys = KeysOf(projects, subjects);
 
 		return Change(path, entry =>
 		{
@@ -287,7 +319,7 @@ public sealed class WorkspaceHealth
 			var added = keys.Select(project => new AcceptedReasonRecord
 			{
 				Kind = kind,
-				Project = project,
+				Covering = project,
 				AcceptedUtc = now,
 				AgentsRead = read.ToString(),
 				Note = read == AgentsRead.Note ? trimmed : null,
@@ -300,12 +332,12 @@ public sealed class WorkspaceHealth
 	/// <summary>Stops accepting <paramref name="kind"/> for each of <paramref name="projects"/>, or for the whole solution where none is named.</summary>
 	/// <exception cref="ArgumentException">No kind, or a solution that is not an absolute path.</exception>
 	/// <exception cref="InvalidOperationException">The record could not be written.</exception>
-	public AcceptedReasons StopAccepting(string solution, string kind, IReadOnlyList<string> projects)
+	public AcceptedReasons StopAccepting(string solution, string kind, IReadOnlyList<string> projects, IReadOnlyList<string>? subjects = null)
 	{
 		var path = Solution(solution);
 		if (string.IsNullOrWhiteSpace(kind)) throw new ArgumentException("A reason is accepted by its kind, and none was given.", nameof(kind));
 
-		var keys = KeysOf(projects);
+		var keys = KeysOf(projects, subjects);
 
 		return Change(path, entry => entry with { Accepted = [.. entry.Accepted.Where(accepted => !Covers(keys, kind, accepted))] });
 	}
@@ -363,7 +395,7 @@ public sealed class WorkspaceHealth
 		var keys = reasons.SelectMany(reason => Keys(reason).Select(project => (reason.Kind, Project: project))).ToHashSet(KeyComparer.Instance);
 		var seen = Entry(_record, solution)?.Seen ?? [];
 
-		var stale = keys.Any(key => seen.FirstOrDefault(entry => Matches(entry.Kind, entry.Project, key)) is not { } entry
+		var stale = keys.Any(key => seen.FirstOrDefault(entry => Matches(entry.Kind, entry.Covering, key)) is not { } entry
 			|| now - entry.LastSeenUtc > SeenGranularity);
 		if (!stale) return;
 
@@ -390,9 +422,9 @@ public sealed class WorkspaceHealth
 
 			foreach (var sighting in entry.Seen)
 			{
-				var key = (sighting.Kind, sighting.Project);
+				var key = (sighting.Kind, sighting.Covering);
 				var current = keys.Contains(key);
-				var accepted = entry.Accepted.Any(acceptance => Matches(acceptance.Kind, acceptance.Project, key));
+				var accepted = entry.Accepted.Any(acceptance => Matches(acceptance.Kind, acceptance.Covering, key));
 				var forgotten = !current && !accepted && now - sighting.LastSeenUtc > SeenRetention;
 
 				if (forgotten) continue;
@@ -400,9 +432,9 @@ public sealed class WorkspaceHealth
 				seen.Add(current && now - sighting.LastSeenUtc > SeenGranularity ? sighting with { LastSeenUtc = now } : sighting);
 			}
 
-			foreach (var key in keys.Where(key => !seen.Any(sighting => Matches(sighting.Kind, sighting.Project, key))))
+			foreach (var key in keys.Where(key => !seen.Any(sighting => Matches(sighting.Kind, sighting.Covering, key))))
 			{
-				seen.Add(new SeenReasonRecord { Kind = key.Kind, Project = key.Project, FirstSeenUtc = now, LastSeenUtc = now });
+				seen.Add(new SeenReasonRecord { Kind = key.Kind, Covering = key.Project, FirstSeenUtc = now, LastSeenUtc = now });
 			}
 
 			return entry with { Seen = seen };
@@ -430,7 +462,10 @@ public sealed class WorkspaceHealth
 
 		if (stamp == _recordStamp) return;
 
-		_record = WorkspaceHealthFile.Read(_options.LocalAppData);
+		// A file another process holds this moment is read again next time, rather than taken to hold nothing.
+		if (!WorkspaceHealthFile.TryRead(_options.LocalAppData, out var record)) return;
+
+		_record = record;
 		_recordStamp = stamp;
 	}
 
@@ -482,8 +517,10 @@ public sealed class WorkspaceHealth
 	/// <summary>Drops every session idle past the limit, with the proposals it made. Under the gate.</summary>
 	private void ExpireSessions(DateTime now)
 	{
+		// The one client of a stdio broker is never taken to have gone: its session is the process's, and ends with it.
+		var oneClient = _options.ServesOneClient;
 		var ended = _sessions
-			.Where(pair => now - pair.Value.LastCallUtc > SessionIdleLimit)
+			.Where(pair => !(oneClient && pair.Key.Length == 0) && now - pair.Value.LastCallUtc > SessionIdleLimit)
 			.Select(pair => pair.Key)
 			.ToHashSet(StringComparer.Ordinal);
 
@@ -503,19 +540,31 @@ public sealed class WorkspaceHealth
 	/// <summary>Takes proposal <paramref name="id"/> out of the waiting list. Under the gate.</summary>
 	private ReasonProposal Take(string id)
 	{
-		var index = _proposals.FindIndex(pending => string.Equals(pending.Proposal.Id, id, StringComparison.Ordinal));
-		if (index < 0)
-		{
-			throw new KeyNotFoundException(
-				$"No proposal '{id}' is waiting. GET {OperatorApi.Prefix}/health/proposals lists the ones there are; a proposal "
-					+ "goes when it is decided, or when the session that made it ends.");
-		}
-
+		var index = IndexOf(id);
 		var proposal = _proposals[index].Proposal;
 		_proposals.RemoveAt(index);
 
 		return proposal;
 	}
+
+	/// <summary>Where proposal <paramref name="id"/> is in the waiting list. Under the gate.</summary>
+	/// <exception cref="KeyNotFoundException">No proposal with that id is waiting.</exception>
+	private int IndexOf(string id)
+	{
+		var index = _proposals.FindIndex(pending => string.Equals(pending.Proposal.Id, id, StringComparison.Ordinal));
+		if (index >= 0) return index;
+
+		throw new KeyNotFoundException(
+			$"No proposal '{id}' is waiting. GET {OperatorApi.Prefix}/health/proposals lists the ones there are; a proposal "
+				+ "goes when it is decided, or when the session that made it ends.");
+	}
+
+	/// <summary>
+	/// Says a person can decide proposals in this host: it serves the operator API, behind its token. Called by
+	/// <see cref="OperatorApi.MapRoseOperatorApi"/>, so a host that maps it cannot forget to say so, and a stdio
+	/// server running alone -- which maps nothing a person could reach -- refuses proposals nobody could confirm.
+	/// </summary>
+	public void OfferToThePerson() => _personCanDecide = true;
 
 	private static SolutionHealthRecord? Entry(WorkspaceHealthRecord record, string solution) =>
 		record.Solutions.FirstOrDefault(entry => PathCasing.Comparer.Equals(entry.Solution, solution));
@@ -527,7 +576,7 @@ public sealed class WorkspaceHealth
 		Accepted = [.. (entry?.Accepted ?? []).Select(accepted => new AcceptedReason
 		{
 			Kind = accepted.Kind,
-			Project = accepted.Project,
+			Covering = accepted.Covering,
 			AcceptedUtc = accepted.AcceptedUtc,
 			AgentsRead = ReadOf(accepted.AgentsRead),
 			Note = accepted.Note,
@@ -538,7 +587,7 @@ public sealed class WorkspaceHealth
 	private static DateTime? FirstSeen(SolutionHealthRecord? entry, HealthReason reason)
 	{
 		var sightings = Keys(reason)
-			.Select(project => entry?.Seen.FirstOrDefault(seen => Matches(seen.Kind, seen.Project, (reason.Kind, project))))
+			.Select(project => entry?.Seen.FirstOrDefault(seen => Matches(seen.Kind, seen.Covering, (reason.Kind, project))))
 			.OfType<SeenReasonRecord>()
 			.ToArray();
 
@@ -555,7 +604,7 @@ public sealed class WorkspaceHealth
 
 		foreach (var project in Keys(reason))
 		{
-			if (entry?.Accepted.FirstOrDefault(accepted => Matches(accepted.Kind, accepted.Project, (reason.Kind, project))) is not { } match)
+			if (entry?.Accepted.FirstOrDefault(accepted => Matches(accepted.Kind, accepted.Covering, (reason.Kind, project))) is not { } match)
 			{
 				return null;
 			}
@@ -597,20 +646,29 @@ public sealed class WorkspaceHealth
 		Enum.TryParse<AgentsRead>(stored, ignoreCase: true, out var read) && Enum.IsDefined(read) ? read : AgentsRead.RoseLine;
 
 	/// <summary>The projects an acceptance of <paramref name="reason"/> keys on: each it names, or the whole solution.</summary>
-	private static IReadOnlyList<string> Keys(HealthReason reason) => KeysOf(reason.Projects);
+	private static IReadOnlyList<string> Keys(HealthReason reason) => KeysOf(reason.Projects, reason.Subjects);
 
-	private static IReadOnlyList<string> KeysOf(IReadOnlyList<string> projects)
+	/// <summary>
+	/// What an acceptance keys on: each project named, or, naming none, each subject, or the whole solution
+	/// where there is neither. A kind covers either projects or subjects, never both, so the two never meet in
+	/// one key.
+	/// </summary>
+	private static IReadOnlyList<string> KeysOf(IReadOnlyList<string> projects, IReadOnlyList<string>? subjects)
 	{
-		var named = projects.Where(project => !string.IsNullOrWhiteSpace(project)).Select(project => project.Trim())
-			.Distinct(StringComparer.OrdinalIgnoreCase)
-			.ToArray();
+		var named = Named(projects);
+		if (named.Length > 0) return named;
 
-		return named.Length == 0 ? [string.Empty] : named;
+		var about = Named(subjects ?? []);
+
+		return about.Length == 0 ? [string.Empty] : about;
+
+		static string[] Named(IReadOnlyList<string> items) =>
+			[.. items.Where(item => !string.IsNullOrWhiteSpace(item)).Select(item => item.Trim()).Distinct(StringComparer.OrdinalIgnoreCase)];
 	}
 
 	private static bool Covers(IReadOnlyList<string> projects, string kind, AcceptedReasonRecord accepted) =>
 		string.Equals(accepted.Kind, kind, StringComparison.Ordinal)
-		&& projects.Contains(accepted.Project, StringComparer.OrdinalIgnoreCase);
+		&& projects.Contains(accepted.Covering, StringComparer.OrdinalIgnoreCase);
 
 	private static bool Matches(string kind, string project, (string Kind, string Project) key) =>
 		string.Equals(kind, key.Kind, StringComparison.Ordinal)

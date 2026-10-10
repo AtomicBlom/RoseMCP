@@ -47,6 +47,14 @@ public sealed class TrayRelay : IAsyncDisposable
 	private readonly ILoggerFactory _loggerFactory;
 	private readonly ILogger _logger;
 	private readonly string _workingDirectory;
+
+	/// <summary>
+	/// The name this relay gives the session it serves, minted once for the life of the process and sent on every
+	/// call. The tray's http transport has no session of its own to tell relayed clients apart by, and without this
+	/// every one of them is the same caller to it: one agent acknowledging a reason would quiet it for all of them.
+	/// See <see cref="CallSession.Of"/>.
+	/// </summary>
+	private readonly string _session = CallSession.Mint();
 	private readonly SemaphoreSlim _reconnecting = new(1, 1);
 
 	/// <summary>
@@ -168,7 +176,8 @@ public sealed class TrayRelay : IAsyncDisposable
 			cancellationToken);
 
 	/// <summary>
-	/// Forwards one call, adding the directory this session was started in and changing nothing else.
+	/// Forwards one call, adding the directory this session was started in and the name it serves under, and
+	/// changing nothing else.
 	/// <para>
 	/// A fact, not a conclusion, and that distinction is the whole of it. This used to resolve the
 	/// working directory to a solution and write the answer into the <c>workspace</c> argument, which
@@ -197,7 +206,7 @@ public sealed class TrayRelay : IAsyncDisposable
 
 		return await InvokeAsync(
 			(tray, token) => CancellableToolCall.InvokeAsync(
-				tray, request.Name, arguments, progress, token, _workingDirectory),
+				tray, request.Name, arguments, progress, token, _workingDirectory, session: _session),
 			_retries.MayRetry(request.Name),
 			cancellationToken);
 	}

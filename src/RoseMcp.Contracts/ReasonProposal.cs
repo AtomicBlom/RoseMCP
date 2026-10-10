@@ -20,6 +20,9 @@ public sealed record ReasonProposal : WorkspaceScopedResult
 	/// <summary>The projects an acceptance would cover; empty for the whole solution.</summary>
 	public IReadOnlyList<string> Projects { get; init; } = [];
 
+	/// <summary>What an acceptance would cover where the reason names no project: its subjects, as health lists them.</summary>
+	public IReadOnlyList<string> Subjects { get; init; } = [];
+
 	/// <summary>Rose's line for the reason, so the person can see what is proposed without asking status.</summary>
 	public required string Line { get; init; }
 

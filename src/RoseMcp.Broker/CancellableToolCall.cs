@@ -36,7 +36,8 @@ public static class CancellableToolCall
 		IProgress<ProgressNotificationValue>? progress,
 		CancellationToken cancellationToken,
 		string? originDirectory = null,
-		IReadOnlyList<ReasonHearing>? heard = null)
+		IReadOnlyList<ReasonHearing>? heard = null,
+		string? session = null)
 	{
 		var requestId = new RequestId(Guid.NewGuid().ToString("N"));
 		var progressToken = new ProgressToken(requestId.ToString());
@@ -47,7 +48,7 @@ public static class CancellableToolCall
 			Arguments = arguments.ToDictionary(
 				pair => pair.Key,
 				pair => JsonSerializer.SerializeToElement(pair.Value, ContractJson.Options)),
-			Meta = Meta(progressToken, progress, originDirectory, heard),
+			Meta = Meta(progressToken, progress, originDirectory, heard, session),
 		};
 
 		await using var listening = progress is null
@@ -130,13 +131,16 @@ public static class CancellableToolCall
 		ProgressToken progressToken,
 		IProgress<ProgressNotificationValue>? progress,
 		string? originDirectory,
-		IReadOnlyList<ReasonHearing>? heard)
+		IReadOnlyList<ReasonHearing>? heard,
+		string? session)
 	{
 		var correlationId = CallCorrelation.Id;
 		var hasOrigin = !string.IsNullOrWhiteSpace(originDirectory);
 		var hasHearing = heard is { Count: > 0 };
+		var hasSession = !string.IsNullOrWhiteSpace(session);
 
-		if (progress is null && !hasOrigin && correlationId is null && !hasHearing) return null;
+		var nothingToSay = progress is null && !hasOrigin && correlationId is null && !hasHearing && !hasSession;
+		if (nothingToSay) return null;
 
 		var meta = new JsonObject();
 
@@ -147,6 +151,8 @@ public static class CancellableToolCall
 		if (correlationId is not null) meta[CallCorrelation.MetaKey] = JsonValue.Create(correlationId);
 
 		if (hasHearing) meta[ReasonHearing.MetaKey] = JsonSerializer.SerializeToNode(heard, ContractJson.Options);
+
+		if (hasSession) meta[CallSession.MetaKey] = JsonValue.Create(session);
 
 		return meta;
 	}

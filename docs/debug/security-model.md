@@ -47,10 +47,16 @@ as building it, and nothing here makes that safer. Only open repositories you wo
   user's own network position. A request whose `Origin` is present and names anywhere but this machine
   is refused, and so is an `Origin` that does not parse. An absent `Origin` is allowed, because MCP
   clients are not browsers and send none.
-- **One client cannot drive another's debug session.** Over http, a live-app session belongs to the MCP
-  session that started it, and every `rose_debug_*` and `rose_xaml_*` call on a session it does not own
-  is answered as though the session did not exist. `GET /admin/sessions` still lists every session
-  (#160).
+- **One client cannot drive another's debug session.** Over http, a live-app session belongs to the session
+  that started it, and every `rose_debug_*` and `rose_xaml_*` call on a session it does not own is answered
+  as though the session did not exist. `GET /admin/sessions` still lists every session (#160). The http
+  transport serves each request without a session of its own, so a relayed client is a session by the id its
+  relay mints for its life and sends as `_meta["rosemcp/session"]`. A client chooses that id itself, so it is
+  an owner's name rather than a credential: it decides which per-session state a call reaches -- its debug
+  sessions, its acknowledged reasons -- and grants nothing else, and it is 128 random bits that nothing the
+  broker answers ever contains. It is read only inside a tool call, past the host's `Origin` and token checks.
+  A direct http client that sends none has no session, and shares that null owner with every other such
+  client.
 - **The operator API is owner-agnostic, so it has a secret.** It exists for the person running the
   broker, who needs to see every session, including ones agents started. The tray mints a token per run
   and gives it only to an inspector it launches, or on **Copy inspector command**. An http server takes
@@ -94,7 +100,7 @@ One entry per tool a client is offered. Every tool runs as the user; the column 
 | `rose_workspace_reload` | Restarts the worker, optionally under a different configuration, platform or properties | As `rose_workspace_open`, with the global properties the caller supplies |
 | `rose_workspace_close` | Stops a worker | Only affects RoseMCP's own process |
 | `rose_workspace_list` | Lists the workspaces the broker holds a worker for, with each one's state and idle time | Reads only the broker's own registry; starts nothing. Names every solution path the broker holds, whichever session opened it |
-| `rose_workspace_acknowledge` | Stops the calling session's reads repeating a degraded reason, or proposes that the person accept it | Changes what that one session reads, in the broker's memory, until the session goes idle for two hours; refused on a shared broker for a call carrying no session id, since it would silence the reason for every client. A proposal changes nothing until the person confirms it on the operator API; no MCP tool can accept a reason or confirm a proposal |
+| `rose_workspace_acknowledge` | Stops the calling session's reads repeating a degraded reason, or proposes that the person accept it | Changes what that one session reads, in the broker's memory, until the session goes idle for two hours (a stdio broker's one client: for the life of the process); refused on a shared broker for a call carrying no session id, since it would silence the reason for every client. A proposal changes nothing until the person confirms it on the operator API, and is refused by a host that serves none; no MCP tool can accept a reason or confirm a proposal |
 
 ### Reading and navigation
 

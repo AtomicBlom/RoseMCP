@@ -6,8 +6,8 @@ public sealed record SeenReasonRecord
 	/// <summary>The kind, as the broker names it.</summary>
 	public required string Kind { get; init; }
 
-	/// <summary>The project, by name; empty for the whole solution.</summary>
-	public string Project { get; init; } = string.Empty;
+	/// <summary>What it covers: a project by name, or, for a reason that names no project, its subject -- the assembly that would not load, the platform chosen.</summary>
+	public string Covering { get; init; } = string.Empty;
 
 	/// <summary>When it was first seen.</summary>
 	public required DateTime FirstSeenUtc { get; init; }

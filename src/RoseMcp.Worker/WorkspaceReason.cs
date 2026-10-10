@@ -18,16 +18,42 @@ namespace RoseMcp.Worker;
 /// <param name="Text">The reason in full, its fix included.</param>
 public sealed record WorkspaceReason(string Kind, HealthEffect Effect, IReadOnlyList<string> Projects, string Text)
 {
-	/// <summary>A reason covering <paramref name="projects"/>, each named once, in the order first given.</summary>
-	public static WorkspaceReason Of(string kind, HealthEffect effect, string text, IEnumerable<string>? projects = null) =>
-		new(kind, effect, [.. (projects ?? []).Where(project => project.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)], text);
+	/// <summary>
+	/// What a reason naming no project is about, which its acceptance is keyed on in place of a project: the
+	/// assemblies that would not load, the platform chosen. Empty where it names projects.
+	/// </summary>
+	public IReadOnlyList<string> Subjects { get; init; } = [];
+
+	/// <summary>
+	/// A reason covering <paramref name="projects"/>, each named once, in the order first given; or, naming
+	/// none, about <paramref name="subjects"/>. One naming neither is about its own opening sentence, so an
+	/// acceptance of it covers that cause as worded and not whatever else of its kind is said later.
+	/// </summary>
+	public static WorkspaceReason Of(
+		string kind,
+		HealthEffect effect,
+		string text,
+		IEnumerable<string>? projects = null,
+		IEnumerable<string>? subjects = null)
+	{
+		var named = Distinct(projects);
+		var about = named.Length > 0 ? [] : Distinct(subjects);
+
+		return new WorkspaceReason(kind, effect, named, text)
+		{
+			Subjects = named.Length == 0 && about.Length == 0 ? [WorkspaceStatusReporter.LineOf(text)] : about,
+		};
+
+		static string[] Distinct(IEnumerable<string>? items) =>
+			[.. (items ?? []).Where(item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.OrdinalIgnoreCase)];
+	}
 
 	/// <summary>Whether it makes the workspace degraded: everything but a note does.</summary>
 	public bool Degrades => Effect != HealthEffect.Note;
 
 	/// <summary>
-	/// The projects an acceptance or an acknowledgement has to cover for this reason to be covered: each
-	/// project it names, or the empty project, which stands for the whole solution, where it names none.
+	/// What an acceptance or an acknowledgement has to cover for this reason to be covered: each project it
+	/// names, or each subject where it names none.
 	/// </summary>
-	public IReadOnlyList<string> Keys => Projects.Count == 0 ? [string.Empty] : Projects;
+	public IReadOnlyList<string> Keys => Projects.Count > 0 ? Projects : Subjects.Count > 0 ? Subjects : [string.Empty];
 }

@@ -478,6 +478,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		Id = kind,
 		Kind = kind,
 		Effect = effect,
+		Subjects = [text],
 		Line = text,
 	};
 

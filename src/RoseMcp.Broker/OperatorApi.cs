@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using RoseMcp.Contracts;
 using RoseMcp.Logging;
 
@@ -80,6 +81,9 @@ public static class OperatorApi
 		MapXaml(operators);
 		MapHealth(operators);
 
+		// This host now has somewhere a person decides what agents propose, so proposing is worth allowing.
+		app.Services.GetRequiredService<WorkspaceHealth>().OfferToThePerson();
+
 		return operators;
 	}
 
@@ -114,12 +118,12 @@ public static class OperatorApi
 		routes.MapPost(
 			"/accept",
 			(AcceptReasonRequest body, WorkspaceHealth health) =>
-				Json(health.Accept(body.Workspace, body.Kind, body.Projects, body.AgentsRead, body.Note)));
+				Json(health.Accept(body.Workspace, body.Kind, body.Projects, body.AgentsRead, body.Note, body.Subjects)));
 
 		routes.MapPost(
 			"/stop-accepting",
 			(StopAcceptingRequest body, WorkspaceHealth health) =>
-				Json(health.StopAccepting(body.Workspace, body.Kind, body.Projects)));
+				Json(health.StopAccepting(body.Workspace, body.Kind, body.Projects, body.Subjects)));
 
 		routes.MapGet("/proposals", (WorkspaceHealth health) => Json(health.Proposals()));
 

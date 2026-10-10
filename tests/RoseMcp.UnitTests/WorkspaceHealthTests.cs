@@ -74,7 +74,7 @@ public sealed class WorkspaceHealthTests
 
 		var heard = restarted.HeardFor(Shop).ShouldHaveSingleItem();
 		heard.Read.ShouldBe(AgentsRead.Note);
-		heard.Project.ShouldBe("Legacy.Tests");
+		heard.Covering.ShouldBe("Legacy.Tests");
 	}
 
 	/// <summary>
@@ -285,14 +285,130 @@ public sealed class WorkspaceHealthTests
 		Should.Throw<KeyNotFoundException>(() => health.Confirm(proposal.Id, null, null));
 	}
 
-	private static WorkspaceHealth Health(TemporaryLocalAppData home, TimeProvider? clock = null, bool oneClient = false) => new(
-		Options.Create(new BrokerOptions
+	/// <summary>
+	/// A stdio server running on its own serves nothing a person could confirm a proposal on, so a proposal there
+	/// would wait for ever: refused, saying why and what to do instead.
+	/// </summary>
+	[Test]
+	public void A_host_with_no_operator_api_refuses_a_proposal_nobody_could_confirm()
+	{
+		using var home = new TemporaryLocalAppData();
+		var stdio = Health(home, oneClient: true, operatorApi: false);
+
+		var refused = Should.Throw<InvalidOperationException>(() => stdio.Propose(Shop, Legacy, null));
+
+		refused.Message.ShouldContain("no operator API", Case.Sensitive);
+		refused.Message.ShouldContain("tray", Case.Sensitive);
+		stdio.Proposals().ShouldBeEmpty();
+	}
+
+	/// <summary>A confirmation that fails -- here for want of the note it asks agents to read -- leaves the proposal to be decided again.</summary>
+	[Test]
+	public void A_confirmation_that_fails_leaves_the_proposal_waiting()
+	{
+		using var home = new TemporaryLocalAppData();
+		var health = Health(home);
+		var proposal = health.Propose(Shop, Legacy, null);
+
+		Should.Throw<ArgumentException>(() => health.Confirm(proposal.Id, AgentsRead.Note, null));
+
+		health.Proposals().ShouldHaveSingleItem().Id.ShouldBe(proposal.Id);
+		health.Describe(Shop, [Legacy]).ShouldHaveSingleItem().Accepted.ShouldBeNull();
+	}
+
+	/// <summary>The one client of a stdio broker is its session for the life of the process, however long it is quiet.</summary>
+	[Test]
+	public void A_stdio_brokers_one_client_never_goes_quiet()
+	{
+		using var home = new TemporaryLocalAppData();
+		var clock = new SteerableClock(new DateTime(2026, 10, 2, 9, 0, 0, DateTimeKind.Utc));
+		var stdio = Health(home, clock, oneClient: true, operatorApi: false);
+
+		stdio.Acknowledge(Shop, Legacy);
+		clock.Advance(WorkspaceHealth.SessionIdleLimit + TimeSpan.FromHours(6));
+
+		stdio.HeardFor(Shop).ShouldHaveSingleItem().Read.ShouldBe(AgentsRead.Nothing);
+	}
+
+	/// <summary>
+	/// A reason naming no project is accepted for what it is about: an assembly accepted as failing does not cover
+	/// a different one that starts failing later, which is a cause nobody has seen.
+	/// </summary>
+	[Test]
+	public void A_reason_about_no_project_is_accepted_for_its_subjects()
+	{
+		using var home = new TemporaryLocalAppData();
+		var health = Health(home);
+
+		health.Accept(Shop, ReasonKinds.AnalyzerLoadFailed, [], AgentsRead.Nothing, null, ["Old.Generator.dll"]);
+
+		var described = health.Describe(
+			Shop,
+			[
+				About(ReasonKinds.AnalyzerLoadFailed, "Old.Generator.dll"),
+				About(ReasonKinds.AnalyzerLoadFailed, "Old.Generator.dll", "New.Generator.dll"),
+			]);
+
+		described.Select(reason => reason.Accepted is not null).ShouldBe([true, false]);
+
+		static HealthReason About(string kind, params string[] subjects) =>
+			Reason(kind) with { Subjects = subjects };
+	}
+
+	/// <summary>
+	/// The id a real relay mints, read as the broker's call filter reads it: a session of that shape is told apart
+	/// from another of the same shape, and a call with none on a broker serving several is refused.
+	/// </summary>
+	[Test]
+	public void A_relayed_session_is_its_own_by_the_id_its_relay_sends()
+	{
+		using var home = new TemporaryLocalAppData();
+		var health = Health(home);
+		var mine = CallSession.Of(null, Marked(CallSession.Mint()));
+		var theirs = CallSession.Of(null, Marked(CallSession.Mint()));
+
+		mine.ShouldNotBeNull();
+		theirs.ShouldNotBeNull();
+
+		using (CallSession.Use(mine))
 		{
-			LocalAppData = home.Path,
-			TimeProvider = clock ?? TimeProvider.System,
-			ServesOneClient = oneClient,
-		}),
-		NullLogger<WorkspaceHealth>.Instance);
+			health.Acknowledge(Shop, Legacy);
+			health.HeardFor(Shop).ShouldHaveSingleItem();
+		}
+
+		using (CallSession.Use(theirs))
+		{
+			health.HeardFor(Shop).ShouldBeEmpty();
+		}
+
+		using (CallSession.Use(CallSession.Of(null, null)))
+		{
+			Should.Throw<InvalidOperationException>(() => health.Acknowledge(Shop, Legacy));
+		}
+
+		static System.Text.Json.Nodes.JsonObject Marked(string id) => new() { [CallSession.MetaKey] = id };
+	}
+
+	/// <summary>A broker's health, serving the operator API unless a test says it is a stdio server on its own.</summary>
+	private static WorkspaceHealth Health(
+		TemporaryLocalAppData home,
+		TimeProvider? clock = null,
+		bool oneClient = false,
+		bool operatorApi = true)
+	{
+		var health = new WorkspaceHealth(
+			Options.Create(new BrokerOptions
+			{
+				LocalAppData = home.Path,
+				TimeProvider = clock ?? TimeProvider.System,
+				ServesOneClient = oneClient,
+			}),
+			NullLogger<WorkspaceHealth>.Instance);
+
+		if (operatorApi) health.OfferToThePerson();
+
+		return health;
+	}
 
 	private static HealthReason Reason(string kind, params string[] projects) => new()
 	{

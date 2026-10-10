@@ -546,6 +546,7 @@ public sealed class WorkspaceManager(
 				Status = Contracts.AcknowledgementOutcome.Acknowledged,
 				Kind = reason.Kind,
 				Projects = reason.Projects,
+				Subjects = reason.Subjects,
 			};
 		}
 
@@ -557,6 +558,7 @@ public sealed class WorkspaceManager(
 				Status = Contracts.AcknowledgementOutcome.AlreadyAccepted,
 				Kind = reason.Kind,
 				Projects = reason.Projects,
+				Subjects = reason.Subjects,
 				Detail = $"The person accepted it on {accepted.AcceptedUtc:yyyy-MM-dd}, and agents read {Describe(accepted.AgentsRead)} about it.",
 			};
 		}
@@ -569,6 +571,7 @@ public sealed class WorkspaceManager(
 			Status = Contracts.AcknowledgementOutcome.Proposed,
 			Kind = reason.Kind,
 			Projects = reason.Projects,
+			Subjects = reason.Subjects,
 			ProposalId = proposal.Id,
 		};
 

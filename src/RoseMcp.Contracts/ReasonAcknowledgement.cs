@@ -15,6 +15,9 @@ public sealed record ReasonAcknowledgement
 	/// <summary>The projects the acknowledgement or the proposal covers; empty for the whole solution.</summary>
 	public IReadOnlyList<string> Projects { get; init; } = [];
 
+	/// <summary>What it covers where the reason names no project: its subjects, as health lists them.</summary>
+	public IReadOnlyList<string> Subjects { get; init; } = [];
+
 	/// <summary>The proposal waiting for the person, where one was made.</summary>
 	public string? ProposalId { get; init; }
 

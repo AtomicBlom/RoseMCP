@@ -52,7 +52,10 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   of twenty. See [the decision](../decisions/a-call-is-traced-by-an-id-minted-where-it-enters-rose.md).
 - **A stdio session relays to a tray when one is running.** `TrayRelay` forwards both listing and
   calling, declaring no tools of its own, so the surface cannot drift from the tray's. It sends the
-  directory its client started it in as `_meta["rosemcp/originDirectory"]` and changes nothing else.
+  directory its client started it in as `_meta["rosemcp/originDirectory"]`, and an id it mints for its own
+  life as `_meta["rosemcp/session"]`, and changes nothing else. The id is what tells relayed clients apart:
+  the http transport serves each request without a session, so without it every relayed client is the same
+  caller, and one agent's acknowledgement, or debug session, is every agent's.
   An http broker serves every repository on the machine and, with two solutions open, cannot know
   which one a bare call means; a stdio process cannot not know. Relaying buys both that and one warm
   worker per solution shared across sessions, and it keeps the tray's window reading a live
@@ -165,9 +168,10 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   client, so anything it keeps per session -- `WorkspaceHealth`'s acknowledgements and the proposals waiting
   for the person -- is a leak unless something ends it. Nothing tells an http broker a client has gone, so a
   session is taken to have ended when it has made no call for the MCP transport's own idle limit, two
-  hours, and a host that does learn of an end calls `ForgetSession`. A call with no session id is the one
-  client of a stdio broker; on a broker serving several it is any of them, and session state taken from it
-  would be every client's, so it is refused rather than shared.
+  hours, and a host that does learn of an end calls `ForgetSession`. A relayed client is a session by the id
+  its relay sends (`CallSession.Of`). A call with no session id is the one client of a stdio broker, whose
+  session is the process's and never goes quiet; on a broker serving several it is any of them, and session
+  state taken from it would be every client's, so it is refused rather than shared.
 - **A live-app session whose host has died is dropped by the session manager, and only that one.**
   A poll that finds the host's transport gone marks the session ended; nothing else would ever
   remove it -- no caller closes a session it can no longer reach -- so the registry would carry it

@@ -14,8 +14,10 @@ acceptance keyed on its text would stop matching without a word, and one keyed o
 whatever the id happened to name. A kind is named once in code and is the same at every load. And keying
 on each project rather than on the reason means a reason covering one more project than was accepted is
 not covered: a project newly failing in a kind the person accepted for two others still shows, which is
-the case the person most needs to see. A reason about the whole solution or the worker covers no project
-and is accepted as a whole.
+the case the person most needs to see. A reason naming no project is keyed on its subjects instead -- the assemblies that
+would not load, the platform chosen, the restore's NuGet error codes -- and one with none of those on its
+own opening sentence, so a different assembly failing, or a cause worded differently, is not hidden by an
+acceptance of the one before it.
 
 **Why there is no kind for a cause Rose cannot see.** Legacy test projects that reference UWP assemblies
 by `HintPath` are the case that asked for acceptance, and nothing tells them apart from any other project
@@ -36,8 +38,10 @@ value in one window. This is written by every broker on the machine -- the tray'
 beside it -- whenever a reason is first seen, so two writers meeting is the ordinary case. A change is a
 read, a change and a write under a lock file held exclusively across processes, and the write goes to a
 temporary file renamed over the real one, so neither a race nor a crash loses an acceptance. A file that
-does not parse is moved aside rather than written over, and one written by a newer build is never written
-over. A sighting is rewritten at most daily and forgotten a month after the reason was last seen, unless
+does not parse is moved aside rather than written over; one that cannot be read at all, because another
+process holds it this moment, is left alone and the change fails, since that says nothing about what is in
+it; and one written by a newer build is never written over. A reader opens it sharing everything and a
+writer waits out a reader, since Windows refuses to replace a file anyone has open. A sighting is rewritten at most daily and forgotten a month after the reason was last seen, unless
 an acceptance covers it, so the tray describing every workspace every two seconds is not a write every two
 seconds and a removed worktree does not stay in the file for ever.
 
@@ -54,15 +58,22 @@ broker cannot recompute it without the reasons it does not hold.
 every other agent reads. An agent able to make one -- or to confirm its own proposal -- could silence a
 reason for every session on the machine on the strength of one task's view of it. So the MCP tool
 acknowledges for the calling session, or proposes; the proposal waits in the broker's memory for the
-person, and goes when the session that made it does.
+person, and goes when the session that made it does. A host with nothing a person could decide one on -- a
+stdio server running alone, which maps no operator API -- refuses the proposal rather than hold it for
+nobody.
 
-**Why a session ends by going quiet.** Nothing tells the broker an http client has gone: the transport
-serves each request without a session, and over the current protocol revision `Mcp-Session-Id` is gone
-altogether. A session that has made no call for two hours -- the limit the MCP SDK's own http transport
+**Why a relayed client is named by its relay, and a session ends by going quiet.** The tray's http
+transport serves each request without a session, and over the current protocol revision `Mcp-Session-Id` is
+gone altogether, so every client relayed to it would be one caller. The relay mints an opaque id for its
+own life and sends it as `_meta["rosemcp/session"]`, and the broker's call filter takes it for the call's
+session where the transport has none. It is a name, not a credential: it decides which per-session state a
+call reaches and grants nothing, and it is read only inside a tool call, past the host's checks. Nothing
+tells the broker a client has gone either. A session that has made no call for two hours -- the limit the MCP SDK's own http transport
 holds an idle session to -- is taken to have ended, and its acknowledgements and proposals go with it;
 `WorkspaceHealth.ForgetSession` drops one at once for a host that does learn of an end. A call carrying no
-session id at all is the one client of a stdio broker, and on a broker serving several clients it is any
-of them, so an acknowledgement from one is refused there rather than shared by all.
+session id at all is the one client of a stdio broker, whose session lasts as long as the process however
+quiet it is; on a broker serving several clients it is any of them, so an acknowledgement from one is
+refused there rather than shared by all.
 
 **Why one tool.** Acknowledging and proposing act on the same ids from the same status and differ only in
 who decides. Two tools would be two descriptions explaining ids, kinds and projects on a surface held to a

@@ -114,6 +114,9 @@ public sealed record AcceptReasonRequest
 	/// <summary>The projects to accept it for; empty for a reason about the whole solution.</summary>
 	public IReadOnlyList<string> Projects { get; init; } = [];
 
+	/// <summary>For a reason that names no project, the subjects to accept it for, as health lists them; ignored where projects are named.</summary>
+	public IReadOnlyList<string> Subjects { get; init; } = [];
+
 	/// <summary>What agents read about it once accepted.</summary>
 	public AgentsRead AgentsRead { get; init; } = AgentsRead.RoseLine;
 
@@ -132,6 +135,9 @@ public sealed record StopAcceptingRequest
 
 	/// <summary>The projects to stop accepting it for; empty for a reason about the whole solution.</summary>
 	public IReadOnlyList<string> Projects { get; init; } = [];
+
+	/// <summary>For a reason that names no project, the subjects to stop accepting it for; ignored where projects are named.</summary>
+	public IReadOnlyList<string> Subjects { get; init; } = [];
 }
 
 /// <summary>

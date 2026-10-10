@@ -67,7 +67,7 @@ public sealed class OperatorHealthRouteTests
 
 		var listed = await broker.Operator.GetFromJsonAsync<AcceptedReasons>(
 			$"/operator/health/accepted?workspace={Uri.EscapeDataString(Shop)}", ContractJson.Options, cancellationToken);
-		listed!.Accepted.ShouldHaveSingleItem().Project.ShouldBe("Legacy.Tests");
+		listed!.Accepted.ShouldHaveSingleItem().Covering.ShouldBe("Legacy.Tests");
 
 		var stopped = await Read<AcceptedReasons>(
 			await broker.Operator.PostAsJsonAsync(

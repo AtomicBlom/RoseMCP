@@ -6,8 +6,8 @@ public sealed record AcceptedReason
 	/// <summary>The kind, one of <see cref="ReasonKinds"/>.</summary>
 	public required string Kind { get; init; }
 
-	/// <summary>The project, by name; empty for the whole solution.</summary>
-	public string Project { get; init; } = string.Empty;
+	/// <summary>What it covers: a project by name, or, for a reason that names no project, its subject -- the assembly that would not load, the platform chosen.</summary>
+	public string Covering { get; init; } = string.Empty;
 
 	/// <summary>When it was accepted.</summary>
 	public required DateTime AcceptedUtc { get; init; }

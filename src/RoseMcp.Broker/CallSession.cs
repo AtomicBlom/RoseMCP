@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text.Json.Nodes;
+
 namespace RoseMcp.Broker;
 
 /// <summary>
@@ -19,7 +22,41 @@ namespace RoseMcp.Broker;
 /// </summary>
 public static class CallSession
 {
+	/// <summary>
+	/// Where in a tool call's <c>_meta</c> a stdio relay names the session it serves, beside the directory it
+	/// started in.
+	/// </summary>
+	public const string MetaKey = "rosemcp/session";
+
 	private static readonly AsyncLocal<string?> Ambient = new();
+
+	/// <summary>
+	/// Which session a call is: the transport's own session where it has one, else the one a relay named in
+	/// <c>_meta</c>, else none.
+	/// <para>
+	/// The relay's name is needed because the http transport serves each request without a session -- the
+	/// current protocol revision has none to give -- so every relayed session would otherwise be the same null
+	/// one. It is an opaque id the relay mints for the life of its process, and it grants nothing: it decides only
+	/// which of the broker's per-session state a call reaches, its own acknowledgements and the debug sessions it
+	/// started. A client that sends another's id has to know it, and nothing the broker answers carries one. It is
+	/// read here, inside a tool call, which every request reaches only past the host's origin and token checks.
+	/// Kept apart from any transport id by its prefix, and refused unless it has the shape a relay mints, since
+	/// whatever is read here is compared and logged.
+	/// </para>
+	/// </summary>
+	public static string? Of(string? transportSessionId, JsonObject? meta)
+	{
+		if (!string.IsNullOrWhiteSpace(transportSessionId)) return transportSessionId;
+
+		if (meta?[MetaKey] is not JsonValue value || !value.TryGetValue(out string? named)) return null;
+
+		var wellFormed = named is { Length: >= 16 and <= 64 } && named.All(char.IsAsciiHexDigitLower);
+
+		return wellFormed ? $"relayed-{named}" : null;
+	}
+
+	/// <summary>A fresh id for a relay to name its session by, in the shape <see cref="Of"/> accepts.</summary>
+	public static string Mint() => Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
 
 	/// <summary>The calling session's id, or null when the transport has no notion of one.</summary>
 	public static string? Id => Ambient.Value;

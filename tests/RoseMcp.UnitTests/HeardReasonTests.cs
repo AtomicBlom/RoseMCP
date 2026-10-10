@@ -158,10 +158,52 @@ public sealed class HeardReasonTests
 		HeardReasons.Current.ShouldBeEmpty();
 	}
 
+	/// <summary>
+	/// A reason naming no project is heard by what it is about. An assembly accepted as failing says nothing,
+	/// and a different assembly failing later is a cause nobody accepted, so the read says it.
+	/// </summary>
+	[Test]
+	public void A_new_assembly_failing_is_still_said_after_the_old_one_was_accepted()
+	{
+		var old = AssemblyLoadHealth([Fault("System.IO.Compression")])!;
+		old.Subjects.ShouldBe(["System.IO.Compression"]);
+
+		ReasonHearing[] accepted = [Heard(ReasonKinds.AssemblyLoadFault, "System.IO.Compression", AgentsRead.Nothing)];
+
+		DegradedNotice([old], accepted).ShouldBeNull();
+
+		var both = AssemblyLoadHealth([Fault("System.IO.Compression"), Fault("System.Formats.Asn1")])!;
+		var notice = DegradedNotice([both], accepted);
+
+		notice.ShouldNotBeNull();
+		notice.ShouldContain("could not load 2 assemblies", Case.Sensitive);
+	}
+
+	/// <summary>A reason that names neither a project nor a subject is about its own line, so one reworded -- a new cause -- is said.</summary>
+	[Test]
+	public void A_reason_about_nothing_named_is_heard_by_its_line()
+	{
+		var restore = WorkspaceReason.Of(ReasonKinds.RestoreFailed, HealthEffect.BlocksAnswers, "Restore failed on NU1301.");
+		var other = WorkspaceReason.Of(ReasonKinds.RestoreFailed, HealthEffect.BlocksAnswers, "Restore failed on NU1101.");
+
+		ReasonHearing[] accepted = [Heard(ReasonKinds.RestoreFailed, "Restore failed on NU1301.", AgentsRead.Nothing)];
+
+		DegradedNotice([restore], accepted).ShouldBeNull();
+		DegradedNotice([other], accepted).ShouldNotBeNull();
+	}
+
+	private static AssemblyLoadFault Fault(string assembly) => new()
+	{
+		Assembly = assembly,
+		Tool = "rose_find_references",
+		Message = $"Could not load file or assembly '{assembly}, Version=10.0.0.0'.",
+		RuntimeDirectoryMissing = false,
+	};
+
 	private static ReasonHearing Heard(string kind, string project, AgentsRead read, string? note = null) => new()
 	{
 		Kind = kind,
-		Project = project,
+		Covering = project,
 		Read = read,
 		Note = note,
 	};

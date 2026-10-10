@@ -60,7 +60,9 @@ Read before adding or changing a read path, a reload trigger, or the file watche
   fails has no import list, and for that case alone any untracked `.props` or `.targets` changing
   reloads -- over-reloading is the only answer there that cannot be stale. A watcher that loses events,
   to an overflowed buffer or a vanished directory, loses nothing else, so lost events reload only in that
-  same case.
+  same case. An analyzer assembly changing is never a reason to reload here: the barrier stats it
+  and says so, but a reload in this process loads the same copy again (see
+  [analyzers-and-generators.md](analyzers-and-generators.md)).
 - **A project's analyzer config files are the ones on disk, not only the ones its build walked to.** The
   design-time build finds each .editorconfig and .globalconfig by walking up from the files it compiles,
   so a project with nothing to compile when it was built -- one added to the solution before its first

@@ -145,7 +145,16 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   registry. A stopped row reports no memory figures either: Windows hands a dead process's id to
   the next process it starts, so sampling it would show somebody else's memory as the solution's.
   The manager stops the sweep, and waits for it, before it disposes the gate the sweep
-  takes. The same holds for a key: `workspaceKey` still names a stopped row, whose path is known,
+  takes. The sweep runs in every host once a worker has started, eviction or not, because it also
+  replaces a worker holding a rebuilt analyzer when a person has asked for that -- a setting read
+  when some worker holds one, so a sweep with nothing rebuilt reads no file. That reload follows the
+  eviction's rules: decided again under the gate, never for a worker held, busy or loading, only
+  once it has gone a minute unused since both its last call and the broker hearing of the rebuild,
+  and never for a worker already replaced or whose solution file has gone. Eviction is decided
+  first, since the call after an eviction starts a worker on the new build anyway. The broker hears
+  of a rebuild from the worker's info, refreshed after every call, and a call ending while a refresh
+  is in flight asks for one more rather than being dropped, or a rebuild found by that call would
+  never reach the sweep. The same holds for a key: `workspaceKey` still names a stopped row, whose path is known,
   but a refusal naming the workspace a key belongs to calls it loaded only while its worker serves,
   and promises a reload only while its solution file exists -- a removed worktree's row outlives
   the file, and loading it again would only fail.

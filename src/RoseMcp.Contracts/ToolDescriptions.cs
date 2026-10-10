@@ -656,7 +656,8 @@ public static class ToolDescriptions
 	public const string WorkspaceReload = """
 		Restarts a solution's Roslyn host from scratch. Rarely needed -- edits by other tools are
 		absorbed on the next call -- but it is the only way to pick up a rebuilt analyzer or source
-		generator, since an assembly once loaded cannot be unloaded from a process. Also how to change
+		generator, since an assembly once loaded cannot be unloaded from a process; reads name one rebuilt
+		since the worker loaded it. Also how to change
 		the MSBuild configuration a solution loaded under, which is the fix when everything reports
 		System.Object undefined. It costs a full design-time build, so use it for those and not to
 		refresh state.

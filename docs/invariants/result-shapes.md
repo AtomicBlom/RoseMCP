@@ -223,7 +223,9 @@ Read before adding a tool, adding a field to a result, or changing an error path
   in `degradedReasons` would mark almost every workspace on the machine degraded -- the same
   emptying of the word that narrowed the MSBuild-failure count and took `targetFramework` out of the
   project name. It is still said, because what it warns about does not present as a build failure:
-  it presents as a test failing for a reason that has nothing to do with the change.
+  it presents as a test failing for a reason that has nothing to do with the change. An analyzer
+  rebuilt after the worker loaded it is the same kind of fact and is said the same way, on every
+  read, as a notice (see [analyzers-and-generators.md](analyzers-and-generators.md)).
 - **What every item of a list shares is said once, and a narrowing says what it left out.** An
   outline that repeated its file, project and source line on every member cost ten times what the
   member names did, and on a large type overran what a client accepts -- so the caller read the file,

@@ -38,7 +38,8 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	private readonly McpClient _client;
 	private readonly ActivityLog _activities;
 	private readonly ILogger _logger;
-	private int _refreshingHeap;
+	/// <summary>The worker asked about itself after calls, one refresh at a time and none dropped.</summary>
+	private readonly CoalescedRefresh _refresh;
 	private string? _loadFailure;
 	private string? _key;
 
@@ -62,9 +63,6 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// <summary><see cref="RebuiltAnalyzersSinceUtc"/> as ticks, zero for none, so the sweep reading it cannot tear it.</summary>
 	private long _rebuiltAnalyzersSinceTicks;
 
-	/// <summary>Set by a call that wants the worker asked about itself again, so one asked for during a refresh in flight is not lost.</summary>
-	private int _refreshWanted;
-
 	/// <summary>The clock the idle times are read from, the one the eviction sweep reads too.</summary>
 	private readonly TimeProvider _clock;
 
@@ -82,6 +80,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		_clock = clock;
 		StartedUtc = clock.GetUtcNow().UtcDateTime;
 		_lastUsedTicks = StartedUtc.Ticks;
+		_refresh = new CoalescedRefresh(() => RefreshProcessInfoAsync(CancellationToken.None), () => IsAlive);
 	}
 
 	public string SolutionPath { get; }
@@ -571,40 +570,10 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// <summary>
 	/// Asks the worker about itself again once the work that changes it has finished: its managed heap, first
 	/// read on connect before anything has loaded, and what its reads found rebuilt, which the idle reload
-	/// decides on. Coalesced, so a burst of calls costs a round trip or two rather than one each, and skipped
-	/// for a worker on its way out.
-	/// <para>
-	/// A call ending while a refresh is in flight asks for one more after it rather than being dropped: the
-	/// refresh in flight may have been answered before that call's read found a rebuilt analyzer, and a broker
-	/// that never hears of it never reloads for it.
-	/// </para>
+	/// decides on. Coalesced by <see cref="CoalescedRefresh"/>, so a burst of calls costs a round trip or two
+	/// rather than one each and the last call's request is never dropped, and skipped for a worker on its way out.
 	/// </summary>
-	private void RefreshHeapSoon()
-	{
-		if (!IsAlive) return;
-
-		Volatile.Write(ref _refreshWanted, 1);
-		if (Interlocked.CompareExchange(ref _refreshingHeap, 1, 0) != 0) return;
-
-		_ = Detached.Run(async () =>
-		{
-			try
-			{
-				while (IsAlive && Interlocked.Exchange(ref _refreshWanted, 0) == 1)
-				{
-					await RefreshProcessInfoAsync(CancellationToken.None);
-				}
-			}
-			finally
-			{
-				Volatile.Write(ref _refreshingHeap, 0);
-
-				// Asked for between the loop's last look and letting go, by a call that found the refresh still
-				// running and left it to this one.
-				if (Volatile.Read(ref _refreshWanted) == 1) RefreshHeapSoon();
-			}
-		});
-	}
+	private void RefreshHeapSoon() => _refresh.Request();
 
 	/// <summary>
 	/// Samples memory from the process table rather than asking the worker, so the numbers stay

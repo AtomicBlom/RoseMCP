@@ -151,7 +151,10 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   eviction's rules: decided again under the gate, never for a worker held, busy or loading, only
   once it has gone a minute unused since both its last call and the broker hearing of the rebuild,
   and never for a worker already replaced or whose solution file has gone. Eviction is decided
-  first, since the call after an eviction starts a worker on the new build anyway. The broker hears
+  first, since the call after an eviction starts a worker on the new build anyway. Only the manager
+  stopping ends the sweep, decided by its token rather than by the exception's type: the sweep starts
+  workers, a start that gives up can surface as a cancellation of its own, and a loop ended by one
+  would stop eviction and the idle reload for the life of the broker with nothing to say so. The broker hears
   of a rebuild from the worker's info, refreshed after every call, and a call ending while a refresh
   is in flight asks for one more rather than being dropped, or a rebuild found by that call would
   never reach the sweep. The same holds for a key: `workspaceKey` still names a stopped row, whose path is known,

@@ -119,12 +119,18 @@ public sealed class RebuiltAnalyzerTests
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
 		fixture.Build("WithGenerator", "Gen", "Gen.csproj");
 
+		// The first time the sweep asks, it is handed a cancellation that is not the manager stopping -- the
+		// shape a worker start giving up can take. Only the manager stopping may end the sweep, so the next
+		// tick asks again and the reload still happens.
+		var asked = 0;
 		var clock = new SteerableClock();
 		await using var manager = CreateManager(configure: options =>
 		{
 			options.EvictionSweepInterval = SweepInterval;
 			options.TimeProvider = clock;
-			options.ReloadsRebuiltAnalyzersWhenIdle = () => true;
+			options.ReloadsRebuiltAnalyzersWhenIdle = () => Interlocked.Increment(ref asked) == 1
+				? throw new OperationCanceledException("Not the manager stopping.")
+				: true;
 		});
 
 		var hints = WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath));
@@ -147,6 +153,7 @@ public sealed class RebuiltAnalyzerTests
 			cancellationToken);
 
 		worker.IsAlive.ShouldBeFalse();
+		asked.ShouldBeGreaterThan(1, "the sweep that met a cancellation of its own carried on and asked again");
 		manager.Describe().ShouldHaveSingleItem().Recent
 			.ShouldContain(activity => activity.Operation == WorkspaceManager.ReloadRebuiltOperation
 				&& activity.Message != null

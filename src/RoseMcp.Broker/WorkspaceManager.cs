@@ -883,13 +883,16 @@ public sealed class WorkspaceManager(
 				{
 					await SweepAsync(cancellationToken);
 				}
-				catch (Exception exception) when (exception is not OperationCanceledException)
+				catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
 				{
+					// Decided by the token rather than the exception's type: the sweep starts workers, and a start that
+					// gives up can surface as a cancellation of its own. Ending the loop over one would stop eviction
+					// and the idle reload for the life of the broker, with nothing to say so.
 					logger.LogWarning(exception, "The sweep failed; the next one is in {Interval}.", _options.EvictionSweepInterval);
 				}
 			}
 		}
-		catch (OperationCanceledException)
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{
 			// The manager is going away, and its workers with it.
 		}
@@ -1046,7 +1049,7 @@ public sealed class WorkspaceManager(
 				await GetOrStartUnderGateAsync(worker.SolutionPath, cancellationToken);
 				Activities.Note(worker.SolutionPath, ReloadRebuiltOperation, reason);
 			}
-			catch (Exception exception) when (exception is not OperationCanceledException)
+			catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
 			{
 				// The old worker is already gone, so the workspace is closed rather than stale, and the next call
 				// on it starts a worker the way it would after a close.

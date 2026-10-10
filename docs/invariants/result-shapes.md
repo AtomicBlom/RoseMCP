@@ -65,6 +65,12 @@ Read before adding a tool, adding a field to a result, or changing an error path
   registrations are each held by a test; the live-app host's is held by review, since its text block
   is read by nothing but the broker, which reads only structured content, and reaching it directly
   takes a debugged target.
+- **A listing is trimmed on copies, never on the tools the SDK answers calls with.** The SDK decides
+  from a tool's own output schema whether its result carries `structuredContent`, and a listing hands
+  out the SDK's own `Tool` instances. Trimmed in place, every tool would lose its schema the first time
+  anything listed them -- and a client always lists first -- after which every result, to every client,
+  would be text alone, and a relay reading its notices or the debug sessions out of structured content
+  would read nothing. `ToolListing.Trimmed` copies, and `ToolSurfaceTests` lists and then calls.
 - **Advice names an argument only where the tool takes it and it reaches.** A write that leaves a
   name unresolved suggests the import, and a suggestion is followed literally: telling the caller of
   a tool without `usings` to pass it sends an argument the tool never sees, and telling

@@ -60,8 +60,29 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   An http broker serves every repository on the machine and, with two solutions open, cannot know
   which one a bare call means; a stdio process cannot not know. Relaying buys both that and one warm
   worker per solution shared across sessions, and it keeps the tray's window reading a live
-  `WorkspaceManager` rather than a pushed copy that could drift. With no tray, the same process owns
-  its workers as before.
+  `WorkspaceManager` rather than a pushed copy that could drift. With no tray, a relay running from an
+  install's relay folder starts the install root's server as a child with `--no-relay` and relays to
+  it, rather than hosting a broker from its own assemblies, which are as old as the last relay
+  protocol change; it ends when that child does, which a deploy makes happen, rather than starting
+  another while the deploy may still be copying over its files. Anywhere else -- a build output, a
+  Linux install -- the process owns its workers as before.
+- **A relay outlives the broker it forwards to, and tells its client only what changed.** It holds
+  `/admin/relays/watch` open, which a killed broker ends at once, and reconnects by itself, so an idle
+  session hears of a deploy without making a call. A watch ending is a reason to look, not proof: the
+  broker is asked first -- any answer counts, since the 2026-07-28 revision has no `ping` -- because
+  reconnecting to a live broker opens a new MCP session, and the debug sessions belong to the old one.
+  Calls and the watch reconnect through one gate, and the comparison of the new broker's tools and
+  instructions with what the client last listed happens inside it, so one restart is one comparison
+  and at most one `notifications/tools/list_changed`. That notification goes through `ToolListSignal`,
+  the SDK's fan-out for a changed collection, never by hand: a 2026-07-28 client asks for it on a
+  `subscriptions/listen` stream and must get it tagged with that subscription. The relay advertises
+  `tools.listChanged` itself and gives the broker's instructions as its own, because the client never
+  sees the broker's handshake. The restart line is claimed from `PendingNotice` only once a result is
+  in hand, so exactly one result carries it and a failed call leaves it for the next. The broker's
+  instance id, not its build, says whether it restarted. The watch and the reconnect loop are
+  `Detached`, bounded by the relay's lifetime, and disposing the relay cancels them and waits for them
+  before closing the connection -- which, for a child broker, ends the child and its workers. See
+  [the decision](../decisions/a-deploy-replaces-the-relay-only-when-its-protocol-changes.md).
 - **The relay contributes a fact, never a conclusion.** It used to resolve that directory to a
   solution and write the answer into the `workspace` argument, which failed three ways at once. It
   matched the argument by name, and `rose_workspace_open` alone called its own `path` -- so an
@@ -115,8 +136,9 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
 - **Every stdio process dies with its client, and takes what it owns.** A worker, a live-app host
   and a stdio `RoseMcp.Server` all exit when their stdin closes, and the rule is the same one three
   times: whatever the process owns goes with it, because nothing else knows it is there. A server
-  ends its workers, and a host ends a target it *launched* -- never one it attached to, and never
-  after a detach, which is the request to leave the app running. Orphaned Roslyn hosts holding a
+  ends its workers, a relay ends a broker it started as its child, and a host ends a target it
+  *launched* -- never one it attached to, and never after a detach, which is the request to leave the
+  app running. Orphaned Roslyn hosts holding a
   solution in memory are invisible until the machine is out of RAM; an orphaned probe app is worse
   than invisible, because the probe is single-instance and the next run finds an app it did not
   launch and treats it as its own.

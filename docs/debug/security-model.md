@@ -47,16 +47,17 @@ as building it, and nothing here makes that safer. Only open repositories you wo
   user's own network position. A request whose `Origin` is present and names anywhere but this machine
   is refused, and so is an `Origin` that does not parse. An absent `Origin` is allowed, because MCP
   clients are not browsers and send none.
-- **One client cannot drive another's debug session.** Over http, a live-app session belongs to the session
-  that started it, and every `rose_debug_*` and `rose_xaml_*` call on a session it does not own is answered
-  as though the session did not exist. `GET /admin/sessions` still lists every session (#160). The http
-  transport serves each request without a session of its own, so a relayed client is a session by the id its
-  relay mints for its life and sends as `_meta["rosemcp/session"]`. A client chooses that id itself, so it is
-  an owner's name rather than a credential: it decides which per-session state a call reaches -- its debug
-  sessions, its acknowledged reasons -- and grants nothing else, and it is 128 random bits that nothing the
-  broker answers ever contains. It is read only inside a tool call, past the host's `Origin` and token checks.
-  A direct http client that sends none has no session, and shares that null owner with every other such
-  client.
+- **One client cannot drive another's debug session -- where the transport has sessions.** Over http, a
+  live-app session belongs to the transport session that started it, and every `rose_debug_*` and
+  `rose_xaml_*` call on a session it does not own is answered as though the session did not exist.
+  `GET /admin/sessions` still lists every session (#160). The http transport serves each request without
+  a session of its own, so every http client shares the null owner and live-app ownership over http is
+  **unscoped** until a client identity reaches it (#458).
+- **A relayed client's acknowledged reasons are its own.** A relay mints an id for its life and sends it as
+  `_meta["rosemcp/session"]`, and the broker keys a workspace's acknowledged reasons on it -- and nothing
+  else, debug ownership included. A client chooses that id itself, so it is a name rather than a credential:
+  it decides only which acknowledgements a call hears, it is 128 random bits that nothing the broker answers
+  contains, and it is read only inside a tool call, past the host's `Origin` and token checks.
 - **The operator API is owner-agnostic, so it has a secret.** It exists for the person running the
   broker, who needs to see every session, including ones agents started. The tray mints a token per run
   and gives it only to an inspector it launches, or on **Copy inspector command**. An http server takes

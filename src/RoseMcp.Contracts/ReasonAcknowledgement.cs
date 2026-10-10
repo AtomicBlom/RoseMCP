@@ -12,7 +12,7 @@ public sealed record ReasonAcknowledgement
 	/// <summary>The reason's kind, where the id named one.</summary>
 	public string? Kind { get; init; }
 
-	/// <summary>The projects the acknowledgement or the proposal covers; empty for the whole solution.</summary>
+	/// <summary>The projects the acknowledgement or the proposal covers; empty where the reason names none, and <see cref="Subjects"/> says what it covers.</summary>
 	public IReadOnlyList<string> Projects { get; init; } = [];
 
 	/// <summary>What it covers where the reason names no project: its subjects, as health lists them.</summary>

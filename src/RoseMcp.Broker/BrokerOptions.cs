@@ -57,6 +57,12 @@ public sealed class BrokerOptions
 	public string? LocalAppData { get; set; }
 
 	/// <summary>
+	/// How long a change to the record of accepted reasons waits for another process to let go of it before it is
+	/// given up and said to have failed. A test shortens it, so a file it holds on purpose costs it no time.
+	/// </summary>
+	public TimeSpan HealthRecordWait { get; set; } = Settings.WorkspaceHealthFile.DefaultWait;
+
+	/// <summary>
 	/// How long a freshly started worker has to complete its MCP handshake.
 	/// <para>
 	/// Set explicitly because the SDK's own default is 60 seconds, and a worker begins loading its

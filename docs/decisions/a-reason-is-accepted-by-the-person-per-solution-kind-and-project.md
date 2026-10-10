@@ -17,7 +17,8 @@ not covered: a project newly failing in a kind the person accepted for two other
 the case the person most needs to see. A reason naming no project is keyed on its subjects instead -- the assemblies that
 would not load, the platform chosen, the restore's NuGet error codes -- and one with none of those on its
 own opening sentence, so a different assembly failing, or a cause worded differently, is not hidden by an
-acceptance of the one before it.
+acceptance of the one before it. An acceptance naming neither projects nor subjects is refused, since it
+would match nothing while the person was told it had worked.
 
 **Why there is no kind for a cause Rose cannot see.** Legacy test projects that reference UWP assemblies
 by `HintPath` are the case that asked for acceptance, and nothing tells them apart from any other project
@@ -41,7 +42,9 @@ temporary file renamed over the real one, so neither a race nor a crash loses an
 does not parse is moved aside rather than written over; one that cannot be read at all, because another
 process holds it this moment, is left alone and the change fails, since that says nothing about what is in
 it; and one written by a newer build is never written over. A reader opens it sharing everything and a
-writer waits out a reader, since Windows refuses to replace a file anyone has open. A sighting is rewritten at most daily and forgotten a month after the reason was last seen, unless
+writer waits out a reader, since Windows refuses to replace a file anyone has open. A change that does not
+land says what stopped it, and the in-memory record is never held while the file is waited on, since every
+tool call reads it. The shape is versioned: a build reads older shapes and refuses to write over a newer one. A sighting is rewritten at most daily and forgotten a month after the reason was last seen, unless
 an acceptance covers it, so the tray describing every workspace every two seconds is not a write every two
 seconds and a removed worktree does not stay in the file for ever.
 
@@ -65,9 +68,10 @@ nobody.
 **Why a relayed client is named by its relay, and a session ends by going quiet.** The tray's http
 transport serves each request without a session, and over the current protocol revision `Mcp-Session-Id` is
 gone altogether, so every client relayed to it would be one caller. The relay mints an opaque id for its
-own life and sends it as `_meta["rosemcp/session"]`, and the broker's call filter takes it for the call's
-session where the transport has none. It is a name, not a credential: it decides which per-session state a
-call reaches and grants nothing, and it is read only inside a tool call, past the host's checks. Nothing
+own life and sends it as `_meta["rosemcp/session"]`, and the broker's call filter takes it for the calling
+client (`CallSession.Client`) where the transport has no session. It is a name, not a credential: it decides
+which acknowledgements a call hears and grants nothing -- debug-session ownership does not read it, and stays
+unscoped over stateless http until a client identity reaches it (#458) -- and it is read only inside a tool call, past the host's checks. Nothing
 tells the broker a client has gone either. A session that has made no call for two hours -- the limit the MCP SDK's own http transport
 holds an idle session to -- is taken to have ended, and its acknowledgements and proposals go with it;
 `WorkspaceHealth.ForgetSession` drops one at once for a host that does learn of an end. A call carrying no

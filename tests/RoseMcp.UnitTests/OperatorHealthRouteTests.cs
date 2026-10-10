@@ -131,6 +131,23 @@ public sealed class OperatorHealthRouteTests
 		noNote.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
 	}
 
+	/// <summary>An acceptance naming neither projects nor subjects would cover nothing, so the route refuses it as a request to fix.</summary>
+	[Test]
+	public async Task An_acceptance_naming_nothing_it_covers_is_a_bad_request(CancellationToken cancellationToken)
+	{
+		using var home = new TemporaryLocalAppData();
+		await using var broker = await Broker.StartAsync(home, cancellationToken);
+
+		using var response = await broker.Operator.PostAsJsonAsync(
+			"/operator/health/accept",
+			Accepting() with { Kind = ReasonKinds.AnalyzerLoadFailed, Projects = [], Subjects = [] },
+			ContractJson.Options,
+			cancellationToken);
+
+		response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+		(await response.Content.ReadFromJsonAsync<OperatorError>(ContractJson.Options, cancellationToken))!.Message.ShouldContain("subjects");
+	}
+
 	private static AcceptReasonRequest Accepting() => new()
 	{
 		Workspace = Shop,

@@ -1010,7 +1010,7 @@ public static partial class WorkspaceStatusReporter
 	/// restore accepted as failing on an unreachable feed is not taken to cover one that fails on a missing
 	/// package. Empty where the output names none, and the reason is then about its own wording.
 	/// </summary>
-	private static IEnumerable<string> RestoreErrorCodes(string? output) =>
+	public static IEnumerable<string> RestoreErrorCodes(string? output) =>
 		string.IsNullOrEmpty(output)
 			? []
 			: NuGetErrorCode().Matches(output).Select(match => match.Value).Distinct(StringComparer.OrdinalIgnoreCase);

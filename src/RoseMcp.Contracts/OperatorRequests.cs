@@ -102,7 +102,7 @@ public sealed record XamlSelectElementRequest
 	public required string Element { get; init; }
 }
 
-/// <summary>A person accepting a kind of reason for a solution: for the projects named, or for the whole solution.</summary>
+/// <summary>A person accepting a kind of reason for a solution: for the projects named, or for the subjects of a reason naming none.</summary>
 public sealed record AcceptReasonRequest
 {
 	/// <summary>The solution, as the absolute path a workspace summary names it by.</summary>
@@ -111,7 +111,7 @@ public sealed record AcceptReasonRequest
 	/// <summary>The kind, one of <see cref="ReasonKinds"/>.</summary>
 	public required string Kind { get; init; }
 
-	/// <summary>The projects to accept it for; empty for a reason about the whole solution.</summary>
+	/// <summary>The projects to accept it for, as its health entry lists them; empty for a reason naming none, which is accepted by its subjects.</summary>
 	public IReadOnlyList<string> Projects { get; init; } = [];
 
 	/// <summary>For a reason that names no project, the subjects to accept it for, as health lists them; ignored where projects are named.</summary>
@@ -124,7 +124,7 @@ public sealed record AcceptReasonRequest
 	public string? Note { get; init; }
 }
 
-/// <summary>A person no longer accepting a kind of reason for the projects named, or for the whole solution.</summary>
+/// <summary>A person no longer accepting a kind of reason for the projects named, or for the subjects of a reason naming none.</summary>
 public sealed record StopAcceptingRequest
 {
 	/// <summary>The solution, as the absolute path a workspace summary names it by.</summary>
@@ -133,7 +133,7 @@ public sealed record StopAcceptingRequest
 	/// <summary>The kind, one of <see cref="ReasonKinds"/>.</summary>
 	public required string Kind { get; init; }
 
-	/// <summary>The projects to stop accepting it for; empty for a reason about the whole solution.</summary>
+	/// <summary>The projects to stop accepting it for; empty for a reason naming none, which is named by its subjects.</summary>
 	public IReadOnlyList<string> Projects { get; init; } = [];
 
 	/// <summary>For a reason that names no project, the subjects to stop accepting it for; ignored where projects are named.</summary>

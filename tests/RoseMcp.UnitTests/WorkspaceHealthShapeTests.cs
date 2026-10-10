@@ -145,6 +145,23 @@ public sealed class WorkspaceHealthShapeTests
 			$"{reason.Kind} {reason.Effect} [{string.Join(",", reason.Projects)}] {reason.Text}";
 	}
 
+	/// <summary>A failed restore is about the NuGet errors it reported, each once, read from output as dotnet restore writes it.</summary>
+	[Test]
+	public void A_failed_restore_is_about_its_nuget_error_codes()
+	{
+		const string Output = """
+			  Determining projects to restore...
+			D:\repo\Broken\Broken.csproj : error NU1301: Unable to load the service index for source https://nowhere.invalid/v3/index.json.
+			D:\repo\Broken\Broken.csproj : error NU1101: Unable to find package Missing.Package. No packages exist with this id in source(s): nowhere
+			D:\repo\App\App.csproj : error NU1301: Unable to load the service index for source https://nowhere.invalid/v3/index.json.
+			  Failed to restore D:\repo\Broken\Broken.csproj (in 1.2 sec).
+			""";
+
+		RestoreErrorCodes(Output).ShouldBe(["NU1301", "NU1101"]);
+		RestoreErrorCodes(null).ShouldBeEmpty();
+		RestoreErrorCodes("Restore failed for a reason NuGet did not number.").ShouldBeEmpty();
+	}
+
 	private static WorkspaceStatusReport Report() => new()
 	{
 		SolutionPath = Path.Combine(Path.GetTempPath(), "Shop.slnx"),

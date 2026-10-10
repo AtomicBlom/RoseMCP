@@ -446,7 +446,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		Projects = [],
 		LoadDiagnostics = [],
 		DegradedReasons = [StopDescription()],
-		Health = [BrokerReason(ReasonKinds.WorkerStopped, HealthEffect.BlocksAnswers, StopDescription())],
+		Health = [BrokerReason(ReasonKinds.WorkerStopped, HealthEffect.BlocksAnswers, StopDescription(), ExitReason.ToString())],
 		Notices =
 		[
 			"Nothing is loaded, and asking for status started nothing. The next call that needs this "
@@ -471,14 +471,16 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// <summary>
 	/// A reason the broker words itself, about the worker rather than the solution, so it covers no project and
 	/// its kind is its id. Its line is its text: each is a sentence or two the broker wrote, with no MSBuild
-	/// message inside it to cut.
+	/// message inside it to cut. It is about its text, or about <paramref name="subject"/> where the text carries
+	/// something that changes on every stop -- an eviction says how long the worker sat unused -- so an
+	/// acceptance of the stop is not lost to the next one's duration.
 	/// </summary>
-	private static HealthReason BrokerReason(string kind, HealthEffect effect, string text) => new()
+	private static HealthReason BrokerReason(string kind, HealthEffect effect, string text, string? subject = null) => new()
 	{
 		Id = kind,
 		Kind = kind,
 		Effect = effect,
-		Subjects = [text],
+		Subjects = [subject ?? text],
 		Line = text,
 	};
 

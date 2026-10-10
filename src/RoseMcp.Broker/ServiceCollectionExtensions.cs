@@ -263,7 +263,7 @@ public static class ServiceCollectionExtensions
 		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
 		{
 			using var origin = CallOrigin.Use(OriginDirectory(context.Params));
-			using var session = CallSession.Use(CallSession.Of(context.Server.SessionId, context.Params?.Meta));
+			using var session = CallSession.Use(context.Server.SessionId, CallSession.Of(context.Server.SessionId, context.Params?.Meta));
 
 			return await next(context, cancellationToken);
 		}));

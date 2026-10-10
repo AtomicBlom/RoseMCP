@@ -25,7 +25,7 @@ namespace RoseMcp.Broker;
 /// project newly failing in a kind already accepted, is not covered and still shows.
 /// </para>
 /// <para>
-/// A session here is <see cref="CallSession.Id"/>, and a session's state goes when the session does. Nothing
+/// A session here is <see cref="CallSession.Client"/>, and a session's state goes when the session does. Nothing
 /// tells the broker an http client has gone -- the transport serves each request on its own -- so a session
 /// that has made no call for <see cref="SessionIdleLimit"/> is taken to have ended, which is the limit the
 /// MCP transport itself holds an idle session to; <see cref="ForgetSession"/> drops one at once for a host
@@ -91,13 +91,21 @@ public sealed class WorkspaceHealth
 		if (reasons.Count == 0) return reasons;
 
 		var now = UtcNow;
+		var keys = reasons.SelectMany(reason => Keys(reason).Select(key => (reason.Kind, Project: key))).ToHashSet(KeyComparer.Instance);
+
+		bool unrecorded;
+		lock (_gate)
+		{
+			Refresh();
+			unrecorded = Unrecorded(solution, keys, now);
+		}
+
+		if (unrecorded) Observe(solution, keys, now);
 
 		lock (_gate)
 		{
-			Observe(solution, reasons, now);
-
 			var entry = Entry(_record, solution);
-			var session = SessionFor(CallSession.Id, touch: false, now);
+			var session = SessionFor(CallSession.Client, touch: false, now);
 			var acknowledged = session?.Acknowledged.GetValueOrDefault(solution);
 
 			return [.. reasons.Select(reason => reason with
@@ -123,7 +131,7 @@ public sealed class WorkspaceHealth
 		{
 			Refresh();
 
-			var session = SessionFor(CallSession.Id, touch: true, now);
+			var session = SessionFor(CallSession.Client, touch: true, now);
 			var acknowledged = session?.Acknowledged.GetValueOrDefault(solution);
 			var hearing = new Dictionary<(string Kind, string Project), ReasonHearing>(KeyComparer.Instance);
 
@@ -160,7 +168,7 @@ public sealed class WorkspaceHealth
 
 		lock (_gate)
 		{
-			var session = SessionFor(CallSession.Id, touch: true, now) ?? throw new InvalidOperationException(
+			var session = SessionFor(CallSession.Client, touch: true, now) ?? throw new InvalidOperationException(
 				"This broker serves several clients and this call carries no session it can tell apart from theirs, so an "
 					+ "acknowledgement would silence the reason for every agent using the workspace. Propose accepting it "
 					+ "instead (propose: true), which waits for the person to confirm.");
@@ -197,9 +205,9 @@ public sealed class WorkspaceHealth
 
 		lock (_gate)
 		{
-			SessionFor(CallSession.Id, touch: true, now);
+			SessionFor(CallSession.Client, touch: true, now);
 
-			var owner = CallSession.Id ?? string.Empty;
+			var owner = CallSession.Client ?? string.Empty;
 			var existing = _proposals.FindIndex(pending =>
 				PathCasing.Comparer.Equals(pending.Proposal.Workspace, solution)
 				&& string.Equals(pending.Proposal.Kind, reason.Kind, StringComparison.Ordinal)
@@ -287,11 +295,11 @@ public sealed class WorkspaceHealth
 	}
 
 	/// <summary>
-	/// Records that the person accepts <paramref name="kind"/> for each of <paramref name="projects"/> -- or for
-	/// the whole solution where none is named -- with what agents read about it, replacing any earlier
-	/// acceptance of the same kind and project. Returns every acceptance the solution now has.
+	/// Records that the person accepts <paramref name="kind"/> for each of <paramref name="projects"/> -- or, for a
+	/// reason naming none, each of <paramref name="subjects"/>, as its health entry lists them -- with what agents
+	/// read about it, replacing any earlier acceptance of the same kind and project or subject. Returns every acceptance the solution now has.
 	/// </summary>
-	/// <exception cref="ArgumentException">No kind, a solution that is not an absolute path, or a note asked for and not given.</exception>
+	/// <exception cref="ArgumentException">No kind, no projects or subjects, a solution that is not an absolute path, or a note asked for and not given.</exception>
 	/// <exception cref="InvalidOperationException">The record could not be written.</exception>
 	public AcceptedReasons Accept(
 		string solution,
@@ -311,7 +319,7 @@ public sealed class WorkspaceHealth
 		}
 
 		var now = UtcNow;
-		var keys = KeysOf(projects, subjects);
+		var keys = Covered(projects, subjects);
 
 		return Change(path, entry =>
 		{
@@ -329,15 +337,15 @@ public sealed class WorkspaceHealth
 		});
 	}
 
-	/// <summary>Stops accepting <paramref name="kind"/> for each of <paramref name="projects"/>, or for the whole solution where none is named.</summary>
-	/// <exception cref="ArgumentException">No kind, or a solution that is not an absolute path.</exception>
+	/// <summary>Stops accepting <paramref name="kind"/> for each of <paramref name="projects"/>, or, for a reason naming none, each of <paramref name="subjects"/>.</summary>
+	/// <exception cref="ArgumentException">No kind, no projects or subjects, or a solution that is not an absolute path.</exception>
 	/// <exception cref="InvalidOperationException">The record could not be written.</exception>
 	public AcceptedReasons StopAccepting(string solution, string kind, IReadOnlyList<string> projects, IReadOnlyList<string>? subjects = null)
 	{
 		var path = Solution(solution);
 		if (string.IsNullOrWhiteSpace(kind)) throw new ArgumentException("A reason is accepted by its kind, and none was given.", nameof(kind));
 
-		var keys = KeysOf(projects, subjects);
+		var keys = Covered(projects, subjects);
 
 		return Change(path, entry => entry with { Accepted = [.. entry.Accepted.Where(accepted => !Covers(keys, kind, accepted))] });
 	}
@@ -367,47 +375,59 @@ public sealed class WorkspaceHealth
 		}
 	}
 
-	/// <summary>Writes a change to one solution's entry, creating it, and answers with the solution's acceptances after.</summary>
+	/// <summary>
+	/// Writes a change to one solution's entry, creating it, and answers with the solution's acceptances after.
+	/// The file is written outside the gate, so a write waiting on another process never holds up a tool call
+	/// asking what it hears.
+	/// </summary>
+	/// <exception cref="InvalidOperationException">The record could not be written; the message says why.</exception>
 	private AcceptedReasons Change(string solution, Func<SolutionHealthRecord, SolutionHealthRecord> change)
 	{
+		var write = WorkspaceHealthFile.Update(record => WithEntry(record, solution, change), _options.LocalAppData, _options.HealthRecordWait);
+
+		if (write.Record is not { } written)
+		{
+			throw new InvalidOperationException($"Nothing was changed, because the record of accepted reasons could not be written: {write.Failure}");
+		}
+
 		lock (_gate)
 		{
-			var written = WorkspaceHealthFile.Update(record => WithEntry(record, solution, change), _options.LocalAppData)
-				?? throw new InvalidOperationException(
-					$"Could not write {WorkspaceHealthFile.PathFor(_options.LocalAppData)}, so nothing was changed: another "
-						+ "process held it for too long, the folder cannot be written, or a newer RoseMCP wrote it.");
-
 			Remember(written);
-
-			return AcceptedOf(solution, Entry(written, solution));
 		}
+
+		return AcceptedOf(solution, Entry(written, solution));
+	}
+
+	/// <summary>Whether any of <paramref name="keys"/> has never been seen, or was last seen too long ago to leave unrecorded. Under the gate.</summary>
+	private bool Unrecorded(string solution, IReadOnlySet<(string Kind, string Project)> keys, DateTime now)
+	{
+		var seen = Entry(_record, solution)?.Seen ?? [];
+
+		return keys.Any(key => seen.FirstOrDefault(entry => Matches(entry.Kind, entry.Covering, key)) is not { } entry
+			|| now - entry.LastSeenUtc > SeenGranularity);
 	}
 
 	/// <summary>
-	/// Records first and last sightings of every kind and project <paramref name="reasons"/> cover, and drops
-	/// sightings past <see cref="SeenRetention"/> that nothing accepts. Writes only when something changed, and
-	/// keeps the change in memory where it cannot be written, so a dated reason stays dated. Under the gate.
+	/// Records first and last sightings of every kind and project <paramref name="keys"/> name, and drops sightings
+	/// past <see cref="SeenRetention"/> that nothing accepts. Not under the gate: the file write can wait on another
+	/// process, and every tool call takes the gate to ask what it hears. Where the write cannot land the sighting is
+	/// kept in memory, so a dated reason stays dated and the next description does not wait on the file again.
 	/// </summary>
-	private void Observe(string solution, IReadOnlyList<HealthReason> reasons, DateTime now)
+	private void Observe(string solution, IReadOnlySet<(string Kind, string Project)> keys, DateTime now)
 	{
-		Refresh();
+		var write = WorkspaceHealthFile.Update(record => Observed(record, solution, keys, now), _options.LocalAppData, _options.HealthRecordWait);
 
-		var keys = reasons.SelectMany(reason => Keys(reason).Select(project => (reason.Kind, Project: project))).ToHashSet(KeyComparer.Instance);
-		var seen = Entry(_record, solution)?.Seen ?? [];
-
-		var stale = keys.Any(key => seen.FirstOrDefault(entry => Matches(entry.Kind, entry.Covering, key)) is not { } entry
-			|| now - entry.LastSeenUtc > SeenGranularity);
-		if (!stale) return;
-
-		var observed = WorkspaceHealthFile.Update(record => Observed(record, solution, keys, now), _options.LocalAppData);
-		if (observed is not null)
+		lock (_gate)
 		{
-			Remember(observed);
-			return;
-		}
+			if (write.Record is { } observed)
+			{
+				Remember(observed);
+				return;
+			}
 
-		_logger.LogDebug("Could not write when the reasons for {Solution} were seen; keeping it in memory.", solution);
-		_record = Observed(_record, solution, keys, now);
+			_logger.LogDebug("Could not record when the reasons for {Solution} were seen, so it is kept in memory: {Failure}", solution, write.Failure);
+			_record = Observed(_record, solution, keys, now);
+		}
 	}
 
 	/// <summary><paramref name="record"/> with every key in <paramref name="keys"/> seen now, and old unaccepted sightings pruned.</summary>
@@ -469,11 +489,15 @@ public sealed class WorkspaceHealth
 		_recordStamp = stamp;
 	}
 
-	/// <summary>Holds what was just written as the record, stamped so the next refresh does not read it again. Under the gate.</summary>
+	/// <summary>
+	/// Holds what was just written as the record until the next refresh reads the file again, which it does: the
+	/// write landed outside the gate, so another process may have written after it, and stamping the file now would
+	/// take that write for this one. Under the gate.
+	/// </summary>
 	private void Remember(WorkspaceHealthRecord written)
 	{
 		_record = written;
-		_recordStamp = Stamp(WorkspaceHealthFile.PathFor(_options.LocalAppData));
+		_recordStamp = null;
 	}
 
 	private static (DateTime WrittenUtc, long Length)? Stamp(string path)
@@ -645,8 +669,25 @@ public sealed class WorkspaceHealth
 	private static AgentsRead ReadOf(string stored) =>
 		Enum.TryParse<AgentsRead>(stored, ignoreCase: true, out var read) && Enum.IsDefined(read) ? read : AgentsRead.RoseLine;
 
-	/// <summary>The projects an acceptance of <paramref name="reason"/> keys on: each it names, or the whole solution.</summary>
+	/// <summary>What an acceptance of <paramref name="reason"/> keys on: each project it names, or each subject.</summary>
 	private static IReadOnlyList<string> Keys(HealthReason reason) => KeysOf(reason.Projects, reason.Subjects);
+
+	/// <summary>
+	/// What a person's acceptance covers: the projects named, or the subjects where none is. Refused where neither
+	/// is named, since every reason in health names one or the other, and an acceptance of neither would match no
+	/// reason while the person was told it had worked.
+	/// </summary>
+	/// <exception cref="ArgumentException">Neither projects nor subjects were named.</exception>
+	private static IReadOnlyList<string> Covered(IReadOnlyList<string> projects, IReadOnlyList<string>? subjects)
+	{
+		var keys = KeysOf(projects, subjects);
+		if (keys is not [""]) return keys;
+
+		throw new ArgumentException(
+			"Name what the acceptance covers: the projects the reason's health entry lists, or, for a reason that names "
+				+ "no project, the subjects it lists instead.",
+			nameof(projects));
+	}
 
 	/// <summary>
 	/// What an acceptance keys on: each project named, or, naming none, each subject, or the whole solution

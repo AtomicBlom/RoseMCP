@@ -71,6 +71,24 @@ public sealed class RelayedSessionTests
 		Content(result).ShouldContain("serves several clients", Case.Sensitive);
 	}
 
+	/// <summary>
+	/// The relay's name scopes acknowledgements and nothing else. A debug session is owned by the transport's
+	/// session, which a stateless http call does not have, so a relayed call starts one owned exactly as before
+	/// -- a debugger left attached by a conversation that has ended stays reachable.
+	/// </summary>
+	[Test]
+	public async Task A_relayed_name_leaves_debug_ownership_as_the_transport_gives_it(CancellationToken cancellationToken)
+	{
+		using var home = new TemporaryLocalAppData();
+		await using var tray = await Tray.StartAsync(home, cancellationToken);
+		await using var relay = await tray.RelayAsync(cancellationToken);
+
+		var sessions = (await Text(relay, Probe.Owner, cancellationToken)).Split('|');
+
+		sessions[0].ShouldBe("none", "a debug session's owner is the transport's session, which a stateless call has none of");
+		sessions[1].ShouldStartWith("relayed-", Case.Sensitive);
+	}
+
 	/// <summary>The broker takes a relay's name only in the shape a relay mints, and the transport's own session over it.</summary>
 	[Test]
 	public void A_session_is_the_transports_else_the_relays_else_none()
@@ -110,6 +128,11 @@ public sealed class RelayedSessionTests
 
 		[McpServerTool(Name = Read), Description("The degraded notice a read would carry for the calling session.")]
 		public string ReadNotice() => WorkspaceStatusReporter.DegradedNotice([Legacy], health.HeardFor(Shop)) ?? "quiet";
+
+		public const string Owner = "probe_owner";
+
+		[McpServerTool(Name = Owner), Description("The session a debug session started now would belong to, and the client acknowledgements belong to.")]
+		public string Sessions() => $"{CallSession.Id ?? "none"}|{CallSession.Client ?? "none"}";
 	}
 
 	/// <summary>A broker serving MCP over http on a loopback port, as the tray does, with the probe beside its tools.</summary>

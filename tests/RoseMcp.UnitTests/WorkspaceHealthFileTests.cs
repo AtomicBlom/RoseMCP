@@ -30,7 +30,7 @@ public sealed class WorkspaceHealthFileTests
 
 		var written = WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("A", accepted)] }, home.Path);
 
-		written.ShouldNotBeNull();
+		written.Succeeded.ShouldBeTrue(written.Failure);
 
 		var read = WorkspaceHealthFile.Read(home.Path).Solutions.ShouldHaveSingleItem();
 		read.Solution.ShouldBe(Path.Combine(Path.GetTempPath(), "A.slnx"));
@@ -49,7 +49,7 @@ public sealed class WorkspaceHealthFileTests
 
 		await Task.WhenAll(Enumerable.Range(0, 16).Select(index => Task.Run(() =>
 			WorkspaceHealthFile.Update(record => record with { Solutions = [.. record.Solutions, Solution($"S{index}")] }, home.Path)
-				.ShouldNotBeNull())));
+				.Succeeded.ShouldBeTrue())));
 
 		WorkspaceHealthFile.Read(home.Path).Solutions.Count.ShouldBe(16);
 	}
@@ -65,7 +65,7 @@ public sealed class WorkspaceHealthFileTests
 		var path = WorkspaceHealthFile.PathFor(home.Path);
 		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 
-		WorkspaceHealthRecord? written;
+		WorkspaceHealthWrite written;
 
 		using (var held = new FileStream(path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
 		{
@@ -78,7 +78,7 @@ public sealed class WorkspaceHealthFileTests
 			written = await waiting;
 		}
 
-		written.ShouldNotBeNull();
+		written.Succeeded.ShouldBeTrue(written.Failure);
 		WorkspaceHealthFile.Read(home.Path).Solutions.ShouldHaveSingleItem();
 	}
 
@@ -88,7 +88,7 @@ public sealed class WorkspaceHealthFileTests
 	{
 		using var home = new TemporaryLocalAppData();
 
-		WorkspaceHealthFile.Update(record => record, home.Path).ShouldNotBeNull();
+		WorkspaceHealthFile.Update(record => record, home.Path).Succeeded.ShouldBeTrue();
 
 		File.Exists(WorkspaceHealthFile.PathFor(home.Path)).ShouldBeFalse();
 	}
@@ -106,7 +106,7 @@ public sealed class WorkspaceHealthFileTests
 		File.WriteAllText(path, "{ \"solutions\": [ broken");
 
 		WorkspaceHealthFile.Read(home.Path).Solutions.ShouldBeEmpty();
-		WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("A")] }, home.Path).ShouldNotBeNull();
+		WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("A")] }, home.Path).Succeeded.ShouldBeTrue();
 
 		WorkspaceHealthFile.Read(home.Path).Solutions.ShouldHaveSingleItem();
 		var aside = Directory.GetFiles(Path.GetDirectoryName(path)!, "workspace-health.json.unreadable-*").ShouldHaveSingleItem();
@@ -122,7 +122,7 @@ public sealed class WorkspaceHealthFileTests
 		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 		File.WriteAllText(path, """{ "version": 99, "solutions": [] }""");
 
-		WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("A")] }, home.Path).ShouldBeNull();
+		WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("A")] }, home.Path).Failure.ShouldNotBeNull().ShouldContain("newer RoseMCP", Case.Sensitive);
 
 		File.ReadAllText(path).ShouldContain("99", Case.Sensitive);
 	}
@@ -133,7 +133,7 @@ public sealed class WorkspaceHealthFileTests
 	{
 		using var home = new TemporaryLocalAppData();
 
-		WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("A")] }, home.Path).ShouldNotBeNull();
+		WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("A")] }, home.Path).Succeeded.ShouldBeTrue();
 
 		Directory.GetFiles(Path.GetDirectoryName(WorkspaceHealthFile.PathFor(home.Path))!)
 			.Select(Path.GetFileName)
@@ -153,13 +153,13 @@ public sealed class WorkspaceHealthFileTests
 	{
 		using var home = new TemporaryLocalAppData();
 		var path = WorkspaceHealthFile.PathFor(home.Path);
-		WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("Kept")] }, home.Path).ShouldNotBeNull();
+		WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("Kept")] }, home.Path).Succeeded.ShouldBeTrue();
 
 		using (new FileStream(path, FileMode.Open, FileAccess.Read, share))
 		{
 			// Where the holder's sharing allows the replace, as a Unix lock does, the change lands beside what was
 			// there; where it does not, the change fails. Either way nothing that was there is lost.
-			WorkspaceHealthFile.Update(record => record with { Solutions = [.. record.Solutions, Solution("Added")] }, home.Path);
+			WorkspaceHealthFile.Update(record => record with { Solutions = [.. record.Solutions, Solution("Added")] }, home.Path, TimeSpan.FromMilliseconds(100));
 		}
 
 		WorkspaceHealthFile.Read(home.Path).Solutions.ShouldContain(solution => solution.Solution.EndsWith("Kept.slnx", StringComparison.Ordinal));
@@ -175,12 +175,12 @@ public sealed class WorkspaceHealthFileTests
 	{
 		using var home = new TemporaryLocalAppData();
 		var path = WorkspaceHealthFile.PathFor(home.Path);
-		WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("A")] }, home.Path).ShouldNotBeNull();
+		WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("A")] }, home.Path).Succeeded.ShouldBeTrue();
 
 		WorkspaceHealthFile.TryRead(home.Path, out var read).ShouldBeTrue();
 		read.Solutions.ShouldHaveSingleItem();
 
-		Task<WorkspaceHealthRecord?> writing;
+		Task<WorkspaceHealthWrite> writing;
 
 		// A reader holding the file as this one opens it.
 		using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
@@ -189,8 +189,60 @@ public sealed class WorkspaceHealthFileTests
 			await Task.Delay(200);
 		}
 
-		(await writing).ShouldNotBeNull();
+		(await writing).Succeeded.ShouldBeTrue();
 		WorkspaceHealthFile.Read(home.Path).Solutions.Count.ShouldBe(2);
+	}
+
+	/// <summary>
+	/// A record an earlier build wrote names what an acceptance covers <c>project</c>; it reads back covering the
+	/// same thing, and is written back in this version's shape.
+	/// </summary>
+	[Test]
+	public void A_version_1_record_keeps_what_it_covered()
+	{
+		using var home = new TemporaryLocalAppData();
+		var path = WorkspaceHealthFile.PathFor(home.Path);
+		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+		File.WriteAllText(path, """
+			{
+			  "version": 1,
+			  "solutions": [
+			    {
+			      "solution": "D:\\repo\\Shop.slnx",
+			      "accepted": [ { "kind": "project-not-loaded", "project": "Legacy.Tests", "acceptedUtc": "2026-10-02T09:20:00Z", "agentsRead": "Nothing" } ],
+			      "seen": [ { "kind": "project-not-loaded", "project": "Legacy.Tests", "firstSeenUtc": "2026-10-01T09:20:00Z", "lastSeenUtc": "2026-10-02T09:20:00Z" } ]
+			    }
+			  ]
+			}
+			""");
+
+		var solution = WorkspaceHealthFile.Read(home.Path).Solutions.ShouldHaveSingleItem();
+		solution.Accepted.ShouldHaveSingleItem().Covering.ShouldBe("Legacy.Tests");
+		solution.Seen.ShouldHaveSingleItem().Covering.ShouldBe("Legacy.Tests");
+
+		WorkspaceHealthFile.Update(record => record with { Solutions = [.. record.Solutions, Solution("A")] }, home.Path).Succeeded.ShouldBeTrue();
+
+		var written = File.ReadAllText(path);
+		written.ShouldContain($"\"version\": {WorkspaceHealthFile.CurrentVersion}", Case.Sensitive);
+		written.ShouldNotContain("\"project\"", Case.Sensitive);
+		WorkspaceHealthFile.Read(home.Path).Solutions[0].Accepted.ShouldHaveSingleItem().Covering.ShouldBe("Legacy.Tests");
+	}
+
+	/// <summary>A write that cannot land says why, so the person accepting a reason is told what stopped it.</summary>
+	[Test]
+	public void A_write_that_cannot_land_says_why()
+	{
+		using var home = new TemporaryLocalAppData();
+		var path = WorkspaceHealthFile.PathFor(home.Path);
+		WorkspaceHealthFile.Update(record => record with { Solutions = [Solution("A")] }, home.Path).Succeeded.ShouldBeTrue();
+
+		using (new FileStream(path + ".lock", FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+		{
+			var refused = WorkspaceHealthFile.Update(record => record with { Solutions = [] }, home.Path, TimeSpan.FromMilliseconds(100));
+
+			refused.Succeeded.ShouldBeFalse();
+			refused.Failure.ShouldNotBeNull().ShouldContain("workspace-health.json.lock", Case.Sensitive);
+		}
 	}
 
 	private static SolutionHealthRecord Solution(string name, DateTime? accepted = null) => new()

@@ -17,7 +17,7 @@ public sealed record ReasonProposal : WorkspaceScopedResult
 	/// <summary>The reason's kind, one of <see cref="ReasonKinds"/>.</summary>
 	public required string Kind { get; init; }
 
-	/// <summary>The projects an acceptance would cover; empty for the whole solution.</summary>
+	/// <summary>The projects an acceptance would cover; empty where the reason names none, and <see cref="Subjects"/> says what it covers.</summary>
 	public IReadOnlyList<string> Projects { get; init; } = [];
 
 	/// <summary>What an acceptance would cover where the reason names no project: its subjects, as health lists them.</summary>

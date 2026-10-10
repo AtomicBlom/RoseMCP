@@ -19,6 +19,13 @@ namespace RoseMcp.Broker;
 /// broker, which has one session for the life of the process, so every call in it owns everything
 /// it started and nothing else can reach the port at all.
 /// </para>
+/// <para>
+/// Two values, not one. <see cref="Id"/> is the transport's session, which is what owns a debug session.
+/// <see cref="Client"/> is that, or else the name a relay gives the session it serves, which is what a
+/// workspace's acknowledged reasons belong to. They are kept apart because a debugger left attached by a
+/// conversation that has ended must stay reachable as it always was, and live-app sessions never expire;
+/// scoping debug ownership to relayed sessions is its own change, with its own answer for that.
+/// </para>
 /// </summary>
 public static class CallSession
 {
@@ -28,20 +35,20 @@ public static class CallSession
 	/// </summary>
 	public const string MetaKey = "rosemcp/session";
 
-	private static readonly AsyncLocal<string?> Ambient = new();
+	private static readonly AsyncLocal<(string? Id, string? Client)> Ambient = new();
 
 	/// <summary>
-	/// Which session a call is: the transport's own session where it has one, else the one a relay named in
-	/// <c>_meta</c>, else none.
+	/// Which client a call comes from: the transport's own session where it has one, else the one a relay named
+	/// in <c>_meta</c>, else none.
 	/// <para>
 	/// The relay's name is needed because the http transport serves each request without a session -- the
 	/// current protocol revision has none to give -- so every relayed session would otherwise be the same null
 	/// one. It is an opaque id the relay mints for the life of its process, and it grants nothing: it decides only
-	/// which of the broker's per-session state a call reaches, its own acknowledgements and the debug sessions it
-	/// started. A client that sends another's id has to know it, and nothing the broker answers carries one. It is
-	/// read here, inside a tool call, which every request reaches only past the host's origin and token checks.
-	/// Kept apart from any transport id by its prefix, and refused unless it has the shape a relay mints, since
-	/// whatever is read here is compared and logged.
+	/// which of the broker's per-client state a call reaches, its own acknowledged reasons. A client that sends
+	/// another's id has to know it, and nothing the broker answers carries one. It is read here, inside a tool
+	/// call, which every request reaches only past the host's origin and token checks. Kept apart from any
+	/// transport id by its prefix, and refused unless it has the shape a relay mints, since whatever is read here
+	/// is compared and logged.
 	/// </para>
 	/// </summary>
 	public static string? Of(string? transportSessionId, JsonObject? meta)
@@ -58,26 +65,38 @@ public static class CallSession
 	/// <summary>A fresh id for a relay to name its session by, in the shape <see cref="Of"/> accepts.</summary>
 	public static string Mint() => Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
 
-	/// <summary>The calling session's id, or null when the transport has no notion of one.</summary>
-	public static string? Id => Ambient.Value;
+	/// <summary>The calling session's id as the transport gives it, or null when the transport has no notion of one. Owns debug sessions.</summary>
+	public static string? Id => Ambient.Value.Id;
 
 	/// <summary>
-	/// Sets it for the current call. Each MCP request runs on its own execution context, so this is
-	/// scoped to one request and cannot leak into a concurrent one; it is restored anyway, because a
-	/// filter that leaves ambient state behind is a filter nobody can reason about.
+	/// The calling client: <see cref="Id"/> where there is one, else the name its relay sent (<see cref="Of"/>).
+	/// Owns acknowledged reasons.
 	/// </summary>
-	public static IDisposable Use(string? id) => new Scope(id);
+	public static string? Client => Ambient.Value.Client;
+
+	/// <summary>
+	/// Sets both for the current call, to one id: a caller with a transport session is that client. Each MCP
+	/// request runs on its own execution context, so this is scoped to one request and cannot leak into a
+	/// concurrent one; it is restored anyway, because a filter that leaves ambient state behind is a filter
+	/// nobody can reason about.
+	/// </summary>
+	public static IDisposable Use(string? id) => new Scope(id, id);
+
+	/// <summary>Sets the transport's session and the client separately, for a call a relay named.</summary>
+	public static IDisposable Use(string? id, string? client) => new Scope(id, client);
 
 	private sealed class Scope : IDisposable
 	{
-		private readonly string? _previous;
+		private readonly (string? Id, string? Client) _previous;
 
-		public Scope(string? id)
+		public Scope(string? id, string? client)
 		{
 			_previous = Ambient.Value;
-			Ambient.Value = string.IsNullOrWhiteSpace(id) ? null : id;
+			Ambient.Value = (Blank(id) ? null : id, Blank(client) ? null : client);
 		}
 
 		public void Dispose() => Ambient.Value = _previous;
+
+		private static bool Blank(string? value) => string.IsNullOrWhiteSpace(value);
 	}
 }

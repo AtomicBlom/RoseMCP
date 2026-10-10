@@ -55,7 +55,8 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   directory its client started it in as `_meta["rosemcp/originDirectory"]`, and an id it mints for its own
   life as `_meta["rosemcp/session"]`, and changes nothing else. The id is what tells relayed clients apart:
   the http transport serves each request without a session, so without it every relayed client is the same
-  caller, and one agent's acknowledgement, or debug session, is every agent's.
+  caller, and one agent's acknowledgement is every agent's. It scopes acknowledgements alone: debug-session
+  ownership reads only the transport's session, and is unscoped over stateless http (#458).
   An http broker serves every repository on the machine and, with two solutions open, cannot know
   which one a bare call means; a stdio process cannot not know. Relaying buys both that and one warm
   worker per solution shared across sessions, and it keeps the tray's window reading a live

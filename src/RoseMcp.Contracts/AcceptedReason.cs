@@ -1,6 +1,6 @@
 namespace RoseMcp.Contracts;
 
-/// <summary>One kind of reason accepted for one project, or for the whole solution where the project is empty.</summary>
+/// <summary>One kind of reason accepted for one project, or for one subject of a reason naming no project.</summary>
 public sealed record AcceptedReason
 {
 	/// <summary>The kind, one of <see cref="ReasonKinds"/>.</summary>

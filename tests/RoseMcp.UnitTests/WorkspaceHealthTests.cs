@@ -389,6 +389,61 @@ public sealed class WorkspaceHealthTests
 		static System.Text.Json.Nodes.JsonObject Marked(string id) => new() { [CallSession.MetaKey] = id };
 	}
 
+	/// <summary>
+	/// Every reason in health names projects or subjects, so an acceptance naming neither would match nothing while
+	/// telling the person it had worked: refused, saying what to name.
+	/// </summary>
+	[Test]
+	public void An_acceptance_naming_neither_projects_nor_subjects_is_refused()
+	{
+		using var home = new TemporaryLocalAppData();
+		var health = Health(home);
+
+		Should.Throw<ArgumentException>(() => health.Accept(Shop, ReasonKinds.AnalyzerLoadFailed, [], AgentsRead.Nothing, null, subjects: null))
+			.Message.ShouldContain("subjects", Case.Sensitive);
+		Should.Throw<ArgumentException>(() => health.StopAccepting(Shop, ReasonKinds.AnalyzerLoadFailed, []));
+	}
+
+	/// <summary>An acceptance that cannot be written says what stopped it, rather than that something did.</summary>
+	[Test]
+	public void An_acceptance_that_cannot_be_written_says_why()
+	{
+		using var home = new TemporaryLocalAppData();
+		var health = Health(home);
+		health.Accept(Shop, ReasonKinds.ProjectNotLoaded, ["Legacy.Tests"], AgentsRead.Nothing, null);
+
+		using (new FileStream(Settings.WorkspaceHealthFile.PathFor(home.Path), FileMode.Open, FileAccess.Read, FileShare.None))
+		{
+			var refused = Should.Throw<InvalidOperationException>(
+				() => health.Accept(Shop, ReasonKinds.ProjectNotLoaded, ["Ink.Tests"], AgentsRead.Nothing, null));
+
+			// Read refused on Windows; replace refused where only an exclusive lock stands in the way.
+			refused.Message.ShouldContain("workspace-health.json could not be", Case.Sensitive);
+		}
+	}
+
+	/// <summary>
+	/// A record another process holds this moment is read again later, not taken to hold nothing: what the
+	/// broker read last stands, so a sharing violation does not briefly unaccept everything.
+	/// </summary>
+	[Test]
+	public void A_record_that_cannot_be_read_keeps_what_was_read_before()
+	{
+		using var home = new TemporaryLocalAppData();
+		var health = Health(home);
+		health.Accept(Shop, ReasonKinds.ProjectNotLoaded, ["Legacy.Tests"], AgentsRead.Nothing, null);
+		health.HeardFor(Shop).ShouldHaveSingleItem();
+
+		// Rewritten from elsewhere, so the next refresh sees a changed file and has to read it.
+		var path = Settings.WorkspaceHealthFile.PathFor(home.Path);
+		File.AppendAllText(path, Environment.NewLine);
+
+		using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+		{
+			health.HeardFor(Shop).ShouldHaveSingleItem().Read.ShouldBe(AgentsRead.Nothing);
+		}
+	}
+
 	/// <summary>A broker's health, serving the operator API unless a test says it is a stdio server on its own.</summary>
 	private static WorkspaceHealth Health(
 		TemporaryLocalAppData home,
@@ -402,6 +457,7 @@ public sealed class WorkspaceHealthTests
 				LocalAppData = home.Path,
 				TimeProvider = clock ?? TimeProvider.System,
 				ServesOneClient = oneClient,
+				HealthRecordWait = TimeSpan.FromMilliseconds(200),
 			}),
 			NullLogger<WorkspaceHealth>.Instance);
 

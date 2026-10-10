@@ -80,6 +80,14 @@ public sealed class OperatorClient : IDisposable
 	/// <summary>Whether this client has a token at all, which decides which empty state to show.</summary>
 	public bool HasToken { get; }
 
+	/// <summary>
+	/// Which build the broker is, and how far its checkout has moved on. Given the read budget,
+	/// although counting the checkout's commits runs git the first time: that is milliseconds, and
+	/// the broker bounds each command well inside this.
+	/// </summary>
+	public Task<OperatorHello> HelloAsync(CancellationToken cancellationToken) =>
+		GetAsync<OperatorHello>("/operator/hello", Quick, cancellationToken);
+
 	public Task<IReadOnlyList<LiveAppSessionSummary>> SessionsAsync(CancellationToken cancellationToken) =>
 		GetAsync<IReadOnlyList<LiveAppSessionSummary>>("/operator/sessions", Quick, cancellationToken);
 

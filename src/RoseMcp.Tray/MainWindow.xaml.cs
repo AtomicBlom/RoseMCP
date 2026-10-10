@@ -230,6 +230,13 @@ public sealed partial class MainWindow : Window
 	private void ApplySize() =>
 		WindowChrome.ApplySize(this, InitialWidth, InitialHeight, MinimumWidth, MinimumHeight);
 
+	/// <summary>
+	/// This build, named on the icon. The tray's own assembly rather than the broker's, because the
+	/// tray is what a person launched; they ship together, and the broker's children are compared
+	/// against the broker by the handshake.
+	/// </summary>
+	private static readonly BuildIdentity Build = BuildIdentity.Of(typeof(MainWindow).Assembly);
+
 	private void Refresh()
 	{
 		var workspaces = Manager.Describe();
@@ -241,7 +248,7 @@ public sealed partial class MainWindow : Window
 		var running = workspaces.Sum(summary => summary.Running.Count) + sessions.Sum(summary => summary.Running.Count);
 		Headline.Text = TraySummary.Headline(workspaces, sessions);
 		Subtitle.Text = TraySummary.Subtitle(workspaces, sessions, running);
-		Tray.ToolTipText = TraySummary.Tooltip(workspaces, sessions.Count, running);
+		Tray.ToolTipText = TraySummary.Tooltip(Build, workspaces, sessions.Count, running);
 
 		// Empty only when there is neither kind of thing. A machine with a debug session and no
 		// loaded solution is not idle, and telling it how to register an endpoint would be answering

@@ -7,11 +7,12 @@ using RoseMcp.Contracts;
 namespace RoseMcp.UnitTests;
 
 /// <summary>
-/// The version each host tells its client during <c>initialize</c>.
+/// The version and build each host tells its client during <c>initialize</c>, and what the parent
+/// makes of it.
 /// <para>
-/// Three of the four reported <c>0.1.0</c> for every build ever made, which is worse than saying
-/// nothing: a number that never changes reads as an answer, so a bug report naming it names no
-/// commit and nobody can tell a stale install from a current one.
+/// A number that never changes reads as an answer, so a bug report naming it names no commit and
+/// nobody can tell a stale install from a current one. And a version alone is not enough either: two
+/// local builds of different code share one, so what is compared is the commit.
 /// </para>
 /// </summary>
 public sealed class HostVersionTests
@@ -31,8 +32,8 @@ public sealed class HostVersionTests
 	}
 
 	/// <summary>
-	/// The build metadata after '+' is the commit hash. It belongs in a log rather than in a
-	/// handshake, and dropping it is what keeps the reported version comparable.
+	/// The build metadata after '+' is the commit. It belongs to the build identity a handshake sends,
+	/// and a version an update check compares against a release tag must not carry it.
 	/// </summary>
 	[Test]
 	public void Drops_the_commit_hash()
@@ -45,23 +46,23 @@ public sealed class HostVersionTests
 	}
 
 	/// <summary>
-	/// The version a child reports is compared against the parent's, which is what makes computing
-	/// it worth doing at all. Four hosts reported one and nothing read any of them, so a child from
-	/// a stale <c>bin</c> answered as whatever it was and the mismatch surfaced as a missing field
-	/// or an unknown tool.
+	/// The build a child reports is compared against the parent's, which is what makes computing it
+	/// worth doing at all. A child from a stale <c>bin</c> otherwise answers as whatever it is and the
+	/// mismatch surfaces as a missing field or an unknown tool.
 	/// </summary>
 	[Test]
 	public void A_child_of_the_same_build_is_not_worth_saying_anything_about()
 	{
-		var same = HostVersion.Of(typeof(WorkspaceManager).Assembly);
+		var same = BuildIdentity.Of(typeof(WorkspaceManager).Assembly).ToHandshake();
 
 		ChildHostVersion.Mismatch(same, @"C:\rose\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly).ShouldBeNull();
 	}
 
 	/// <summary>
-	/// And a different one is reported with both numbers and the path it came from. The path is the
-	/// actionable half: the cause is nearly always a stale build output or an environment variable
-	/// pointing at one, and neither is visible from the symptom.
+	/// And a different one is reported with both builds and the path it came from, saying the child's
+	/// commit is unknown rather than leaving it out. The path is the actionable half: the cause is
+	/// nearly always a stale build output or an environment variable pointing at one, and neither is
+	/// visible from the symptom.
 	/// </summary>
 	[Test]
 	public void A_child_of_another_build_is_named_with_both_versions_and_its_path()
@@ -70,9 +71,41 @@ public sealed class HostVersionTests
 			"0.4.0", @"C:\rose\bin\Release\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly);
 
 		mismatch.ShouldNotBeNull();
-		mismatch!.ShouldContain("0.4.0", Case.Sensitive);
-		mismatch.ShouldContain(HostVersion.Of(typeof(WorkspaceManager).Assembly), Case.Sensitive);
+		mismatch!.ShouldContain("0.4.0, commit unknown", Case.Sensitive);
+		mismatch.ShouldContain(BuildIdentity.Of(typeof(WorkspaceManager).Assembly).Describe(), Case.Sensitive);
 		mismatch.ShouldContain(@"C:\rose\bin\Release\RoseMcp.Worker.exe", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// Two local builds at the same height above a tag share a version, so a version compare passes
+	/// a worker built from other code. The commit is what is compared, and both are named.
+	/// </summary>
+	[Test]
+	public void A_child_of_another_commit_is_named_with_both_commits_though_the_version_matches()
+	{
+		var parent = BuildIdentity.Of(typeof(WorkspaceManager).Assembly);
+		var other = parent with { Commit = new string('b', 40), Dirty = false };
+
+		var mismatch = ChildHostVersion.Mismatch(
+			other.ToHandshake(), @"C:\rose\bin\Debug\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly);
+
+		mismatch.ShouldNotBeNull();
+		mismatch!.ShouldContain($"{parent.Version} at bbbbbbb", Case.Sensitive);
+		mismatch.ShouldContain(parent.Describe(), Case.Sensitive);
+		mismatch.ShouldContain(@"C:\rose\bin\Debug\RoseMcp.Worker.exe", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A child from before commits were sent reports a bare version. Where it is this version there is
+	/// nothing to go on but that, and calling every older child a mismatch would teach a reader to
+	/// ignore the warning.
+	/// </summary>
+	[Test]
+	public void A_child_that_sends_no_commit_is_compared_by_version()
+	{
+		var parent = BuildIdentity.Of(typeof(WorkspaceManager).Assembly);
+
+		ChildHostVersion.Mismatch(parent.Version, @"C:\rose\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly).ShouldBeNull();
 	}
 
 	/// <summary>

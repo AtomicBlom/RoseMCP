@@ -74,12 +74,26 @@ public static class OperatorApi
 			})
 			.AddEndpointFilter(new Failures());
 
+		MapHello(operators);
 		MapSessions(operators);
 		MapDebugging(operators);
 		MapXaml(operators);
 
 		return operators;
 	}
+
+	/// <summary>
+	/// Which build the broker is, and how far its checkout has moved on: the first thing a window
+	/// asks, so it can say which build it talks to and whether that is its own.
+	/// </summary>
+	private static void MapHello(RouteGroupBuilder operators) =>
+		operators.MapGet(
+			"/hello",
+			async (CheckoutDistanceReader distances, HttpContext context) => Json(new OperatorHello
+			{
+				Build = distances.Build,
+				Checkout = await distances.ReadAsync(context.RequestAborted),
+			}));
 
 	/// <summary>Which sessions there are, and ending one.</summary>
 	private static void MapSessions(RouteGroupBuilder operators)

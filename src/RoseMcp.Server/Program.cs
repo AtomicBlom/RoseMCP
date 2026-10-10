@@ -91,7 +91,7 @@ internal static class Program
 
 					// This process's own, not the tray's. A relay declares none of the tools it forwards, so
 					// the number worth telling a client is the one for the binary its client started.
-					Version = HostVersion.Of(typeof(Program).Assembly),
+					Version = BuildIdentity.Of(typeof(Program).Assembly).ToHandshake(),
 				})
 				.WithStdioServerTransport()
 

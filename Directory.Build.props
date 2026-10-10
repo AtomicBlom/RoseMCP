@@ -42,4 +42,91 @@
     <PackageReference Include="MinVer" PrivateAssets="all" />
   </ItemGroup>
 
+  <!--
+    Build identity: which commit an assembly was built from, whether the tree was dirty, when it was
+    compiled and, for a local build, the checkout it came from. RoseMcp.Contracts.BuildIdentity reads
+    it back, and docs/decisions/a-build-is-named-by-its-commit.md says why each part is carried the
+    way it is.
+
+    Here rather than in a Directory.Build.targets because the probe apps under tests/apps and the
+    fixtures under tests/fixtures shadow this file with their own, and a targets file at the root
+    would reach into both: a stamp on somebody else's project is a change to what it builds.
+
+    Every part degrades to absent rather than failing the build. An archive with no .git has no
+    SourceRevisionId, so no git process runs at all; a machine with no git, or a repository git
+    refuses to read, leaves the dirty flag unknown.
+  -->
+  <PropertyGroup>
+    <!-- A path on the machine that built it. A CI runner's checkout means nothing on the machine
+         running the build, and saying where it was is only useful where somebody can go and look. -->
+    <RoseMcpLocalBuild Condition=" '$(RoseMcpLocalBuild)' == '' and ('$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true' or '$(ContinuousIntegrationBuild)' == 'true') ">false</RoseMcpLocalBuild>
+    <RoseMcpLocalBuild Condition=" '$(RoseMcpLocalBuild)' == '' ">true</RoseMcpLocalBuild>
+  </PropertyGroup>
+
+  <ItemGroup Condition=" '$(MSBuildProjectExtension)' == '.csproj' ">
+    <!-- Items are evaluated after every property, so IntermediateOutputPath is the project's own here
+         although this file is imported before the SDK sets it. That is also why no property names
+         the path: a property here is evaluated before that one exists. Listed in FileWrites
+         unconditionally, because the target that writes it is skipped on an up-to-date build, and a
+         file missing from FileWrites is deleted by the incremental clean and then forces the next
+         compile. -->
+    <EmbeddedResource Include="$(IntermediateOutputPath)RoseMcp.BuildTime.txt" LogicalName="RoseMcp.BuildTime" Visible="false" />
+    <FileWrites Include="$(IntermediateOutputPath)RoseMcp.BuildTime.txt" />
+  </ItemGroup>
+
+  <!-- The commit, the dirty flag and the checkout, as assembly metadata. They change only with a
+       commit or the tree going dirty or clean, both of which change what is compiled anyway. -->
+  <Target Name="RoseMcpStampCheckout"
+          BeforeTargets="GetAssemblyAttributes"
+          DependsOnTargets="InitializeSourceControlInformation"
+          Condition=" '$(DesignTimeBuild)' != 'true' ">
+    <!-- No optional locks, because every project in a parallel build runs this at once and a status
+         that refreshes the index takes index.lock to do it. Untracked files count as dirty: a new
+         source file is compiled whether or not anybody has added it. -->
+    <Exec Command="git --no-optional-locks status --porcelain"
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          Condition=" '$(SourceRevisionId)' != '' "
+          ConsoleToMsBuild="true"
+          EchoOff="true"
+          IgnoreExitCode="true"
+          IgnoreStandardErrorWarningFormat="true"
+          StandardOutputImportance="low"
+          StandardErrorImportance="low"
+          Timeout="20000"
+          ContinueOnError="true">
+      <Output TaskParameter="ExitCode" PropertyName="_RoseMcpGitStatusExit" />
+      <Output TaskParameter="ConsoleOutput" ItemName="_RoseMcpGitStatus" />
+    </Exec>
+
+    <PropertyGroup>
+      <_RoseMcpDirty Condition=" '$(_RoseMcpGitStatusExit)' == '0' and '@(_RoseMcpGitStatus)' != '' ">true</_RoseMcpDirty>
+      <_RoseMcpDirty Condition=" '$(_RoseMcpGitStatusExit)' == '0' and '@(_RoseMcpGitStatus)' == '' ">false</_RoseMcpDirty>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <_RoseMcpCheckout Include="@(SourceRoot)" Condition=" '%(SourceRoot.SourceControl)' == 'git' and '%(SourceRoot.NestedRoot)' == '' " />
+      <AssemblyMetadata Include="RoseMcp.Commit" Value="$(SourceRevisionId)" Condition=" '$(SourceRevisionId)' != '' " />
+      <AssemblyMetadata Include="RoseMcp.Dirty" Value="$(_RoseMcpDirty)" Condition=" '$(_RoseMcpDirty)' != '' " />
+      <AssemblyMetadata Include="RoseMcp.Checkout" Value="@(_RoseMcpCheckout)" Condition=" '$(RoseMcpLocalBuild)' == 'true' and '@(_RoseMcpCheckout->Count())' == '1' " />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    The build time, as an embedded resource rather than an attribute, and written only when the
+    compile is about to run.
+
+    An attribute is part of the reference assembly, so a time that changed on every compile would
+    change every reference assembly, and every project depending on one would recompile whenever
+    anything beneath it did. A resource is not in the reference assembly. And the stamp shares the
+    compile's own inputs, so an up-to-date build leaves the file alone and stays up to date, rather
+    than recompiling to record that it ran.
+  -->
+  <Target Name="RoseMcpStampBuildTime"
+          BeforeTargets="CoreCompile"
+          Condition=" '$(DesignTimeBuild)' != 'true' and '$(MSBuildProjectExtension)' == '.csproj' "
+          Inputs="$(MSBuildAllProjects);@(Compile);@(ReferencePathWithRefAssemblies);@(CustomAdditionalCompileInputs);@(AdditionalFiles);@(Analyzer);@(EditorConfigFiles)"
+          Outputs="@(IntermediateAssembly);$(IntermediateOutputPath)RoseMcp.BuildTime.txt">
+    <WriteLinesToFile File="$(IntermediateOutputPath)RoseMcp.BuildTime.txt" Lines="$([System.DateTime]::UtcNow.ToString('o'))" Overwrite="true" />
+  </Target>
+
 </Project>

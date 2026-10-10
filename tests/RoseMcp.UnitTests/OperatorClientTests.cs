@@ -49,6 +49,60 @@ public sealed class OperatorClientTests
 	}
 
 	/// <summary>
+	/// Hello reads the broker's build back whole, commit and checkout distance included: the window
+	/// that shows them reads nothing else to learn which build it is talking to.
+	/// </summary>
+	[Test]
+	public async Task Hello_reads_the_brokers_build_back()
+	{
+		var sent = new OperatorHello
+		{
+			Build = new BuildIdentity
+			{
+				Version = "1.3.0",
+				Commit = new string('a', 40),
+				Dirty = true,
+				BuiltUtc = new DateTimeOffset(2026, 10, 11, 1, 2, 3, TimeSpan.Zero),
+				Checkout = @"D:\src\RoseMCP",
+			},
+			Checkout = new CheckoutDistance
+			{
+				Checkout = @"D:\src\RoseMCP",
+				Head = new CommitsPast { Ref = "HEAD", Count = 3 },
+				OriginMain = new CommitsPast { Ref = "origin/main", Unknown = "no origin" },
+				CheckedUtc = new DateTimeOffset(2026, 10, 11, 2, 0, 0, TimeSpan.Zero),
+			},
+		};
+
+		using var handler = new FakeHandler(_ => Json(sent));
+		using var client = new OperatorClient(Tray, "tok-1", handler);
+
+		var hello = await client.HelloAsync(TestContext.Current!.Execution.CancellationToken);
+
+		handler.Last!.RequestUri!.AbsolutePath.ShouldBe("/operator/hello");
+		hello.Build.ShouldBe(sent.Build);
+		hello.Checkout.ShouldBe(sent.Checkout);
+	}
+
+	/// <summary>
+	/// An inspector from another build than its broker says so, naming both commits, and says
+	/// nothing where they match: a warning shown for every launch would be read by nobody.
+	/// </summary>
+	[Test]
+	public void An_inspector_of_another_build_than_its_broker_says_so()
+	{
+		var inspector = new BuildIdentity { Version = "1.3.0", Commit = new string('a', 40), Dirty = false };
+		var broker = inspector with { Commit = new string('b', 40) };
+
+		InspectorText.AnotherBuild(inspector, inspector).ShouldBeNull();
+
+		var warning = InspectorText.AnotherBuild(broker, inspector);
+
+		warning.ShouldNotBeNull();
+		warning!.ShouldStartWith("The broker is build 1.3.0 at bbbbbbb, where this one is 1.3.0 at aaaaaaa.");
+	}
+
+	/// <summary>
 	/// Each kind is its own query parameter, because that is how ASP.NET binds a collection and a
 	/// comma-joined list would arrive as one kind nothing matches -- a filter that silently returns
 	/// nothing, which reads as a quiet target.

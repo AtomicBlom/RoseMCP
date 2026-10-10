@@ -24,10 +24,10 @@ namespace RoseMcp.Broker;
 public static class ServiceCollectionExtensions
 {
 	/// <summary>
-	/// What the client is told during initialize. MinVer stamps it from the git tag at build time, so
-	/// a version in a bug report names a commit.
+	/// What the client is told during initialize: the version with the commit as build metadata, so a
+	/// child or a relay comparing builds compares commits. See <see cref="BuildIdentity"/>.
 	/// </summary>
-	private static readonly string ServerVersion = HostVersion.Of(typeof(ServiceCollectionExtensions).Assembly);
+	private static readonly string ServerVersion = BuildIdentity.Of(typeof(ServiceCollectionExtensions).Assembly).ToHandshake();
 
 	/// <summary>
 	/// Sent to the client during initialize, which means the model reads it before it decides how to
@@ -140,6 +140,10 @@ public static class ServiceCollectionExtensions
 		// Live-app sessions are per running target, separate from the per-solution workers, but shared
 		// across connections the same way and supervised the same way.
 		services.AddSingleton<LiveAppSessionManager>();
+
+		// Read only by /operator/hello, and disposed with the host, which is what kills a git still
+		// counting when the broker stops.
+		services.AddSingleton(_ => CheckoutDistanceReader.ForBroker());
 
 		// No inspector unless a host that has an operator endpoint replaces this. A stdio broker
 		// genuinely cannot open one, and saying so beats a tool argument that silently does nothing.

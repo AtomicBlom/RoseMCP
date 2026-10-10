@@ -107,3 +107,15 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   `shared/` -- two images for different machines are never byte-identical. `Assert-PackagedRuntime`
   therefore looks for each only in its own architecture's folder and checks its PE machine, and
   reports one found in `shared/` as deduplication matching something it should not have.
+- **A build is named by its commit, and every handshake compares commits.** Each host sends
+  `BuildIdentity.ToHandshake()` as its `ServerInfo.Version` -- the version with the commit as build
+  metadata, and `.dirty` after a dirty build's commit -- and each party that receives one compares it
+  with `BuildIdentity`: the broker against its workers and live-app hosts (`ChildHostVersion`), the
+  relay against the tray, the inspector against `/operator/hello`. Two local builds of different code
+  share a MinVer version, so a version compare passes a stale `bin` as the same build. A new host
+  sends the handshake; a new hop that starts one compares it, and says a mismatch naming both
+  commits rather than refusing. The stamps come from `Directory.Build.props`, and every one degrades
+  to absent rather than failing a build -- an archive with no `.git`, a machine with no git. The build
+  time is an embedded resource, not an attribute, and is written only when the compile runs: as an
+  attribute it would change every reference assembly on every compile and recompile everything above
+  it. See [the decision](../decisions/a-build-is-named-by-its-commit.md).

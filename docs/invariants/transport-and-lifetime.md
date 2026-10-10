@@ -176,3 +176,12 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   runs on the poll loop itself, before the tick's polls start, so a dropped session is never polled
   again by the tick that dropped it, and disposing the manager waits for a drop in progress. This
   applies over stdio as well as http: a dead host has nothing to read in either.
+- **The one git the broker runs is bounded, contained and off every agent's path.**
+  `CheckoutDistanceReader` counts how far a local build's checkout has moved on, for
+  `/operator/hello` and nothing else. `GitCommand` redirects the child's output, so a stdio broker's
+  stdout carries nothing of it; closes its stdin and turns prompting off, so it cannot wait for
+  credentials; and kills it with its process tree when its budget runs out or its caller gives up.
+  The count belongs to the reader rather than to the request that started it: a request that gives
+  up stops waiting, and disposing the reader, which the host does as it stops, is what kills a git
+  still running. A failure is a sentence in the answer, never an exception. See
+  [the decision](../decisions/a-build-is-named-by-its-commit.md).

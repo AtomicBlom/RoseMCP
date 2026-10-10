@@ -81,6 +81,10 @@ public sealed class ProducedFactTests
 		typeof(LiveAppSessionSummary),
 		typeof(WorkerActivity),
 		typeof(ProjectStatus),
+		typeof(BuildIdentity),
+		typeof(OperatorHello),
+		typeof(CheckoutDistance),
+		typeof(CommitsPast),
 	];
 
 	/// <summary>
@@ -132,6 +136,20 @@ public sealed class ProducedFactTests
 		["ProjectStatus.XamlStubbedCount"] = "Card 22: no window renders per-project health at all.",
 		["ProjectStatus.XamlDialect"] = "Card 22: no window renders per-project health at all.",
 		["ProjectStatus.UnresolvedXamlTypes"] = "Card 22: the stub generator's own failures, invisible to a person.",
+
+		// For the RoseMCP window, which is to show the whole build identity. Until it exists the tray's
+		// tooltip shows the version and short commit, which is all a tooltip has room for.
+		["BuildIdentity.Commit"] = "Shown as its short commit, which the tray's tooltip names.",
+		["BuildIdentity.BuiltUtc"] = "Card 5.9: the RoseMCP window says when the running build was made.",
+		["BuildIdentity.Checkout"] = "Card 5.9: the RoseMCP window says which checkout a local build came from.",
+		["OperatorHello.Checkout"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
+		["CheckoutDistance.Checkout"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
+		["CheckoutDistance.Head"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
+		["CheckoutDistance.OriginMain"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
+		["CheckoutDistance.CheckedUtc"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
+		["CommitsPast.Ref"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
+		["CommitsPast.Count"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
+		["CommitsPast.Unknown"] = "Card 5.9: the RoseMCP window says why it cannot say how far.",
 	};
 
 	/// <summary>

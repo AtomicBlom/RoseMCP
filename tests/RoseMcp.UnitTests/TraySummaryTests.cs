@@ -86,10 +86,39 @@ public sealed class TraySummaryTests
 	[Test]
 	public void The_tooltip_counts_only_what_is_in_memory()
 	{
-		TraySummary.Tooltip([Evicted()], sessions: 0, running: 0).ShouldBe("RoseMCP - nothing loaded");
-		TraySummary.Tooltip([Loaded(), Evicted()], sessions: 0, running: 0).ShouldBe("RoseMCP - 1 solution, idle");
-		TraySummary.Tooltip([Loaded(), Loaded()], sessions: 1, running: 3).ShouldBe("RoseMCP - 2 solutions, 1 session, 3 running");
+		TraySummary.Tooltip(Unstamped, [Evicted()], sessions: 0, running: 0).ShouldBe("RoseMCP 1.3.0 - nothing loaded");
+		TraySummary.Tooltip(Unstamped, [Loaded(), Evicted()], sessions: 0, running: 0).ShouldBe("RoseMCP 1.3.0 - 1 solution, idle");
+		TraySummary.Tooltip(Unstamped, [Loaded(), Loaded()], sessions: 1, running: 3).ShouldBe("RoseMCP 1.3.0 - 2 solutions, 1 session, 3 running");
 	}
+
+	/// <summary>
+	/// The icon says which build is running, by its short commit, because two local builds share a
+	/// version and the commit is what tells a fresh deploy from the one before it.
+	/// </summary>
+	[Test]
+	public void The_tooltip_names_the_build_by_its_commit()
+	{
+		var build = Unstamped with { Commit = "c11d75a16a82274f8c52a9e33110afee4bdecc0a", Dirty = false };
+
+		TraySummary.Tooltip(build, [], sessions: 0, running: 0).ShouldBe("RoseMCP 1.3.0 (c11d75a) - nothing loaded");
+		TraySummary.Tooltip(build with { Dirty = true }, [], sessions: 0, running: 0)
+			.ShouldBe("RoseMCP 1.3.0 (c11d75a, modified) - nothing loaded");
+	}
+
+	/// <summary>
+	/// Windows keeps 127 characters of a notification icon's tooltip, so a long version is cut here
+	/// rather than wherever the shell decides.
+	/// </summary>
+	[Test]
+	public void The_tooltip_fits_a_notification_icon()
+	{
+		var build = Unstamped with { Version = "1.3.0-" + new string('x', 200) };
+
+		TraySummary.Tooltip(build, [Loaded()], sessions: 0, running: 0).Length.ShouldBe(TraySummary.TooltipLimit);
+	}
+
+	/// <summary>A build stamped with nothing but a version, as an archive build is.</summary>
+	private static readonly BuildIdentity Unstamped = new() { Version = "1.3.0" };
 
 	/// <summary>A crash needs a look; an eviction is the broker doing its job and does not.</summary>
 	[Test]

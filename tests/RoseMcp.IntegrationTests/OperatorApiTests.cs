@@ -56,6 +56,50 @@ public sealed class OperatorApiTests
 		answer.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 	}
 
+	/// <summary>
+	/// Hello names the broker's build by its commit, which is this suite's own: the server was built
+	/// from the same tree in the same build. For a local build it also counts how far the checkout has
+	/// moved on, which git can always do for the commit the checkout was built at.
+	/// </summary>
+	[Test]
+	public async Task Hello_names_the_brokers_build_by_its_commit()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
+
+		var hello = await broker.Client.GetFromJsonAsync<OperatorHello>(
+			broker.Url("/operator/hello"), ContractJson.Options, cancellationToken);
+
+		var ours = BuildIdentity.Of(typeof(OperatorApiTests).Assembly);
+
+		hello.ShouldNotBeNull();
+		hello!.Build.Commit.ShouldNotBeNull();
+		hello.Build.Commit.ShouldBe(ours.Commit);
+		hello.Build.BuiltUtc.ShouldNotBeNull();
+		hello.Build.Checkout.ShouldBe(ours.Checkout);
+
+		if (ours.Checkout is null)
+		{
+			hello.Checkout.ShouldBeNull("a build that names no checkout has nothing to count from");
+			return;
+		}
+
+		hello.Checkout.ShouldNotBeNull();
+		hello.Checkout!.Head.Count.ShouldNotBeNull(hello.Checkout.Head.Unknown);
+	}
+
+	/// <summary>Hello is behind the token like everything else here: a build's checkout path is the machine's business.</summary>
+	[Test]
+	public async Task Hello_needs_the_token()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
+
+		using var answer = await broker.Anonymous.GetAsync(broker.Url("/operator/hello"), cancellationToken);
+
+		answer.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+	}
+
 	[Test]
 	public async Task Lists_no_sessions_on_a_broker_nobody_is_debugging_through()
 	{

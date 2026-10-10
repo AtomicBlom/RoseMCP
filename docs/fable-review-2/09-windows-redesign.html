@@ -945,11 +945,8 @@ flowchart LR
     </figure>
 
     <div class="found">
-      <div class="fd"><h3><span class="k">U1</span>Build identity</h3>
-        <ul><li>Stamp each assembly at build time with its full commit (the SDK already adds it), whether the tree was dirty, the build time, and, for a local build, the checkout it came from.</li>
-        <li>Show the commit to people. Handshakes compare the commit, not the version, because today two local builds with the same version can't be told apart.</li>
-        <li>A <code>hello</code> route on <code>/operator</code> returns all of it.</li>
-        <li>For a local build, Rose reads the checkout's <code>HEAD</code> and <code>origin/main</code> to say how far it has moved on.</li></ul>
+      <div class="fd"><h3><span class="k">U1</span><s>Build identity</s></h3>
+        <p><a href="https://github.com/AtomicBlom/RoseMCP/issues/456">#456</a>. Nothing said which build was running. Every process carries its commit, and every handshake compares it.</p>
         <span class="serves">Serves A2, A8</span></div>
       <div class="fd"><h3><span class="k">U2</span>A relay that outlives a deploy</h3>
         <ul><li>Today a deploy kills every relay started from the install folder, so each session needs <code>/mcp</code>. Install the relay where the deploy doesn't replace it, and version its own protocol, so only a relay change stops relays.</li>
@@ -1056,7 +1053,7 @@ sequenceDiagram
     <div class="subtier"><h3>5a · Foundations <span>one PR · data and protocol, with today's windows still in place</span></h3>
     <ol class="steps cards">
       <li data-id="5.1"><div class="body"><b><s>Notice a rebuilt analyzer, generator or code fix.</s></b><span>A rebuilt analyzer went on answering from the old build, and nothing said so. Every read and status name it and say a reload picks it up, and a setting reloads the workspace once it is idle.</span><span class="uses">Closed in <a href="https://github.com/AtomicBlom/RoseMCP/issues/455">#455</a></span></div></li>
-      <li data-id="5.2"><div class="body"><b>Build identity.</b><span>Every process carries its commit, a dirty flag, its build time and, for a local build, the checkout it came from. Handshakes compare commits. A <code>hello</code> route returns all of it. A local build says how far its checkout has moved on.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/456">#456</a> · A2, A8 · U1 · S</span></div></li>
+      <li data-id="5.2"><div class="body"><b><s>Build identity.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/456">#456</a>. Two builds with one version could not be told apart. Every process carries its commit, and handshakes compare it.</span></div></li>
       <li data-id="5.3"><div class="body"><b>A relay that outlives a deploy.</b><span>Starts with the dummy-tool test of <code>list_changed</code> on the installed Claude Code. Installs where a deploy doesn't replace it and versions its own protocol. On reconnect it compares the tool hash, and only a change sends <code>list_changed</code>. The first result after a restart says what happened.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/457">#457</a> · A9, A2 · U2 · M</span></div></li>
       <li data-id="5.4"><div class="body"><b>Who's connected.</b><span>The relay sends its session's roots, branch, process and optional label. The broker keeps a table of clients, and an HTTP client without the relay shows as unnamed.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/458">#458</a> · A3, B4 · U3 · S</span></div></li>
       <li data-id="5.5"><div class="body"><b>The activity record.</b><span>Every call, with its client, target, start and finish, outcome, arguments and response. Each edit also gets its diff. The record is written to disk, kept 7 days and survives reloads and restarts. The windows' own reads aren't recorded.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/459">#459</a> · B3, B4, C3 · U4 · M · supersedes #390</span></div></li>

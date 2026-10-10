@@ -6,6 +6,7 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
 using RoseMcp.Broker;
+using RoseMcp.Contracts;
 
 namespace RoseMcp.Server;
 
@@ -92,6 +93,7 @@ public sealed class TrayRelay : IAsyncDisposable
 			var tray = await ConnectAsync(endpoint, loggerFactory, TimeSpan.FromSeconds(2), cancellationToken);
 
 			logger.LogInformation("Relaying to the tray at {Endpoint}; its workers are shared.", endpoint);
+			SayIfAnotherBuild(tray, endpoint, logger);
 
 			return new TrayRelay(endpoint, tray, Environment.CurrentDirectory, loggerFactory);
 		}
@@ -127,6 +129,25 @@ public sealed class TrayRelay : IAsyncDisposable
 		{
 			return false;
 		}
+	}
+
+	/// <summary>
+	/// Logs a warning where the tray is another build than this relay, naming both commits.
+	/// <para>
+	/// Said, not refused, and only in the log: the relay forwards rather than answers, so every tool a
+	/// session sees is the tray's whichever build the relay is, and a relay from an older install
+	/// talking to a freshly deployed tray is the ordinary state after a deploy. What the warning buys
+	/// is the line that explains a session whose relay was started from a stale copy.
+	/// </para>
+	/// </summary>
+	private static void SayIfAnotherBuild(McpClient tray, Uri endpoint, ILogger logger)
+	{
+		var mismatch = BuildIdentity.Mismatch(
+			$"The tray at {endpoint}",
+			BuildIdentity.FromHandshake(tray.ServerInfo?.Version),
+			BuildIdentity.Of(typeof(TrayRelay).Assembly));
+
+		if (mismatch is not null) logger.LogWarning("{Mismatch}", mismatch);
 	}
 
 	public ValueTask<ListToolsResult> ListToolsAsync(CancellationToken cancellationToken) =>
@@ -265,6 +286,9 @@ public sealed class TrayRelay : IAsyncDisposable
 			{
 				_tray = await ConnectAsync(_endpoint, _loggerFactory, ReconnectWindow, cancellationToken);
 				_logger.LogInformation("Reconnected to the tray at {Endpoint}.", _endpoint);
+
+				// A reconnect is usually a deploy, which is exactly when the tray becomes another build.
+				SayIfAnotherBuild(_tray, _endpoint, _logger);
 
 				return _tray;
 			}

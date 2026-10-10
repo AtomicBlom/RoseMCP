@@ -385,15 +385,15 @@ cards 22 to 26 (#388 to #392).
 |---|---|---|---|---|
 | **5a** | *Foundations: data and protocol, with today's windows still in place.* | | | |
 | ~~5.1~~ | **#455.** An analyzer, generator or code fix rebuilt under a warm workspace went on answering from the old build, and nothing said so. Every read and status name it and say a reload picks it up, and a setting reloads the workspace once it is idle. | B5 | — | — |
-| 5.2 | **Build identity.** Every process carries its commit, a dirty flag, its build time and its checkout. Handshakes compare commits. | A2, A8 | #456 | S |
-| 5.3 | **A relay that outlives a deploy.** It reconnects by itself, and sends `tools/list_changed` only when the tool hash differs, so a deploy needs no `/mcp`. | A9, A2 | #457 | M |
+| ~~5.2~~ | **#456.** Nothing said which build was running, and two local builds with one version could not be told apart. Every process carries its commit, the handshakes compare commits, and the tray, the inspector and `/operator/hello` name them. | A2, A8 | — | — |
+| 5.3 | **A relay that outlives a deploy.** It reconnects by itself, and sends `tools/list_changed` only when the tool hash differs, so a deploy needs no `/mcp`. The tray's handshake already carries its commit, which the relay compares on every reconnect. | A9, A2 | #457 | M |
 | 5.4 | **Who's connected.** The relay names the session it serves, so the broker knows its clients. | A3, B4 | #458 | S |
 | 5.5 | **The activity record.** Every call, attributed, with its arguments, response and an edit's diff, kept for 7 days. | B3, B4, C3 | #459 | M |
 | 5.6 | **Workspace health with a shape.** Reasons a person can accept, choosing what agents read about them. Agents can acknowledge them. | B1 | #460 | M |
 | 5.7 | **The operator API the new windows read.** Includes each workspace's rebuilt analyzers, which the broker holds per worker already. | — | #461 | M |
 | **5b** | *The RoseMCP app: the tray loses its window, and the new one arrives.* | | | |
 | 5.8 | **The tray process keeps only its icon.** Three states, one menu, and notifications only for what a person can act on. | A1, A6, A8 | #462 | S |
-| 5.9 | **The RoseMCP window, organised by agent.** Agents, Activity, Workspaces and Debugging views, with a memory bar. | A3–A7, B1–B4 | #463 | L |
+| 5.9 | **The RoseMCP window, organised by agent.** Agents, Activity, Workspaces and Debugging views, with a memory bar. The build, its time, its checkout and how far that has moved on come from `OperatorClient.HelloAsync`, and are exempted in `ProducedFactTests` until this window shows them. | A3–A7, B1–B4 | #463 | L |
 | 5.10 | **Notes to an agent.** Delivered with its next call. `rose_reply` lets the agent answer. A channel push is a stretch goal. | C8, D8 | #464 | M |
 | **5c** | *The Inspector and the panel.* | | | |
 | 5.11 | **Debug an app without an agent.** Attach and launch by hand, and share the session with an agent. | E5, E6 | #465 | M |

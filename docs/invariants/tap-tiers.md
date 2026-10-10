@@ -4,18 +4,28 @@ Read before adding a file under `src/RoseMcp.Xaml.Tap/`, moving code between the
 changing the include order in either provider's `.cpp`.
 
 - **A file's tier is what it names, not what it does, and the include order is what checks it.** Four
-  tiers, and each provider's `.cpp` includes them in order: `tap_channel.h` and `tap_measure.h` name
-  nothing external; `tap_diagnostics.h`, `tap_surface.h`, `tap_tree.h`, `tap_properties.h`,
-  `tap_edits.h` and `tap_object.h` name only xamlOM, which Windows.UI.Xaml and Microsoft.UI.Xaml
-  declare verbatim identically; `tap_render.h` and `tap_overlay.h` name the seven projection aliases
-  and are therefore compiled once per framework; the provider itself names the real framework and
-  defines the aliases, the CLSID and the seams.
+  tiers, and each provider's `.cpp` includes them in order. Tier 1 names nothing external
+  (`tap_channel.h`, `tap_measure.h`). Tier 2 names only xamlOM, which Windows.UI.Xaml and
+  Microsoft.UI.Xaml declare verbatim identically (`tap_diagnostics.h`, `tap_surface.h`,
+  `tap_object.h` and the files the object is built from). Tier 3 names the seven projection aliases
+  and is therefore compiled once per framework (`tap_render.h`, `tap_overlay.h` and the toolbar's
+  pieces). The provider itself names the real framework and defines the aliases, the CLSID and the
+  seams. Which header is in which tier is written down once, in `TapTierTests.Tiers`, and a header
+  that list does not name fails the unit suite.
   <br>
   The first two groups are included **above** the alias block, so naming a projection in one of them
-  does not merely offend a convention -- it fails to compile, with the alias undefined. That is the
-  whole enforcement, and it is why the order in the `.cpp` is load-bearing rather than tidy. The same
-  trick is what `tap_diagnostics.h` already relies on: `TreeNode` lives there rather than in the
-  channel because holding an `InstanceHandle` next door fails to compile.
+  does not merely offend a convention -- it fails to compile, with the alias undefined. That is why
+  the order in the `.cpp` is load-bearing rather than tidy. The same trick is what
+  `tap_diagnostics.h` already relies on: `TreeNode` lives there rather than in the channel because
+  holding an `InstanceHandle` next door fails to compile.
+  <br>
+  The compile is not the whole check, because two ways of breaking the rule build cleanly. The WinUI
+  provider includes xamlOM before the channel, so a tier-1 header naming xamlOM builds there; and an
+  include moved below the aliases builds everywhere. `TapTierTests` reads the headers and both
+  providers as text, comments and string literals blanked, and fails on either of those, on a
+  projection named below tier 3, on an include of a higher tier, and on a provider including the
+  tiers out of order. It runs in the unit suite, so it holds on a machine with no C++ toolset too,
+  where neither provider builds.
 - **The repair for a tier violation is a seam, never a reordering.** A projection reaching into
   `tap_object.h` presents as an undefined alias, and there are two ways to make the error go away.
   Moving that include back below the alias block silences it and silently returns 1,800 lines of
@@ -37,12 +47,13 @@ changing the include order in either provider's `.cpp`.
   and let the far side resolve it, which is what the four reads in `tap_render.h` do: a handle goes
   in, a `try_as<>` chain finds the type that declares the property, and a string or another handle
   comes back.
-- **Tier purity is not currently checked by a test, because there is no native test project.** What
-  it buys today is a file that can be read without knowing which framework it is being compiled for,
-  and a compiler that refuses the wrong dependency. Testability is what it makes possible: a tier-2
-  translation unit can be compiled against a mock `IVisualTreeService` and a mock `IRoseOverlay`,
-  where a tier-3 one would drag in a whole cppwinrt projection to exercise a path-parsing function.
-  Do not cite tests as the reason for the boundary until something actually tests it.
+- **Tier purity is checked; what a tier does is not, because there is no native test project.** What
+  the boundary buys is a file that can be read without knowing which framework it is being compiled
+  for, and a compiler and a test that refuse the wrong dependency. Testability is what it makes
+  possible: a tier-2 translation unit can be compiled against a mock `IVisualTreeService` and a mock
+  `IRoseOverlay`, where a tier-3 one would drag in a whole cppwinrt projection to exercise a
+  path-parsing function. Nothing compiles one that way, so do not cite native tests as a reason for
+  the boundary.
   <br>
   `TapTree` is the one piece that needs no mock at all: it holds three containers, answers questions
   about them, and reaches nothing -- not the framework, not the site, not the overlay. A test for
@@ -60,4 +71,6 @@ changing the include order in either provider's `.cpp`.
 
   Exit 3 is a missing toolset rather than a break, which is what lets a machine without the C++
   workload skip rather than fail. CI compiles both providers for x86, x64 and arm64 on `main`, and
-  x64 only on a pull request.
+  x64 only on a pull request; its probe-apps job then injects the x64 builds into the three probe
+  apps and runs the tests against them, so a change that compiles but breaks the tap is a red job
+  rather than a finding at the next local run.

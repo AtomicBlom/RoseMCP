@@ -98,9 +98,12 @@ function Get-StageVersion
     param([Parameter(Mandatory)][string] $Stage)
 
     # shared/ first, which is where deduplication puts anything both architectures built identically.
-    foreach ($from in 'shared', 'win-x64', 'win-arm64')
+    $roots = @(Get-PackagePath -Stage $Stage -Shared) +
+        @((Get-PublishedLayout).runtimes | ForEach-Object { Get-PackagePath -Stage $Stage -Rid $_.rid })
+
+    foreach ($root in $roots)
     {
-        $dll = "$Stage/payload/$from/RoseMcp.Server.dll"
+        $dll = "$root/RoseMcp.Server.dll"
         if (-not (Test-Path $dll)) { continue }
 
         $stamped = (Get-Item $dll).VersionInfo.ProductVersion
@@ -124,34 +127,30 @@ function Assert-Stage
         throw "no staged package at $Stage. Run ./tools/deploy.ps1 -Mode package first."
     }
 
-    # Both architectures, because one installer carries both and a Check: condition that finds no
-    # files silently installs nothing for that architecture. The tray exe specifically, because a
-    # native image can never be deduplicated into shared/ and so must be in its own folder.
-    foreach ($rid in 'win-x64', 'win-arm64')
+    # Every architecture the layout names, because one installer carries them all and a Check:
+    # condition that finds no files silently installs nothing for that architecture.
+    $runtimes = @((Get-PublishedLayout).runtimes | ForEach-Object { $_.rid })
+    foreach ($rid in $runtimes)
     {
-        if (-not (Test-Path "$Stage/payload/$rid/tray/RoseMcp.Tray.exe"))
+        if (-not (Test-Path (Get-PackagePath -Stage $Stage -Rid $rid)))
         {
-            throw "the stage at $Stage has no $rid payload. The installer carries both architectures, " +
-                'so package with -Runtime win-x64,win-arm64.'
+            throw "the stage at $Stage has no $rid payload. The installer carries every architecture, " +
+                "so package with -Runtime $($runtimes -join ',')."
         }
     }
 
     # An un-deduplicated stage would still install correctly, but silently at twice the size, and the
     # [Files] entry for shared/ would fail the compile anyway. Saying which step is missing beats a
     # path error from ISCC.
-    if (-not (Test-Path "$Stage/payload/shared"))
+    if (-not (Test-Path (Get-PackagePath -Stage $Stage -Shared)))
     {
-        throw "the stage at $Stage has no payload/shared, so it was built without the deduplication " +
-            'step. Run ./tools/deploy.ps1 -Mode package with both Windows runtimes.'
+        throw "the stage at $Stage has no $((Get-PublishedLayout).package.shared), so it was built without " +
+            'the deduplication step. Run ./tools/deploy.ps1 -Mode package with every Windows runtime.'
     }
 
-    foreach ($hostRid in 'win-arm64', 'win-x64', 'win-x86')
-    {
-        if (-not (Test-Path "$Stage/payload/live-app/$hostRid/RoseMcp.LiveApp.exe"))
-        {
-            throw "the stage at $Stage has no live-app debug host for $hostRid."
-        }
-    }
+    # What packaging asserted, asserted again of the tree about to be compiled: a stage is a folder on
+    # disk, and nothing stops it being edited, half-deleted or left over from an older layout.
+    foreach ($rid in $runtimes) { $null = Assert-PackagedRuntime -Stage $Stage -Rid $rid }
 
     if (-not (Test-Path "$Stage/RoseMcp.Deploy.ps1"))
     {

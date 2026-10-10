@@ -5,16 +5,22 @@ name: CI
 #
 # The integration suite is split from the unit one by what it needs rather than by what it is, and
 # the live-app half is split again on the same principle: a test that drives a real debugger session
-# against a plain .NET child process runs here, and one that needs a XAML probe app -- a C++ toolset,
-# the Windows App SDK, developer mode, a machine-wide registration -- does not. Everything else needs
-# only the .NET SDK, and that is most of the suite, and the only guard on most of the invariants in
-# CLAUDE.md.
+# against a plain .NET child process runs in the integration job, and one that needs a XAML probe app
+# -- a C++ toolset, the Windows App SDK, developer mode, a machine-wide registration -- runs in a job
+# of its own that sets those up first. Everything else needs only the .NET SDK, and that is most of
+# the suite, and the only guard on most of the invariants in CLAUDE.md.
+#
+# Neither integration job lets a test skip. Both set ROSEMCP_TESTS_REQUIRE_TOOLCHAIN, which turns
+# every skip in the suite -- a missing toolset, an app that never came up -- into a failure naming
+# what was missing, because a skip reads as a pass and a runner that quietly lost a component would
+# otherwise look exactly like one that ran everything. Unset, as on a developer machine, a missing
+# toolchain still skips.
 #
 # The native XAML providers get a job of their own, because they are the one part of this repository
 # the solution build never touches: both taps can be broken with `dotnet build` green, and nothing
 # else here would notice.
 #
-# Those two are also the slow ones, so a pull request runs each only when something it could catch
+# Those three are also the slow ones, so a pull request runs each only when something it could catch
 # has changed, and builds the providers as x64 Debug only. Main, and a manual run, get everything.
 on:
   # Only main. A branch with a pull request open would otherwise run this twice for one
@@ -39,20 +45,24 @@ permissions:
 
 jobs:
   # Decides which of the slow jobs a pull request needs. Done with a job and `if:` rather than with
-  # `paths:` on the trigger, because all four jobs are required checks: a workflow filtered out by
+  # `paths:` on the trigger, because the jobs here are required checks: a workflow filtered out by
   # `paths:` reports nothing, and a required check that never reports holds the pull request open
   # forever, while a job skipped by `if:` reports as skipped, which the ruleset accepts.
   #
-  # The two rules lean opposite ways on purpose. The providers read nothing outside their own folders
+  # The rules lean opposite ways on purpose. The providers read nothing outside their own folders
   # except the WindowsAppSDK version, so they run when one of those inputs is touched. The integration
   # suite reaches nearly everything, so it runs unless every changed file is somewhere it cannot see:
   # a new project or a new top-level folder then runs the suite by default instead of slipping past it.
+  # The probe-app tests lean the providers' way, because they are the slowest job here and reach a
+  # known corner of the tree: the broker's live-app path, the live-app host and what it loads, both
+  # taps, the probe apps, and the tests themselves.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       integration: ${{ steps.filter.outputs.integration }}
       providers: ${{ steps.filter.outputs.providers }}
+      probes: ${{ steps.filter.outputs.probes }}
     steps:
       # Two commits, because a pull_request run checks out the merge commit, whose first parent is
       # the base branch as it is now: diffing the two is exactly what merging would change.
@@ -67,6 +77,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
             echo 'integration=true' >> "$GITHUB_OUTPUT"
             echo 'providers=true' >> "$GITHUB_OUTPUT"
+            echo 'probes=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -78,13 +89,21 @@ jobs:
           # Nothing the integration job builds or runs reads these. The taps are here because the
           # tests that load a provider are the ProbeApp category, which that job excludes.
           unseen='^(docs/|wiki/|tools/|\.claude/|src/RoseMcp\.Xaml(\.Uwp|\.WinUi)?\.Tap/|\.github/workflows/release\.yml$|[^/]+\.md$)'
+          # What a probe-app test reaches: the broker and the projects it references, the live-app
+          # host and the projects it loads, both taps and their shared headers, the probe apps, the
+          # test project and its shared doubles, and the build inputs every one of them reads.
+          # ProbeAppCategoryTests holds this against the test project's reference graph, so a new
+          # reference fails there until it is added here or named as one no probe-app test reaches.
+          probes='^(src/RoseMcp\.(Broker|Contracts|Logging|Settings|Solutions|LiveApp|Symbols|XamlDiff)/|src/RoseMcp\.Xaml(\.Uwp|\.WinUi)?\.Tap/|tests/apps/|tests/RoseMcp\.(IntegrationTests|TestSupport)/|Directory\.(Build|Packages)\.props$|global\.json$|\.github/workflows/ci\.yml$)'
 
           if grep -Eq "$providers" <<< "$changed"; then p=true; else p=false; fi
           if grep -Evq "$unseen" <<< "$changed"; then i=true; else i=false; fi
+          if grep -Eq "$probes" <<< "$changed"; then a=true; else a=false; fi
 
           echo "integration=$i" >> "$GITHUB_OUTPUT"
           echo "providers=$p" >> "$GITHUB_OUTPUT"
-          echo "integration: $i, providers: $p"
+          echo "probes=$a" >> "$GITHUB_OUTPUT"
+          echo "integration: $i, providers: $p, probes: $a"
 
   build-and-test:
     runs-on: windows-latest
@@ -136,9 +155,8 @@ jobs:
   # above, so it runs alongside the unit tests instead of after them; the second build is the price.
   #
   # The probe-app tests are excluded, and nothing else is. They want a C++ toolset, the Windows App
-  # SDK, developer mode and a machine-wide package registration, and they answer a missing toolchain
-  # by skipping -- which reads as a pass. Excluding them says what is not covered; skips say it
-  # quietly and only to whoever opens the log.
+  # SDK, developer mode and a machine-wide package registration, which the probe-apps job below sets
+  # up and this one does not, so they run there instead.
   #
   # The debugger half runs here: it drives DebugProbeTarget, an ordinary .NET child process, and a
   # hosted runner serves a real ICorDebug session against one without complaint, which the eleven
@@ -160,6 +178,10 @@ jobs:
     # the build, the Windows half and an evidence upload, about three minutes together -- so a step
     # that times out still leaves the job the time to keep what it found.
     timeout-minutes: 45
+    # Every skip a failure: this runner is set up for everything the tests it runs need, so a skip
+    # here is a gap in that setup rather than a limit of the machine (MachineLimit in the tests).
+    env:
+      ROSEMCP_TESTS_REQUIRE_TOOLCHAIN: '1'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -172,10 +194,9 @@ jobs:
 
       # A hosted runner carries no x86 runtime, and one test needs one: Attaches_to_an_x86_target
       # builds an x86 debug host and an x86 target, both framework-dependent, so without it the
-      # target exits before anything can attach and the test skips. A skip reads as a pass, which is
-      # the reason the probe-app half is excluded by category rather than left to skip, so the last
-      # skip in this job is worth half a minute to remove. x86 is not a legacy case here: it is the
-      # default platform of the modern UWP template, so it is what an ordinary new app is built as.
+      # target exits before anything can attach, which this job's switch makes a failure rather than
+      # the skip it is on a developer machine. x86 is not a legacy case here: it is the default
+      # platform of the modern UWP template, so it is what an ordinary new app is built as.
       #
       # DOTNET_ROOT_X86 rather than installing where the official x86 installer would, because it is
       # documented as the first thing an x86 apphost consults, it needs no administrator, and it does
@@ -190,10 +211,10 @@ jobs:
           Invoke-WebRequest -UseBasicParsing 'https://dot.net/v1/dotnet-install.ps1' -OutFile $installer
           & $installer -Architecture x86 -Runtime dotnet -Channel 10.0 -InstallDir $installDir
 
-          # Asserted rather than assumed: an install that quietly produced nothing would put the test
-          # back to skipping, which is the thing this step exists to stop, and it would say so
-          # nowhere. Running it is the check, because a dotnet.exe of the wrong architecture is on
-          # disk exactly like a right one.
+          # Asserted rather than assumed: an install that quietly produced nothing would surface as an
+          # x86 attach test failing several minutes later, for a reason that has nothing to do with
+          # what it tests. Running it is the check, because a dotnet.exe of the wrong architecture is
+          # on disk exactly like a right one.
           $x86Dotnet = Join-Path $installDir 'dotnet.exe'
           if (-not (Test-Path $x86Dotnet)) { throw "No dotnet.exe under $installDir after the install." }
 
@@ -276,6 +297,309 @@ jobs:
           path: |
             tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/TestResults/
             tests/RoseMcp.IntegrationTests.Windows/bin/Debug/net10.0-windows/TestResults/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # The integration tests that need a XAML probe app: the tap injected into a running app, the
+  # visual tree, the properties read, the pick, the overlay and the live-edit apply, against the
+  # classic UWP, modern UWP and WinUI 3 probes. Everything the integration job leaves out by category.
+  #
+  # Its own job because it needs a machine the others do not: developer mode, Visual Studio's MSBuild
+  # with the UWP tooling, the C++ toolset and the Windows SDK, and the Windows App Runtime. Each is set
+  # up by a step of its own that checks its result and says what it found, so a failure here names
+  # the component rather than surfacing as a test that could not start. The suite takes one machine
+  # to itself -- the probe packages are registered machine-wide under fixed names -- and a hosted job
+  # is a machine of its own, so this runs alongside the integration job rather than after it.
+  #
+  # A hosted runner rather than a self-hosted one. Nothing here needs more than a hosted image can be
+  # given, and a self-hosted runner is a machine somebody keeps up for a public repository's pull
+  # requests. What is least certain is the launch itself: a UWP or packaged WinUI app is activated
+  # into an AppContainer in the runner's own session, and if the hosted image cannot do that, the
+  # fallback is a self-hosted runner -- the developer box that runs this suite already -- with
+  # `runs-on` pointed at its label. See docs/decisions/the-probe-app-tests-run-on-a-hosted-runner.md.
+  probe-apps:
+    needs: changes
+    # The same fail-open condition as the integration job, for the same reason.
+    if: ${{ !cancelled() && needs.changes.outputs.probes != 'false' }}
+    runs-on: windows-latest
+    # The test step's own limit plus the setup around it: a Visual Studio modify when the image lacks
+    # a component is the long pole, at up to fifteen minutes, then the build and the two providers.
+    timeout-minutes: 60
+    # Every skip a failure. Each component a probe-app test can skip for is set up by a step below,
+    # so a skip here is that step not having done what it said.
+    env:
+      ROSEMCP_TESTS_REQUIRE_TOOLCHAIN: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      # Registering a loose AppX layout, which is how every probe is installed, needs developer mode.
+      # Set the way the Settings page sets it, then read back, because a write that did not take is
+      # otherwise reported by Add-AppxPackage several minutes later as a deployment error that does
+      # not mention developer mode at all.
+      - name: Turn on developer mode
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
+          if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
+
+          $before = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).AllowDevelopmentWithoutDevLicense
+          New-ItemProperty -Path $key -Name AllowDevelopmentWithoutDevLicense -PropertyType DWord -Value 1 -Force | Out-Null
+          New-ItemProperty -Path $key -Name AllowAllTrustedApps -PropertyType DWord -Value 1 -Force | Out-Null
+
+          $after = (Get-ItemProperty -Path $key).AllowDevelopmentWithoutDevLicense
+          if ($after -ne 1) { throw "Developer mode did not take: AllowDevelopmentWithoutDevLicense reads '$after' after being set to 1." }
+          Write-Host "Developer mode is on (AllowDevelopmentWithoutDevLicense was '$before', is now $after)."
+
+      # What the probes and the taps need from Visual Studio and the Windows SDK, checked as the files
+      # the tests and build.ps1 look for rather than as component IDs, because the IDs differ between
+      # products and change between releases while the files are what a build actually opens. The
+      # instance is the one the tests and build.ps1 pick, the latest of any product. Only what is
+      # missing is installed, so an image that already has everything costs a few seconds here.
+      - name: Make sure Visual Studio can build the probe apps and the taps
+        shell: pwsh
+        run: |
+          $installerDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+          $vswhere = Join-Path $installerDir 'vswhere.exe'
+          if (-not (Test-Path $vswhere)) { throw "No vswhere.exe at $vswhere, so no Visual Studio to build the probe apps or the taps with." }
+
+          $vs = & $vswhere -latest -products * -property installationPath
+          $product = & $vswhere -latest -products * -property productId
+          if (-not $vs) { throw 'No Visual Studio installation on this runner.' }
+          Write-Host "Visual Studio: $product at $vs"
+
+          $kits = "${env:ProgramFiles(x86)}\Windows Kits\10"
+          function Find-Missing
+          {
+              $missing = @()
+              if (-not (Test-Path "$vs\MSBuild\Current\Bin\MSBuild.exe")) { $missing += 'MSBuild, which builds both UWP probes' }
+              if (-not (Test-Path "$vs\MSBuild\Microsoft\WindowsXaml")) { $missing += 'the UWP build targets (MSBuild\Microsoft\WindowsXaml), which the classic UWP probe imports' }
+              if (-not (Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe" -ErrorAction SilentlyContinue)) { $missing += 'the x64 MSVC toolset, which builds both taps' }
+              if (-not (Test-Path "$kits\Platforms\UAP\10.0.26100.0")) { $missing += 'the Windows SDK 10.0.26100 UAP platform, which the classic UWP probe targets' }
+              if (-not (Get-ChildItem "$kits\bin\*\XamlCompiler\Microsoft.Windows.UI.Xaml.Build.Tasks.dll" -ErrorAction SilentlyContinue)) { $missing += "the Windows SDK's UWP XAML compiler, which the modern UWP probe needs" }
+              , $missing
+          }
+
+          $missing = Find-Missing
+          if (-not $missing)
+          {
+              Write-Host 'Everything the probe apps and the taps need is already installed.'
+              exit 0
+          }
+
+          Write-Host "Missing before setup:`n  $($missing -join "`n  ")"
+
+          # Build Tools names the UWP tooling differently from the IDE products.
+          $components = if ($product -eq 'Microsoft.VisualStudio.Product.BuildTools')
+          {
+              'Microsoft.VisualStudio.Workload.UniversalBuildTools', 'Microsoft.VisualStudio.ComponentGroup.UWP.BuildTools'
+          }
+          else
+          {
+              'Microsoft.VisualStudio.Workload.Universal', 'Microsoft.VisualStudio.ComponentGroup.UWP.Support'
+          }
+          $components += 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', 'Microsoft.VisualStudio.Component.Windows11SDK.26100'
+          Write-Host "Adding: $($components -join ', ')"
+
+          $arguments = @('modify', '--installPath', "`"$vs`"", '--quiet', '--norestart', '--nocache')
+          foreach ($component in $components) { $arguments += '--add', $component }
+          $process = Start-Process -FilePath "$installerDir\vs_installer.exe" -Wait -PassThru -ArgumentList $arguments
+
+          if ($process.ExitCode -notin 0, 3010)
+          {
+              # The installer writes its reasons to dd_*.log under TEMP rather than to the console.
+              $log = Get-ChildItem $env:TEMP -Filter 'dd_*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+              if ($log) { Write-Host "::group::$($log.Name)"; Get-Content $log.FullName -Tail 60; Write-Host '::endgroup::' }
+              throw "vs_installer exited $($process.ExitCode) adding $($components -join ', ')."
+          }
+
+          $missing = Find-Missing
+          if ($missing) { throw "Still missing after vs_installer added $($components -join ', '):`n  $($missing -join "`n  ")" }
+          Write-Host 'Everything the probe apps and the taps need is installed now.'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore RoseMcp.slnx
+
+      - name: Build
+        run: dotnet build RoseMcp.slnx --configuration Debug --no-restore
+
+      # The WinUI probe is framework-dependent on the Windows App Runtime, which a hosted image does
+      # not carry: the packaged shape cannot register without its framework package, and the
+      # unpackaged one finds the runtime through the dynamic dependency packages. The runtime's MSIX
+      # packages ship inside the Microsoft.WindowsAppSDK.Runtime package the probe restores, so the
+      # version installed is the one the probe was built against rather than whatever an installer
+      # URL serves today. Both shapes are restored here so the assets name it.
+      - name: Install the Windows App Runtime the WinUI probe uses
+        shell: pwsh
+        run: |
+          $project = 'tests/apps/winui/Rose.ProbeApp.WinUi.csproj'
+          foreach ($shape in @(), @('-p:ProbePackaged=true'))
+          {
+              dotnet restore $project -r win-x64 @shape
+              if ($LASTEXITCODE -ne 0) { throw "Restoring the WinUI probe ($($shape -join ' ')) failed with exit $LASTEXITCODE; the Windows App SDK could not be fetched." }
+          }
+
+          $assets = Get-Content 'tests/apps/winui/obj/project.assets.json' -Raw | ConvertFrom-Json
+          $library = $assets.libraries.PSObject.Properties.Name | Where-Object { $_ -like 'Microsoft.WindowsAppSDK.Runtime/*' } | Select-Object -First 1
+          if (-not $library) { throw 'The WinUI probe restored no Microsoft.WindowsAppSDK.Runtime package, so there is no Windows App Runtime to install.' }
+
+          $packageRoot = $assets.packageFolders.PSObject.Properties.Name | Select-Object -First 1
+          $msixDir = Join-Path $packageRoot ($assets.libraries.$library.path) | Join-Path -ChildPath 'tools\MSIX\win10-x64'
+          if (-not (Test-Path $msixDir)) { throw "No x64 MSIX packages at $msixDir in $library." }
+          Write-Host "Installing the Windows App Runtime from $library ($msixDir)"
+
+          # What each package is, read out of its own manifest, so the check below asks for exactly
+          # these packages: a runner carrying some other Windows App Runtime cannot pass for one
+          # carrying this one, and a dynamic dependency package that failed to install is named
+          # rather than surfacing as an unpackaged probe that never opens a window.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          function Read-Identity($msix)
+          {
+              $zip = [System.IO.Compression.ZipFile]::OpenRead($msix.FullName)
+              try
+              {
+                  $reader = [System.IO.StreamReader]::new($zip.GetEntry('AppxManifest.xml').Open())
+                  try { ([xml]$reader.ReadToEnd()).Package.Identity }
+                  finally { $reader.Dispose() }
+              }
+              finally { $zip.Dispose() }
+          }
+
+          # The framework first, since the others depend on it.
+          $packages = Get-ChildItem $msixDir -Filter '*.msix' | Sort-Object { $_.BaseName -notmatch '^Microsoft\.WindowsAppRuntime\.\d+$' }, Name
+          if (-not $packages) { throw "No .msix files in $msixDir." }
+
+          $failed = @()
+          foreach ($msix in $packages)
+          {
+              try
+              {
+                  Add-AppxPackage -Path $msix.FullName -ErrorAction Stop
+                  Write-Host "  installed $($msix.Name)"
+              }
+              catch
+              {
+                  # 0x80073D06 is "a higher version is already installed", which leaves the machine
+                  # with what the probe needs; the check below confirms it. Anything else is a failure.
+                  $hresult = '{0:X8}' -f $_.Exception.HResult
+                  $newerInstalled = $hresult -eq '80073D06' -or $_.Exception.Message -match '0x80073D06'
+                  if ($newerInstalled) { Write-Host "  $($msix.Name): a higher version is already installed" }
+                  else { $failed += "$($msix.Name) did not install: $($_.Exception.Message)" }
+              }
+          }
+
+          foreach ($msix in $packages)
+          {
+              $identity = Read-Identity $msix
+              $wanted = [version]$identity.Version
+              # The dynamic dependency package carries its version in its name as well
+              # (Microsoft.WinAppRuntime.DDLM.2.4.0.0-x6), so a newer one is a different name. The
+              # bootstrapper takes any at the version or later, so the check does too.
+              $name = $identity.Name.Replace($identity.Version, '*')
+              $present = Get-AppxPackage -Name $name |
+                  Where-Object { "$($_.Architecture)" -eq "$($identity.ProcessorArchitecture)" -and [version]$_.Version -ge $wanted } |
+                  Sort-Object { [version]$_.Version } -Descending | Select-Object -First 1
+
+              if ($present) { Write-Host "  present: $($present.Name) $($present.Version) ($($identity.ProcessorArchitecture)), wanted $wanted or later" }
+              else
+              {
+                  Write-Host "  missing: $name $wanted or later ($($identity.ProcessorArchitecture)), from $($msix.Name)"
+                  $failed += "$name $wanted or later for $($identity.ProcessorArchitecture) is not registered"
+              }
+          }
+
+          if ($failed) { throw ("The Windows App Runtime from $msixDir is not fully installed:`n  " + ($failed -join "`n  ")) }
+
+      # The fixtures build both taps themselves, once a run, and skip on build.ps1's exit 3 -- which
+      # this job's switch turns into a failure without the build's output. Building them here first
+      # puts a missing toolset or a compile error in a step of its own, with the compiler's words.
+      - name: Build the taps the probe apps load
+        shell: pwsh
+        run: |
+          $failed = @()
+          foreach ($project in 'RoseMcp.Xaml.Uwp.Tap', 'RoseMcp.Xaml.WinUi.Tap')
+          {
+              Write-Host "::group::$project (x64 Debug)"
+              & ./src/$project/build.ps1 -Platform x64 -Configuration Debug
+              $code = $LASTEXITCODE
+              Write-Host '::endgroup::'
+
+              if ($code -eq 3) { $failed += "$project exited 3: this runner has no toolset or SDK for it, which the step above should have installed" }
+              elseif ($code -ne 0) { $failed += "$project exited $code" }
+          }
+
+          if ($failed) { throw ("taps failed to build:`n  " + ($failed -join "`n  ")) }
+
+      # Selected by the category the integration job excludes, so the two jobs together run the whole
+      # suite and ProbeAppCategoryTests holds the two filters to each other.
+      #
+      # Parallelism bounded as in the integration job. The three probes run alongside each other by
+      # design, each serialised on its own constraint key, so three is also as many as can usefully
+      # run at once.
+      #
+      # The runner's --timeout three minutes inside the step's, for the same reason as there: the run
+      # ends itself, naming what was still running, before the step is killed. On a twelve-core
+      # developer box this half takes four minutes, the first build of all three probe apps and both
+      # taps included; 27 allows a four-core runner to be six times slower than that and still finish.
+      - name: Integration tests that need a probe app
+        timeout-minutes: 30
+        run: >-
+          ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe
+          --maximum-parallel-tests 3
+          --treenode-filter '/*/*/*/*[Category=ProbeApp]'
+          --output Detailed
+          --show-slowest-tests 20
+          --timeout 27m
+
+      # What the deployment engine did, for the evidence below. A refused registration's failure names
+      # what Windows asked for and carries that activity's errors, but only the event log has every
+      # step of every attempt -- the framework installs the fixtures make before retrying included --
+      # and the frameworks the runner holds at the end say which of those installs took.
+      - name: Keep the AppX deployment log
+        if: ${{ failure() || cancelled() }}
+        shell: pwsh
+        run: |
+          $out = 'tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/TestResults'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          # The job's own limit, so this reaches back to its first registration and no further.
+          $since = (Get-Date).AddMinutes(-60)
+          $events = Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-AppXDeploymentServer/Operational'; StartTime = $since } -ErrorAction SilentlyContinue |
+              Sort-Object TimeCreated
+          $events |
+              ForEach-Object { '{0:u} [{1}] {2} activity {3}: {4}' -f $_.TimeCreated, $_.LevelDisplayName, $_.Id, $_.ActivityId, ($_.Message -replace '\s+', ' ') } |
+              Set-Content (Join-Path $out 'appx-deployment.log')
+          Write-Host "Wrote $(@($events).Count) AppX deployment events since $since to $out/appx-deployment.log"
+
+          Get-AppxPackage |
+              Where-Object { $_.IsFramework -or $_.Name -like 'RoseMcp.ProbeApp.*' } |
+              Sort-Object Name, Architecture |
+              ForEach-Object { '{0} {1} {2} signature={3} framework={4}' -f $_.Name, $_.Version, $_.Architecture, $_.SignatureKind, $_.IsFramework } |
+              Set-Content (Join-Path $out 'appx-packages.txt')
+
+      # The same evidence as the integration job keeps, under a name of its own so a run where both
+      # fail keeps both. The tap's own logs are in it too: every process the suite starts, the apps'
+      # injected providers included, logs under TestResults.
+      - name: Keep the evidence of a failed run
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-app-evidence
+          path: |
+            tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/TestResults/
           retention-days: 14
           if-no-files-found: ignore
 

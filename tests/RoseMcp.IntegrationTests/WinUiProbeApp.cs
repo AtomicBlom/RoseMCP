@@ -75,7 +75,7 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 		{
 			if (needsXamlProvider && !ProviderBuilt())
 			{
-				Skip.Test("The WinUI XAML provider could not be built (no C++ toolset, or no WindowsAppSDK).");
+				MachineLimit.Reached("The WinUI XAML provider could not be built (no C++ toolset, or no WindowsAppSDK).");
 			}
 
 			// The WinUI target runs natively, but the broker still hosts it out of the x64 host on x64.
@@ -87,7 +87,7 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 				_built[packaged] = output;
 			}
 
-			if (output is null) Skip.Test("The WinUI probe app could not be restored (the WindowsAppSDK may be unavailable).");
+			if (output is null) MachineLimit.Reached("The WinUI probe app could not be restored (the WindowsAppSDK may be unavailable).");
 
 			if (packaged && !_registered)
 			{
@@ -97,7 +97,7 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 
 			if (packaged && _aumid is null)
 			{
-				Skip.Test($"The WinUI probe app could not be registered: {_registrationFailure}");
+				MachineLimit.Reached($"The WinUI probe app could not be registered: {_registrationFailure}");
 			}
 
 			return output!;
@@ -192,10 +192,15 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 	/// AppxManifest.xml beside the exe, with none of the staging the classic UWP probe needs, because
 	/// it has no split between a managed assembly and a native CoreCLR apphost.
 	/// </para>
+	/// <para>
+	/// No recipe is passed, because the framework this probe depends on is the Windows App Runtime,
+	/// which is installed from the Windows App SDK's own packages rather than from a build's
+	/// references; a machine without it is told so by the refusal, which names it.
+	/// </para>
 	/// </summary>
 	private static string? Register(string layoutDirectory, out string? failure)
 	{
-		var family = RegisterAppxLayout(Path.Combine(layoutDirectory, "AppxManifest.xml"), PackageName, out failure);
+		var family = RegisterAppxLayout(Path.Combine(layoutDirectory, "AppxManifest.xml"), PackageName, recipe: null, out failure);
 
 		return family is null ? null : $"{family}!App";
 	}

@@ -42,6 +42,14 @@ public sealed record WorkspaceSummary : WorkspaceScopedResult
 	public long? ManagedHeapBytes { get; init; }
 
 	/// <summary>
+	/// The log file this workspace's worker writes, so a reader looking at a workspace can open the log
+	/// that explains it rather than guessing which of twenty files in the folder is the one. Still set
+	/// once the worker has stopped, which is when it is most worth reading. Null until the worker has
+	/// said, and when it could not open one.
+	/// </summary>
+	public string? WorkerLogPath { get; init; }
+
+	/// <summary>
 	/// The MSBuild configuration and platform the solution was loaded under, as
 	/// <c>Configuration|Platform</c>. Worth a place in a summary because the wrong one is the usual
 	/// reason a whole solution looks broken, and it is the one fact about a load that cannot be

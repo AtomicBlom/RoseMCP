@@ -12,7 +12,7 @@ the `*Row` types, `Inspector/StopInspection`, `Inspector/XamlInspection`,
 `.github/workflows/{ci,release}.yml`, `tools/*.ps1`, `.editorconfig`, `Directory.Build.props`,
 `Directory.Packages.props`, `docs/decisions/` (34), `docs/invariants/` (12).
 
-**Verdict. Strong, with one structural hole and one growing debt.** This is the most deliberate third
+**Verdict. Strong, with one growing debt; its one structural hole is closed.** This is the most deliberate third
 of the repository, not the least. The `Ui.Core` / `Ui` split is real and paying: every behavioural
 class in the inspector is plain `net10.0` and every one has a test, `HoldKeeper` and `OperatorClient`
 are the two most carefully reasoned classes in the product, and the tray reads the live
@@ -23,16 +23,14 @@ cost split is exact -- zero `Process.Start`, `MSBuildWorkspace`, `FixtureSolutio
 `deploy.ps1` are the best-commented files here, and `Assert-WindowsPackage` is a properly structural
 release gate. The four tool-surface tests show the repository already knows how to turn a rule into a
 mechanism. What holds it back is that it has only applied that trick where a rule has a named type in
-`Contracts`. Every rule that is a property of an *arrangement* -- a comment's tense, a published
-folder layout, a test class's category attribute, a header's include graph, "every result carries a
-revision" -- is review-only, and three of them have already drifted under review: a category lost in
+`Contracts`. Every rule that is a property of an *arrangement* -- a test class's category
+attribute, "every result carries a revision" -- is review-only, and three of them have already drifted under review: a category lost in
 a split, 100 history clauses where #171 counted 90, and four doc claims that describe code that has
-moved. The one structural hole is that the newest, least conventional and most bug-dense third of the
-product -- debugger, tap, live edit, 55 tests -- never ran in CI at all; the debugger part does now
-(#295), and the tap and live-edit part does not. The one growing debt is `TestSession.OpenAsync`:
-254 real solution loads and 299 fixture
-copies across six distinct fixtures, with zero sharing on the Roslyn half while the live-app half next
-door has a proven sharing model. None of this is vibe-coded; it is carefully built and
+moved. The one structural hole was that the newest, least conventional and most bug-dense third of the
+product -- debugger, tap, live edit, 55 tests -- never ran in CI at all; the debugger part runs
+in the integration job (#295) and the tap and live-edit part in a job of its own (#384). The one growing debt is `TestSession.OpenAsync`:
+a real solution load for every test that writes, while the tests that only read share one load per
+fixture (#39) and the live-app half next door shares its apps. None of this is vibe-coded; it is carefully built and
 under-mechanised, which is a much better problem to have.
 
 ## Strengths
@@ -331,6 +329,8 @@ RIDs and runs this suite in Release, which is what proves the no-Windows-project
 inferring it. This is the cleanest boundary in the repository.
 
 ### UIP-13 The Roslyn half of the integration suite loads a solution 254 times and copies a fixture 299 times
+- **Part done, #39.** A test that only reads shares one load per fixture, so a new reading test
+  costs its read rather than a load. Layers 2 and 3 below, for the tests that write, are open.
 - **Severity:** High
 - **Effort:** L
 - **Where:** `tests/RoseMcp.IntegrationTests/TestSession.cs:8-32`, `SessionScope.cs:19-39`, and 31 test classes; `.github/workflows/ci.yml:134-137,181`
@@ -339,9 +339,7 @@ inferring it. This is the cleanest boundary in the repository.
   and 254 `TestSession.OpenAsync`**, over **six distinct fixtures** -- `Members` 165 times, `Simple`
   91, `MultiType` 17, `WithGenerator` 15, `XamlStub` 9, `Siblings` 1. Issue #39 says 58 workspace
   loads; the real number today is four times that and still climbing. `MemberEditTests` alone opens
-  59. There is not one `ClassDataSource`, `[Before(Class)]` or shared workspace anywhere on the
-  Roslyn half -- every sharing attribute in the project is on the live-app probe apps
-  (`LiveAppUwpTests.cs:27`, `LiveAppWinUiTests.cs:21`, `LiveAppUwpModernTests.cs:18`).
+  59, and every one of those writes, so none of them can take the shared read-only workspace.
 - **Why it matters:** This is the whole reason `dotnet test` takes minutes, and the reason the CI
   comment at `ci.yml:134-137` has to warn that the job is slow "rather than merely long" and cap
   parallelism at 3. It also shapes behaviour: a suite that costs minutes is one nobody runs before
@@ -349,13 +347,8 @@ inferring it. This is the cleanest boundary in the repository.
   linearly with every new test, which is exactly the slope `the-live-app-suite-is-phased-by-what-tests-share`
   was written to flatten for the other half.
 - **Suggested change:** The machinery is already in the repository and already proven -- apply the
-  live-app half's own answer to the Roslyn half. Three layers, in order of payback:
-  1. **A read-only shared workspace per fixture.** A `LoadedFixture<TMembers>` /
-     `LoadedFixture<TSimple>` with `[ClassDataSource<...>(Shared = SharedType.PerAssembly)]`, handed
-     to every class that only reads: `OutlineTests` (10), `NavigationTests` (21), `ResolveNameTests`
-     (13), `ImplementationTests` (6), `DiagnosticsTests` (4), `GeneratedDocumentTests` (4),
-     `CodeFixTests` list-only. That is roughly 60 loads collapsed to 2, with no behaviour change,
-     since nothing in those classes writes.
+  live-app half's own answer to the Roslyn half. Two layers remain, in order of payback, after the
+  first, a read-only shared workspace per fixture:
   2. **A warm copy for the classes that mutate.** `FixtureSolution.CopyTree` deliberately drops
      `bin` and `obj` for the "fresh clone" property (`FixtureSolution.cs:98`), and that property is
      only load-bearing for the generator tests. Add `FixtureSolution.CopyWarm`, which copies a
@@ -364,8 +357,9 @@ inferring it. This is the cleanest boundary in the repository.
   3. **Serve editing tests from a pool.** The live-app suite's slot model
      (`ProbeConstraints.cs:26-89`) is exactly this shape: a pool of N scratch workspaces, a
      `NotInParallel` key per slot, and a hand-back check. Apply it verbatim.
-  Do (1) first and measure -- it is a day's work, cannot change any assertion, and removes the
-  largest single block.
+  Neither reaches `BrokerForwardingTests`, `IdleEvictionTests` or `WorkspaceRoutingTests`, which
+  start real worker processes rather than load through a test session; what they could share is a
+  question of its own.
 
 ### ~~UIP-14 `LiveAppInspectionTests` lost its `[Category("LiveApp")]` in the split, so eleven debugger tests now run in CI that CI says it does not run~~
 **#295.** Eleven debugger tests ran in CI that CI said it did not run, because the category excluding
@@ -397,7 +391,9 @@ result of any timed-out verb that changes the app.
 ### UIP-17 Two-thirds of the integration suite tests the service layer, so the tool boundary's own invariants are spot-checked rather than enforced
 - **Half done, #295.** Attribution is structural rather than tested: the forwarding path will not
   compile with a result the broker cannot attribute. The runtime half -- that a tool populates those
-  fields against a real workspace -- still wants UIP-13's shared fixture.
+  fields against a real workspace -- is open. UIP-13's shared workspace serves in-process reads; a
+  tool call crosses a broker and a worker, so this test wants one broker over one fixture, shared by
+  every call it makes.
 - **Severity:** Medium
 - **Effort:** M
 - **Where:** 20 of 40 integration classes call a `*Service.*Async` directly (`OutlineTests.cs:17`,
@@ -416,24 +412,13 @@ result of any timed-out verb that changes the app.
 - **Suggested change:** One reflective test in the pattern this repo already uses four times
   (`ToolSurfaceTests`, `ToolDescriptionTests`, `ToolBudgetTests`, `SecurityModelTests`): enumerate
   every advertised tool, call it against a shared fixture with minimal valid arguments, and assert
-  the result carries a non-zero `revision` and the expected `workspace`/`workspaceKey`. It piggybacks
-  on the shared fixture from UIP-13 and costs one load.
+  the result carries a non-zero `revision` and the expected `workspace`/`workspaceKey`. One broker
+  over one fixture serves every call, so it costs one load.
 
-### UIP-18 The stdout rule -- the one that corrupts the protocol -- has no guard of its own
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `CLAUDE.md` "Rules that bind everywhere"; `tests/RoseMcp.IntegrationTests/RoseServerProcess.cs:26-30`
-- **What:** "Nothing writes to stdout in stdio mode except protocol frames" is the rule whose
-  violation is hardest to diagnose, and the only thing enforcing it is that `RoseServerProcess`
-  parses the child's stdout as JSON-RPC, so garbage there fails `BrokerTests` for a reason that reads
-  as a protocol bug. The review's own ground truth ("No `Console.Write` in `src`") was established by
-  hand.
-- **Why it matters:** It is a one-line grep, it is the rule stated first in CLAUDE.md, and it is the
-  one a new contributor or an agent is most likely to break while debugging.
-- **Suggested change:** A unit test that reflects over every launchable host assembly for calls to
-  `Console.Write*`/`Console.Out`, or -- cheaper and honest -- a CI step:
-  `! grep -rn 'Console\.Write\|Console\.Out' src --include=*.cs`. The same step can carry the comment
-  grep #171 asks for (see UIP-23).
+### ~~UIP-18 The stdout rule -- the one that corrupts the protocol -- has no guard of its own~~
+**#386.** The rule whose violation is hardest to diagnose was held by review, and by a protocol error
+a long way from the cause. A unit test reads every line of source a stdio process loads and names the
+write.
 
 ### UIP-19 The unit suite is 83 files in one flat folder with one namespace
 - **Severity:** Low
@@ -496,7 +481,7 @@ means tests that would catch a regression in existing code but not an omission i
 
 | Rule (CLAUDE.md / `docs/invariants/`) | Guard | Kind |
 |---|---|---|
-| Nothing writes to stdout in stdio mode | none directly; `RoseServerProcess` parses the child's stdout, so garbage fails `BrokerTests` for the wrong stated reason | **review-only** (UIP-18) |
+| Nothing writes to stdout in stdio mode | a unit test over the source of every project a stdio process loads (#386) | **structural** |
 | Reads never observe a snapshot older than disk (`WorkspaceSession` barrier) | `StalenessTests`, `NewFileTests`, `DiskSynchronizerTests`, `SolutionWatcherTests`, and 17 classes that go through `WorkspaceSession` | by example, strong |
 | Every result carries a `revision` and names the workspace | `BrokerTests.cs:53-54,717-718,735` on three tools; `Revision` asserted in four files total | **review-only** for ~42 of ~45 tools (UIP-17) |
 | An error says what went wrong; convert at the MCP boundary | `ForwardedErrorTests`, `ArgumentValueTests`, `ToolDescriptionTests` | by example |
@@ -507,18 +492,18 @@ means tests that would catch a regression in existing code but not an omission i
 | `result-shapes` | `ToolSurfaceTests`, `ToolDescriptionTests`, `ToolBudgetTests`, `SecurityModelTests`, `ToolArgumentShapeTests`, `ToolParityTests` | **structural** -- the best-guarded rule in the repo |
 | `writing-csharp` | as the formatting row | by example, strong |
 | `analyzers-and-generators` | `AnalyzerLockTests`, `SolutionLoaderTests`, `WorkspaceStatusTests`, `XamlStubTests`, `WinUiXamlStubTests`, `WpfXamlStubTests`, `XamlStubChannelTests` | by example, strong |
-| `xaml-live-edit` | `XamlDiffTests`, `XamlApplyBaselineTests`, `XamlMaterialiserTests` (fast) + `LiveAppUwpTests` (never in CI) | by example; the apply half is CI-uncovered |
-| `tap-tiers` (which header may name what) | **none** -- a pure include-graph rule over C++ headers, checked by review | **review-only** |
-| `xaml-tap-lifecycle` | `LiveAppUwpTests`, `LiveAppWinUiTests` only -- never run in CI | **review-only in practice** |
-| `overlay` | `LiveAppUwpTests` only -- never run in CI | **review-only in practice** |
+| `xaml-live-edit` | `XamlDiffTests`, `XamlApplyBaselineTests`, `XamlMaterialiserTests` (fast) + the UWP live-edit tests, in CI since #384 | by example |
+| `tap-tiers` (which header may name what) | a unit test over the headers, their include graph and both providers' include order (#386) | **structural** |
+| `xaml-tap-lifecycle` | the probe-app tests, in CI since #384 | by example |
+| `overlay` | the UWP overlay tests, in CI since #384 | by example |
 | `hosts-and-deploy` | `PublishedLayoutTests`, `RepositoryHostBuildTests`, `XamlStackModulesTests`, `TargetArchitectureProbeTests` for the C# resolvers; `Assert-WindowsPackage` in `deploy.ps1` for the package | split across two mechanisms that never meet (UIP-25) |
 | `live-app-tests` (hand-back, slots, one gate) | the fixtures assert it themselves (`UwpProbeApp.SessionTurn.DisposeAsync`) | **structural**, and the best idea in the test suite |
 | Conventions: tabs, file-scoped namespaces, Allman, IDE0130 | `.editorconfig` + `EnforceCodeStyleInBuild` + `TreatWarningsAsErrors` + `dotnet format --verify-no-changes` in CI | **structural** |
-| Conventions: braces on a next-line body; comments carry no history or issue tags | `csharp_prefer_braces = when_multiline` gets part of the first; nothing gets the second | **review-only** (UIP-23) |
+| Conventions: braces on a next-line body; comments carry no history or issue tags | `csharp_prefer_braces = when_multiline` gets part of the first; `tools/Check-Comments.ps1` in CI holds the second against a per-file baseline that may only go down (#295) | review-only for the first; **structural** for the second |
 
 The pattern is clear and worth stating: **every rule that has a named type in `Contracts` has a
-structural guard, and every rule that is a property of an arrangement -- a header's include graph, a
-comment's tense, a published folder layout, a category attribute -- has none.** The four
+structural guard, and every rule that is a property of an arrangement -- a category attribute --
+has none.** The four
 tool-surface tests show the repository already knows how to close that gap; it has just not been
 applied outside `Contracts`.
 
@@ -530,9 +515,9 @@ applied outside `Contracts`.
 |---|---|---|---|
 | `build-and-test` (Windows) | build, `dotnet format --verify-no-changes`, unit suite Debug | same | |
 | `linux` | publish broker + worker for `linux-x64`/`linux-arm64`, unit suite Release | same | |
-| `integration` | only if a changed file is outside `docs/ wiki/ tools/ .claude/ src/*.Tap/ release.yml *.md`; `--maximum-parallel-tests 3`, `[Category!=LiveApp]`, plus `IntegrationTests.Windows` | always | |
+| `integration` | only if a changed file is outside `docs/ wiki/ tools/ .claude/ src/*.Tap/ release.yml *.md`; `--maximum-parallel-tests 3`, `[Category!=ProbeApp]`, plus `IntegrationTests.Windows`, failing on a skip | always | |
 | `xaml-providers` | only if a tap folder / `Directory.*.props` / `global.json` / `ci.yml` changed; **x64 Debug only**, compile and link, no tests | all six of {Uwp,WinUi} x {x86,x64,arm64} as Release | |
-| live-app suite | | | **`LiveAppSessionTests` (19), `LiveAppUwpTests` (25), `LiveAppWinUiTests` (8), `LiveAppUwpModernTests` (2), one `OperatorApiTests` method -- 55 tests** |
+| `probe-apps` | only if a probe-app test's inputs changed; sets the runner up and runs `[Category=ProbeApp]`, failing on a skip (#384) | always | |
 | `tools/*.ps1` (1,496 lines) | | | never linted, never executed except `deploy.ps1 -Mode package` on a tag |
 
 The CI file is the best-commented thing in the repository: the fail-open `!= 'false'` condition, the
@@ -542,35 +527,9 @@ failure on CI" rule are each a specific failure someone paid for. The release jo
 MinVer off the tag so there is one place to get the version right, two runners because only a Linux
 tar records an execute bit, and `Assert-WindowsPackage` gating the artifact.
 
-### UIP-22 `PublishedLayoutTests` guards a layout it stages itself, not the one `deploy.ps1` writes
-- **Severity:** Medium → **High**
-- **Effort:** M
-- **Where:** `tests/RoseMcp.UnitTests/PublishedLayoutTests.cs:32-42` (`Stage(...)` by hand, docstring "The shape `Publish-Tree` writes"), `tools/deploy.ps1:131` (`Publish-Tree`), `:396` (`Assert-WindowsPackage`)
-- **Scope grew with PR #277.** The layout had two parties when this was filed. It now has five:
-  `tools/deploy.ps1`, `tools/RoseMcp.Deploy.ps1`, `tools/build-installer.ps1`, `installer/install.ps1`
-  and `installer/rosemcp.iss` — the last two being **packaged content a user runs**, not a script this
-  repository runs. The installer work was careful about the part it could see (one staged tree feeds
-  both the zip and the setup exe, so they carry identical bytes, and `RoseMcp.Deploy.ps1` holds what
-  all three agree about for stopping a running install). What it could not do is join any of that to
-  the C# resolvers, which is this finding. A layout change now passes every C# test and fails on a
-  stranger's machine at install time.
-- **What:** The test builds a directory tree from nine hard-coded paths and asserts the C# resolvers
-  find things in it, with `searchRepository: false` so the development fallback cannot mask a break.
-  That part is excellent. What it does not do is read anything `deploy.ps1` produces: if `Publish-Tree`
-  moves the tray, renames `live-app/<rid>/`, or stops publishing the inspector, the test stages the
-  old shape and passes. The docstring even names the coupling -- "the shape `Publish-Tree` writes" --
-  and there is nothing but that sentence holding the two together. `Assert-WindowsPackage` covers the
-  other half (both windows, a host per architecture, both providers, and each PE's machine type) but
-  knows nothing about whether a resolver can find any of it.
-- **Why it matters:** The failure class is named in the test's own docstring -- "three defects lived
-  only on an install" -- and the guard that was built for it is half of a pair with no join. A layout
-  change made in PowerShell passes every C# test and fails only when somebody runs the install.
-- **Suggested change:** Make one of them the source. Cheapest: have `Publish-Tree` write a
-  `layout.json` listing every path it produced, have `Assert-WindowsPackage` validate against it, and
-  have `PublishedLayoutTests` stage from a committed copy of that file with a test that the committed
-  copy matches what a `-Mode package` run emits. More direct: have the test shell out to
-  `deploy.ps1 -Mode package -SkipBuild` into a temp root. Either way the arrangement stops being a
-  fact two files remember separately.
+### ~~UIP-22 `PublishedLayoutTests` guards a layout it stages itself, not the one `deploy.ps1` writes~~
+**#387.** Five parties each wrote the published layout down for themselves, so a change to it passed
+every test and failed at install time. They all read one committed layout, or are tested against it.
 
 ### ~~UIP-23 The comment conventions are unenforced and the debt is growing, not shrinking~~
 **#295. Wrong in part:** three of the phrases this finding counted are not history clauses. Nothing
@@ -595,28 +554,17 @@ baseline that may only go down.
   `tap-tiers` itself, a small script asserting the allowed `#include` edges is a better guard than
   either -- the tiers are a graph, and a graph is checkable.
 
-### UIP-25 The newest third of the product -- debugger, tap, live edit -- has no CI coverage at all
-- **The debugger third is done, #295**, by splitting the suite on what each test needs. What is left
-  is the XAML, C++ and UWP half -- card 16's self-hosted runner -- and the flake rate nothing measures.
-- **Severity:** High
-- **Effort:** L
-- **Where:** `.github/workflows/ci.yml:129-132,181` (category exclusion), `:238-264` (providers compile only)
-- **What:** The live-app tests that need a tap never run in CI: the `xaml-providers` job compiles both
-  taps but runs nothing against them. So the injection, the visual tree, the overlay, the pick, the
-  properties read and the live-edit apply are verified only when one person runs the suite on one
-  machine with a C++ toolset, the Windows App SDK and developer mode. The exclusion is well-reasoned in the file -- a hosted runner genuinely lacks the toolchains,
-  and skips reading as passes is worse -- but the consequence is that the invariants `overlay.md`,
-  `xaml-tap-lifecycle.md` and half of `xaml-live-edit.md` are review-only in practice, and
-  `live-app-tests.md`'s own hardest-won rule ("green once is not green") cannot be applied at all,
-  because nothing samples repeatedly.
-- **Why it matters:** This is the half the review brief calls "largely vibe-coded", it is the half
-  with the most open bugs (8 `live-app` labels), and it is the half with the least automated
-  evidence.
-- **Suggested change:** A self-hosted runner is the honest answer and the expensive one. Short of
-  that, one thing that costs little and recovers most of the value: a scheduled `workflow_dispatch` /
-  nightly job on the developer machine's own runner, or a documented `./tools/Rose.ps1 live-app` that
-  runs the suite N times and reports a flake rate -- the measurement `live-app-tests.md` says is
-  required and that nothing currently produces.
+**#386 built the include-graph guard, in the unit suite. Declined: the formatter and the linter.** A
+`.clang-format` and PSScriptAnalyzer would each open with one large diff restyling the existing C++
+and PowerShell, with no behaviour in it, and then catch mostly what review and the C# conventions
+already hold the code to. The structural rule this finding worried about is the one now checked, and
+the one bug it cites, `-f` binding tighter than `+`, is a precedence mistake rather than a style a
+linter looks for.
+
+### ~~UIP-25 The newest third of the product -- debugger, tap, live edit -- has no CI coverage at all~~
+**#295, #384.** The debugger, the tap and live edit ran in no CI job. The debugger tests run in the
+integration job and the probe-app tests in a job that sets its runner up for them, and neither may
+skip; a flake rate is still measured by nothing (open question 4).
 
 ### UIP-26 The docs are strong and the index has already drifted: twelve spot-checks, seven hold
 - **Severity:** Medium
@@ -714,10 +662,8 @@ tool.** The rule's own wording claims it is structural ("added once, in `Workspa
 added later cannot forget it") and it is not: three tools are spot-checked. Enumerating
 `ToolNames` and asserting both fields on each result makes the claim true. *(UIP-17)*
 
-**5. "The published layout is what the resolvers look for" -> one artefact both sides read.**
-`Publish-Tree` writes a layout in PowerShell and `PublishedLayoutTests` re-types it in C#. A
-`layout.json` emitted by the publish and consumed by both the package assertion and the test turns a
-remembered agreement into a checked one. *(UIP-22)*
+**~~5. "The published layout is what the resolvers look for" -> one artefact both sides read.~~**
+**#387.** Built: every party reads one committed layout, or is tested against it.
 
 **6. "Comments carry no history and no closed-issue tags" -> a CI grep.** 100 history clauses and 60
 issue tags, both up since #171 was filed. The convention is long, well argued and entirely
@@ -725,19 +671,16 @@ unenforced, and a voluntary rewrite loses to a new feature every time. Warn for 
 fail. Extend the file set beyond `*.cs` -- two of the violations found in this review are in
 `ci.yml` and a `.csproj`. *(UIP-23, UIP-12)*
 
-**7. "Nothing writes to stdout in stdio mode" -> the same grep step.** The first rule in CLAUDE.md,
-the hardest failure to diagnose, one line to check. *(UIP-18)*
+**~~7. "Nothing writes to stdout in stdio mode" -> the same grep step.~~**
+**#386.** Built, as a unit test over the source rather than a grep, so it reads code and not comments.
 
-**8. "The tap's four header tiers may only include downward" -> a script over the include graph.**
-`tap-tiers.md` describes a directed graph and asks a reviewer to hold it in their head. Parsing
-`#include` lines out of `src/RoseMcp.Xaml.Tap/*.h` and asserting the allowed edges is twenty lines
-and runs in the job that already has the C++ toolset. *(UIP-24)*
+**~~8. "The tap's four header tiers may only include downward" -> a script over the include graph.~~**
+**#386.** Built, in the unit suite, so it runs on every runner rather than only the one with the C++
+toolset.
 
-**9. "An expensive fixture is shared" -> make `TestSession.OpenAsync` the expensive path and give the
-cheap one a name.** Today the cheap thing (sharing) requires knowing TUnit's `ClassDataSource` and
-the expensive thing (a fresh load) is the one-liner every test reaches for. Inverting that -- a
-`SharedFixture.Members` property that is trivially available, and `TestSession.OpenAsync` documented
-as "for tests that mutate" -- makes the default choice the right one. *(UIP-13)*
+**~~9~~ #39.** A fresh load was the one-liner every test reached for, and sharing needed knowing how.
+A reading test names its fixture's shared workspace, and a fresh load is documented as the path for
+a test that writes. *(UIP-13)*
 
 ## Open questions for Steve
 

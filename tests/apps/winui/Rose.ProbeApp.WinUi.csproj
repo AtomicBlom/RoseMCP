@@ -86,12 +86,16 @@
 
   <!-- The manifest and its logos take part only in the packaged build. Left in unconditionally they
        would be staged beside an unpackaged app that has no use for them, which is harmless but
-       misleading about what that build is. -->
+       misleading about what that build is.
+
+       The logos are copied into the build output, because the build output is what the tests
+       register: the manifest names them by path, and a layout without them fails Add-AppxPackage
+       with 0x80073CF9 over a path that is not found (0x80070003), which says nothing about logos. -->
   <ItemGroup Condition=" '$(ProbePackaged)' == 'true' ">
     <AppxManifest Include="Package.appxmanifest">
       <SubType>Designer</SubType>
     </AppxManifest>
-    <Content Include="Assets\**" />
+    <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

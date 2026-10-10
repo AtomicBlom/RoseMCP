@@ -24,7 +24,7 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 | `RoseMcp.Contracts` | DTOs and tool-name constants shared by broker and worker. No package references at all, which is what lets every host reference it. |
 | `RoseMcp.Solutions` | Reads solution files and `rosemcp.json` without MSBuild or Roslyn, so the broker can decide *which* solution a call means without depending on the thing that loads one. Derives the short workspace key. |
 | `RoseMcp.Settings` | What a person has chosen about how RoseMCP behaves, per machine rather than per session or per solution. |
-| `RoseMcp.Logging` | The file sink, referenced only by the launchable hosts so Serilog stays off the DTO assembly and the tests. |
+| `RoseMcp.Logging` | The file sink, and `CallCorrelation`: the id a call carries across every hop, which the sink writes on every line. Referenced by the launchable hosts and by the broker, which sends the id on, so Serilog stays off the DTO assembly. |
 | `RoseMcp.Symbols` | Reads a module's metadata and its portable PDB: method tokens, local names at an instruction, the line an IL offset came from, and which compiled methods make up a body somebody is reading. Knows nothing about a debugger; it reads files. |
 | `RoseMcp.Broker` | `WorkspaceManager`, worker supervision, the tool layer, the activity log, and `AddRoseMcpBroker()`. One registration path, used by both hosts. |
 | `RoseMcp.Server` | Console host. `--transport stdio` (default) or `--transport http`. |
@@ -33,7 +33,7 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 | `RoseMcp.XamlStubs` | The XAML stub generator, loaded by the worker as an analyzer assembly rather than referenced as a library. |
 | `RoseMcp.XamlDiff` | Takes markup apart for the live-edit path. Plain `net10.0`, so a test can see inside it. |
 | `RoseMcp.LiveApp` | The live-app host: one ICorDebug session and one XAML diagnostics session, for one debugged process. |
-| `RoseMcp.Xaml.Tap` | The native in-app provider, shared between frameworks: the tap, the overlay, the pipe. Headers only, in four tiers by what each names -- see [tap-tiers.md](docs/invariants/tap-tiers.md). Only `tap_render.h` and `tap_overlay.h` are compiled per framework; the COM object names no projection. |
+| `RoseMcp.Xaml.Tap` | The native in-app provider, shared between frameworks: the tap, the overlay, the pipe. Headers only, in four tiers by what each names -- see [tap-tiers.md](docs/invariants/tap-tiers.md). Only tier 3 -- `tap_render.h`, the overlay and the toolbar's pieces -- is compiled per framework; the COM object names no projection, and `TapTierTests` fails if it does. |
 | `RoseMcp.Xaml.Uwp.Tap`, `RoseMcp.Xaml.WinUi.Tap` | The two bindings of that provider, one per XAML framework. Which one serves a target is decided by the framework the target runs. |
 | `RoseMcp.Ui.Core` | The half of both windows that is not WinUI: rows, formatting, the poll loop, the in-place merge, and `OperatorClient`. Plain `net10.0`, so it runs in the fast suite. |
 | `RoseMcp.Ui` | WinUI class library. Themes, window chrome, the crash handler and the icon assets, shared so a second window is the same product rather than a lookalike. |
@@ -60,7 +60,7 @@ why they are here and the rest are behind a trigger.
 
 - **Nothing writes to stdout in stdio mode** except protocol frames. All logging goes to stderr and
   to a file. A stray `Console.WriteLine` corrupts the stream, and the failure looks like a protocol
-  bug rather than a print statement.
+  bug rather than a print statement. `StdoutRuleTests` fails on one, naming the file and the line.
 - **Reads never observe a snapshot older than disk.** If you add a read path, it goes through the
   `WorkspaceSession` barrier. No exceptions.
 - **Every result carries a `revision` and names the workspace that answered.** Attribution is added
@@ -149,7 +149,8 @@ anything useful from a clone -- `install.ps1` wants a `payload/` beside it, whic
 extracted archive -- so they sit apart from `tools/`, where everything is meant to be run in place.
 `tools/RoseMcp.Deploy.ps1` is the exception that stays: `deploy.ps1` dot-sources it here and
 packaging also copies it into the archive, because stopping a running install is the one thing both
-installers and the promote path have to agree about.
+installers and the promote path have to agree about. `tools/published-layout.json` travels with it,
+for the same reason about where everything in an install sits.
 
 `promote` installs to `-Destination`, else `ROSEMCP_DEPLOY_ROOT`, else
 `%LOCALAPPDATA%/BinaryVibrance/RoseMCP` -- the same vendor/product folder the logs live under.
@@ -162,7 +163,9 @@ way the code says. `RoseMcp.IntegrationTests` loads real solutions from `tests/f
 design-time builds and starts real workers, and takes minutes rather than seconds -- most of it the
 live-app suite in `LiveAppSessionTests`. `RoseMcp.TestSupport` holds the doubles both need. Put a
 test where its cost puts it: a test that needs a `FixtureSolution` or a `TestSession` is an
-integration test however small it looks.
+integration test however small it looks. A test that only reads a fixture takes its shared workspace
+from `SharedWorkspaces` rather than loading its own; `TestSession.OpenAsync` is for a test that
+writes ([why](docs/decisions/a-test-that-only-reads-shares-its-workspace.md)).
 
 `RoseMcp.IntegrationTests.Windows` is the third, and the one easy to forget: the only test project
 with a compile reference on `RoseMcp.LiveApp`, so it is where the host's public types are driven
@@ -200,9 +203,15 @@ for the holder either way.
 `tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/TestResults/logs/<run>` rather than the machine's
 own folder (`ROSEMCP_LOG_ROOT`), nothing prunes it during the run, and a test that fails, times out
 or is cancelled lists and attaches every log written while it ran -- the tap logs of live sandboxes
-included. CI uploads the lot as `integration-evidence` when the job fails. Read them before
-concluding anything: a failure that appears only under load is still a failure, because a developer
-running several apps and taps at once is under load.
+included. CI uploads the lot as `integration-evidence`, or `probe-app-evidence` from the job that
+runs the probe-app tests, when the job fails. Read them before concluding anything: a failure that
+appears only under load is still a failure, because a developer running several apps and taps at
+once is under load.
+
+**A missing toolchain skips a test, except where `ROSEMCP_TESTS_REQUIRE_TOOLCHAIN=1`.** CI sets it,
+so a skip there fails naming what was missing; leave it unset locally unless you mean to prove a
+machine has everything. Skip through `MachineLimit.Reached`, never the framework directly --
+`ProbeAppCategoryTests` fails on a direct skip, because the switch cannot reach one.
 
 Run a worker standalone against a fixture -- the fastest way to debug Roslyn behaviour without
 the broker in the way:

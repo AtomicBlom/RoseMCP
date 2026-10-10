@@ -32,6 +32,12 @@ is what the skip says, rather than a guess. Inventing a cause -- naming develope
 that was captured and discarded -- is worse than a skip, because it sends the reader to a setting
 that is already correct and closes the question.
 
+**On a machine set up for these tests, never launching is a failure too.** Where
+`ROSEMCP_TESTS_REQUIRE_TOOLCHAIN` is set, as the CI jobs set it, the skip before a first success
+fails as well, through the same switch that fails a missing toolchain
+([only a missing toolchain skips a test](only-a-missing-toolchain-skips-a-test.md)). A runner whose
+setup installed everything and still cannot bring an app up is the case CI exists to report.
+
 **What it costs.** A machine that intermittently fails to launch the probe now fails the suite
 instead of quietly shrinking it. That is the intended trade: an acceptance test that did not run is
 the one outcome this suite must not report as success.

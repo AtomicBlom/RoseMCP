@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.IO.Pipes;
 using System.Text;
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using RoseMcp.Contracts;
@@ -22,6 +24,13 @@ namespace RoseMcp.IntegrationTests.Windows;
 public sealed class XamlProviderPipeTests
 {
 	private static readonly TimeSpan Patience = TimeSpan.FromSeconds(5);
+
+	/// <summary>
+	/// How long <see cref="RefuseAsync"/> gives a wait to answer a refusal before refusing another
+	/// provider. Paces the attempts only: a refusal releases a wait that had snapshotted before it at
+	/// once, so the outcome never turns on this being long enough.
+	/// </summary>
+	private static readonly TimeSpan RefusalRetry = TimeSpan.FromMilliseconds(250);
 
 	/// <summary>
 	/// A provider connects, sends its greeting, and the host reads it. The ordinary first connection,
@@ -74,7 +83,7 @@ public sealed class XamlProviderPipeTests
 
 		// The provider is gone, and nothing told the host -- exactly as when a target's tap dies.
 		using var second = await ConnectAsync(pipe.Name);
-		var waiting = Task.Run(() => pipe.WaitForProvider(Patience));
+		var waiting = await StartWaitingAsync(pipe);
 
 		await Task.Delay(200);
 		waiting.IsCompleted.ShouldBeFalse("the wait was answered before the second provider greeted");
@@ -83,6 +92,77 @@ public sealed class XamlProviderPipeTests
 
 		(await waiting).ShouldBe(XamlWire.Greeting(pipe.Nonce));
 		pipe.Connected.ShouldBeTrue();
+	}
+
+	/// <summary>
+	/// A provider that goes while the host is between reads is seen differently from one that goes under a
+	/// pending read, and the host listens again either way.
+	/// <para>
+	/// Under a pending read the departure comes back as a zero-length read and the stream stays
+	/// connected. A read issued after the far end has closed fails at once instead, and the stream marks
+	/// itself broken: no longer connected, yet still holding the departed client, so listening on it again
+	/// throws until it is disconnected. Which of the two a real tap's death lands on is down to where the
+	/// reader was when it happened, so the host is held between the greeting and its next read here, and
+	/// the provider goes then.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task Listens_again_for_a_provider_that_goes_while_the_host_is_between_reads()
+	{
+		using var logger = new HoldsTheReaderAfterTheGreeting();
+		using var pipe = new XamlProviderPipe(logger);
+		pipe.Listen().ShouldBeNull();
+
+		var first = await GreetAsync(pipe);
+		logger.Holding.Wait(Patience).ShouldBeTrue("the reader never said a provider connected, so it was never held between reads");
+
+		first.Dispose();
+		logger.Release();
+
+		using var second = await GreetAsync(pipe);
+		pipe.Connected.ShouldBeTrue();
+	}
+
+	/// <summary>
+	/// Holds the pipe's reader inside the line it logs when a provider greets, which is after the greeting
+	/// is answered and before the next read is issued -- the one place a test can stop it between reads.
+	/// Holds once, and for no longer than <see cref="Patience"/>, so a test that never releases it fails
+	/// rather than wedging.
+	/// </summary>
+	private sealed class HoldsTheReaderAfterTheGreeting : ILogger, IDisposable
+	{
+		private readonly ManualResetEventSlim _released = new();
+		private int _held;
+
+		/// <summary>Set once the reader is inside the greeting's log line.</summary>
+		public ManualResetEventSlim Holding { get; } = new();
+
+		/// <summary>Lets the held reader go on to its next read.</summary>
+		public void Release() => _released.Set();
+
+		public IDisposable? BeginScope<TState>(TState state)
+			where TState : notnull => null;
+
+		public bool IsEnabled(LogLevel logLevel) => true;
+
+		public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+		{
+			var isGreeting = state is IReadOnlyList<KeyValuePair<string, object?>> values
+				&& values.Any(value => value.Key == "{OriginalFormat}"
+					&& value.Value is string format
+					&& format.StartsWith("A XAML provider connected", StringComparison.Ordinal));
+			if (!isGreeting || Interlocked.Exchange(ref _held, 1) == 1) return;
+
+			Holding.Set();
+			_released.Wait(Patience);
+		}
+
+		public void Dispose()
+		{
+			_released.Set();
+			_released.Dispose();
+			Holding.Dispose();
+		}
 	}
 
 	/// <summary>
@@ -160,15 +240,10 @@ public sealed class XamlProviderPipeTests
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
 		pipe.Listen().ShouldBeNull();
 
-		var waiting = Task.Run(() => pipe.WaitForProvider(Patience));
+		var waiting = await StartWaitingAsync(pipe);
 
-		using var provider = await ConnectAsync(pipe.Name);
-		await SendFrameAsync(provider, XamlWire.UnversionedGreeting);
-
-		// Released as soon as the greeting is refused, rather than at the bound.
-		var answered = await Task.WhenAny(waiting, Task.Delay(Patience / 2));
-		answered.ShouldBeSameAs(waiting);
-		(await waiting).ShouldBeNull();
+		// Released as soon as the greeting is refused, rather than at the bound, which RefuseAsync holds it to.
+		(await RefuseAsync(pipe, waiting, XamlWire.UnversionedGreeting)).ShouldBeNull();
 
 		pipe.Connected.ShouldBeFalse();
 		pipe.Refused.ShouldNotBeNull();
@@ -185,12 +260,9 @@ public sealed class XamlProviderPipeTests
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
 		pipe.Listen().ShouldBeNull();
 
-		var waiting = Task.Run(() => pipe.WaitForProvider(Patience));
+		var waiting = await StartWaitingAsync(pipe);
 
-		using var provider = await ConnectAsync(pipe.Name);
-		await SendFrameAsync(provider, XamlWire.Greeting("not-this-sessions-key"));
-
-		(await waiting).ShouldBeNull();
+		(await RefuseAsync(pipe, waiting, XamlWire.Greeting("not-this-sessions-key"))).ShouldBeNull();
 		pipe.Connected.ShouldBeFalse();
 		pipe.Refused!.ShouldContain("key", Case.Sensitive);
 	}
@@ -206,12 +278,8 @@ public sealed class XamlProviderPipeTests
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
 		pipe.Listen().ShouldBeNull();
 
-		var refused = Task.Run(() => pipe.WaitForProvider(Patience));
-		using (var impostor = await ConnectAsync(pipe.Name))
-		{
-			await SendFrameAsync(impostor, XamlWire.Greeting("not-this-sessions-key"));
-			(await refused).ShouldBeNull();
-		}
+		var refused = await StartWaitingAsync(pipe);
+		(await RefuseAsync(pipe, refused, XamlWire.Greeting("not-this-sessions-key"))).ShouldBeNull();
 
 		using var provider = await GreetAsync(pipe);
 
@@ -289,15 +357,21 @@ public sealed class XamlProviderPipeTests
 
 	/// <summary>
 	/// One provider connecting and greeting the host as the provider this session injected does,
-	/// handed back so the caller decides when it goes away. The wait goes on a thread of its own before
-	/// anything dials, for the reason the first test records.
+	/// handed back so the caller decides when it goes away.
+	/// <para>
+	/// Dialled before anything waits. A connect completes only once the host is listening, which after a
+	/// provider has gone is after it has hung up and put a fresh greeting in place; a wait begun before
+	/// then can snapshot the departed provider's greeting, already answered, and come back with it while
+	/// this one has not greeted at all. The wait still goes on a thread of its own before the greeting is
+	/// sent, for the reason the first test records.
+	/// </para>
 	/// </summary>
 	/// <param name="pipe">The listening host.</param>
 	private static async Task<NamedPipeClientStream> GreetAsync(XamlProviderPipe pipe)
 	{
-		var waiting = Task.Run(() => pipe.WaitForProvider(Patience));
-
 		var provider = await ConnectAsync(pipe.Name);
+		var waiting = await StartWaitingAsync(pipe);
+
 		await SendFrameAsync(provider, XamlWire.Greeting(pipe.Nonce));
 
 		(await waiting).ShouldBe(XamlWire.Greeting(pipe.Nonce));
@@ -306,9 +380,69 @@ public sealed class XamlProviderPipeTests
 	}
 
 	/// <summary>
+	/// Starts a wait for the next provider on a thread of its own, and returns once that thread is running.
+	/// A wait snapshots the greeting it is waiting on when it begins, and on a loaded machine a thread-pool
+	/// item can start long after the test has gone on to connect. Returning only once the thread runs
+	/// narrows that to the few instructions between the signal and the snapshot rather than closing it.
+	/// What is left matters only to a refusal, which releases only the waits that snapshotted before it,
+	/// and <see cref="RefuseAsync"/> covers it by refusing again. A wait begun after a reconnect's connect
+	/// completes snapshots the fresh greeting however late it starts.
+	/// </summary>
+	/// <param name="pipe">The listening host.</param>
+	private static async Task<Task<string?>> StartWaitingAsync(XamlProviderPipe pipe)
+	{
+		// Continuations run asynchronously, or the test would resume on the waiting thread itself and
+		// hold it off the wait it was started for.
+		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var waiting = Task.Run(() =>
+		{
+			started.SetResult();
+			return pipe.WaitForProvider(Patience);
+		});
+
+		await started.Task;
+		return waiting;
+	}
+
+	/// <summary>
+	/// Connects a provider that greets with <paramref name="greeting"/>, which the host refuses, and
+	/// returns what <paramref name="waiting"/> answered -- failing unless that was well inside the wait's
+	/// own bound, since a refusal is meant to release a wait at once.
+	/// <para>
+	/// A refusal releases only the waits that had snapshotted the greeting before it, and nothing outside
+	/// the pipe can see when a wait does. One whose thread was held off between starting and snapshotting
+	/// misses the refusal and waits for the next provider instead. So a provider is refused again each
+	/// time the wait has not answered within <see cref="RefusalRetry"/>: whenever its snapshot happened,
+	/// the next refusal after it is one it sees, and the retry only paces the attempts rather than being
+	/// something the outcome depends on.
+	/// </para>
+	/// </summary>
+	/// <param name="pipe">The listening host.</param>
+	/// <param name="waiting">A wait begun by <see cref="StartWaitingAsync"/>.</param>
+	/// <param name="greeting">A greeting the host refuses.</param>
+	private static async Task<string?> RefuseAsync(XamlProviderPipe pipe, Task<string?> waiting, string greeting)
+	{
+		var elapsed = Stopwatch.StartNew();
+
+		while (true)
+		{
+			using (var provider = await ConnectAsync(pipe.Name))
+			{
+				await SendFrameAsync(provider, greeting);
+
+				var answered = await Task.WhenAny(waiting, Task.Delay(RefusalRetry));
+				if (answered == waiting) return await waiting;
+			}
+
+			elapsed.Elapsed.ShouldBeLessThan(Patience / 2, "the wait was not released by a refusal, so it waits out its bound instead");
+		}
+	}
+
+	/// <summary>
 	/// What the host believes about a provider that has gone. A server pipe's <c>IsConnected</c> is
-	/// its own state rather than the far end's, so it stays true after the client closes -- and every
-	/// decision the reconnect turns on is asked of it.
+	/// its own state rather than the far end's, so it stays true after the client closes unless a read
+	/// happened to fail on the departure first -- and every decision the reconnect turns on is asked of
+	/// it.
 	/// </summary>
 	[Test]
 	public async Task Reports_whether_it_still_believes_a_departed_provider_is_connected()

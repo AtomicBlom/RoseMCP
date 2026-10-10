@@ -3,17 +3,17 @@ using RoseMcp.Contracts;
 
 namespace RoseMcp.IntegrationTests;
 
-public sealed class DiagnosticsTests
+[ClassDataSource<SharedWorkspaces>(Shared = SharedType.PerAssembly)]
+public sealed class DiagnosticsTests(SharedWorkspaces workspaces)
 {
 	[Test]
 	public async Task Reports_nothing_for_a_clean_solution()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Simple;
 		var service = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
 
 		var result = await service.AnalyseAsync(
-			await session.ReadAsync(TestContext.Current!.Execution.CancellationToken),
+			await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken),
 			new DiagnosticsRequest(),
 			TestContext.Current!.Execution.CancellationToken);
 
@@ -146,11 +146,10 @@ public sealed class DiagnosticsTests
 	[Test]
 	public async Task Does_not_recompile_when_nothing_changed()
 	{
-		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.Simple;
 		var service = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
 
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		await service.AnalyseAsync(snapshot, new DiagnosticsRequest(), TestContext.Current!.Execution.CancellationToken);
 
 		var afterFirst = service.CompilationsAnalysed;
@@ -159,7 +158,7 @@ public sealed class DiagnosticsTests
 		for (var i = 0; i < 3; i++)
 		{
 			await service.AnalyseAsync(
-				await session.ReadAsync(TestContext.Current!.Execution.CancellationToken),
+				await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken),
 				new DiagnosticsRequest(),
 				TestContext.Current!.Execution.CancellationToken);
 		}

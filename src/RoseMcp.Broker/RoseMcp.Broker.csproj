@@ -25,6 +25,9 @@
     <ProjectReference Include="..\RoseMcp.Settings\RoseMcp.Settings.csproj" />
     <ProjectReference Include="..\RoseMcp.Contracts\RoseMcp.Contracts.csproj" />
     <ProjectReference Include="..\RoseMcp.Solutions\RoseMcp.Solutions.csproj" />
+    <!-- For CallCorrelation alone: the id a call carries across every hop is read by the log sink
+         and sent on by the broker, so it lives where both can see it. The broker adds no sink. -->
+    <ProjectReference Include="..\RoseMcp.Logging\RoseMcp.Logging.csproj" />
   </ItemGroup>
 
 </Project>

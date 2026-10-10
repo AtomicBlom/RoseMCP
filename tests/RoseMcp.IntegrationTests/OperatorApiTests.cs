@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using ModelContextProtocol.Client;
 using RoseMcp.Contracts;
+using RoseMcp.Logging;
 using static RoseMcp.IntegrationTests.ProbeTargetSession;
 
 namespace RoseMcp.IntegrationTests;
@@ -166,6 +167,74 @@ public sealed class OperatorApiTests
 		{
 			if (!target.HasExited) target.Kill(entireProcessTree: true);
 		}
+	}
+
+	/// <summary>
+	/// An operator request is a call entering Rose, so it is given an id the way a tool call is, and the
+	/// hop it makes to the live-app host carries it. Found from the host's side: the line the host writes
+	/// for the detach names an id, and that id is on the broker's lines too -- which it is only if the
+	/// broker minted it and sent it, since a host sent none mints one nobody else has.
+	/// </summary>
+	[Test]
+	public async Task An_operator_request_carries_one_id_to_the_host_it_reaches()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
+
+		using var target = StartProbeTarget();
+		try
+		{
+			await using var agent = await McpClient.CreateAsync(
+				new HttpClientTransport(new HttpClientTransportOptions
+				{
+					Endpoint = new Uri(broker.Url("/")),
+					AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {Token}" },
+				}),
+				new McpClientOptions { DiscoverProbeTimeout = Timeout.InfiniteTimeSpan },
+				cancellationToken: cancellationToken);
+
+			var attached = await agent.CallToolAsync(
+				ToolNames.DebugAttach,
+				new Dictionary<string, object?> { ["processId"] = target.Id },
+				cancellationToken: cancellationToken);
+
+			var summary = attached.StructuredContent?.Deserialize<LiveAppSessionSummary>(ContractJson.Options);
+			summary.ShouldNotBeNull();
+			var hostLog = summary!.HostLogPath;
+			hostLog.ShouldNotBeNull("the host names the log it writes");
+
+			using var detached = await broker.Client.PostAsync(
+				broker.Url($"/operator/sessions/{summary.SessionId}/detach"), content: null, cancellationToken);
+			detached.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+			var detachLine = Lines(hostLog)
+			.Where(line => line.Contains($"Detached from pid {target.Id}", StringComparison.Ordinal))
+			.ToList()
+			.ShouldHaveSingleItem();
+			var id = detachLine.Split(' ')[3];
+
+			CallCorrelation.IsWellFormed(id).ShouldBeTrue($"the host's detach line names no call: {detachLine}");
+
+			var serverLogs = Directory.GetFiles(
+				Path.Combine(Environment.GetEnvironmentVariable(RoseLogFile.RootVariable)!, "Server"), "*.log");
+
+			serverLogs.SelectMany(Lines).ShouldContain(
+				line => line.Contains($"] {id} ", StringComparison.Ordinal),
+				$"no broker line carries {id}, so the host minted it rather than being sent it");
+		}
+		finally
+		{
+			if (!target.HasExited) target.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>Reads a log another process still holds open for writing.</summary>
+	private static IEnumerable<string> Lines(string path)
+	{
+		using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+		using var reader = new StreamReader(stream);
+
+		return reader.ReadToEnd().Split('\n');
 	}
 
 	/// <summary>

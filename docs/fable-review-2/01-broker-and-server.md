@@ -120,13 +120,10 @@ workspace. The compiler enforces it now, and the revision is enumerated over the
 - **Why it matters:** This is the "fix layered on a fix" pattern the brief asks about: a queue added against an observed symptom, then an invariant written when the real cause was found, and the first comment never revisited. The next reader trusts the comment nearer the code.
 - **Suggested change:** Rewrite the summary to what it guarantees (one writer on the stdio side, no failure propagated from a client that stopped listening) and link the invariant for why order is not one of them. If neither guarantee is needed, delete the class and pass the `IProgress` through.
 
-### BRK-15 No correlation id crosses the broker-to-worker hop
-- **Severity:** Low
-- **Effort:** S
-- **Where:** `src/RoseMcp.Broker/WorkspaceWorker.cs:202-206`, `src/RoseMcp.Broker/CancellableToolCall.cs:39-40`, `src/RoseMcp.Broker/LiveAppSession.cs:619-623`
-- **What:** The broker logs `Forwarding {Tool} to {WorkspaceKey} for {Origin}` at Information; the worker logs into its own file under `Logs/Worker/`. `CancellableToolCall` mints a fresh JSON-RPC request id per call and never logs it; `CallSession.Id` is available in the filter and never logged. Matching a broker line to a worker line is by timestamp and tool name, which fails the moment two sessions ask the same worker the same thing.
-- **Why it matters:** The transport invariant says a failure should be traceable end to end. With the tray serving several agents, "which call was this" is the first question and the logs cannot answer it.
-- **Suggested change:** Log the request id in the Forwarding line, and have the worker's `ToolErrorReporting` filter (which already sees `context`) log the incoming JSON-RPC id at tool entry. Include `CallSession.Id` in the broker line. Cheap, and the id already exists.
+### ~~BRK-15 No correlation id crosses the broker-to-worker hop~~
+**#385.** A broker line could be matched to a worker line only by timestamp and tool name, which
+failed when two sessions asked one worker the same thing. Every hop carries the call's id, and every
+line written for the call says it.
 
 ### BRK-16 `WorkspaceKey` and the log file name compute the same hash independently, and nothing checks they agree
 - **Severity:** Low

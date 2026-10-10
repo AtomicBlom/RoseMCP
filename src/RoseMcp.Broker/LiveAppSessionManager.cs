@@ -248,7 +248,7 @@ public sealed class LiveAppSessionManager(
 	/// Called under the gate by the only thing that adds a session, so the check and the start cannot
 	/// interleave and produce two loops.
 	/// </summary>
-	private void EnsureRefreshing() => _refreshing ??= Task.Run(() => RefreshLoopAsync(_stopping.Token));
+	private void EnsureRefreshing() => _refreshing ??= Detached.Run(() => RefreshLoopAsync(_stopping.Token));
 
 	/// <summary>
 	/// Re-reads every session's self-report on a timer, for as long as this manager lives, and drops the

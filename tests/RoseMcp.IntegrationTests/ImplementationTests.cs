@@ -7,16 +7,16 @@ namespace RoseMcp.IntegrationTests;
 /// implementation need not mention the interface anywhere near the member, and an override's
 /// documentation usually lives on the base it is hiding.
 /// </summary>
-public sealed class ImplementationTests
+[ClassDataSource<SharedWorkspaces>(Shared = SharedType.PerAssembly)]
+public sealed class ImplementationTests(SharedWorkspaces workspaces)
 {
 	[Test]
 	public async Task Finds_the_types_that_implement_an_interface()
 	{
-		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.MultiType;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var path = fixture.Path("MultiType", "Shapes", "Shapes.cs");
+		var path = workspace.Path("MultiType", "Shapes", "Shapes.cs");
 		var (line, column) = At(path, "IShape");
 
 		var result = await NavigationService.FindImplementationsAsync(
@@ -36,11 +36,10 @@ public sealed class ImplementationTests
 	[Test]
 	public async Task Finds_the_members_that_implement_an_interface_member()
 	{
-		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.MultiType;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var path = fixture.Path("MultiType", "Shapes", "Shapes.cs");
+		var path = workspace.Path("MultiType", "Shapes", "Shapes.cs");
 		var (line, column) = At(path, "Area();");
 
 		var result = await NavigationService.FindImplementationsAsync(
@@ -63,9 +62,8 @@ public sealed class ImplementationTests
 	[Test]
 	public async Task Finds_what_derives_from_a_type_that_lives_in_metadata()
 	{
-		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.MultiType;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await NavigationService.FindImplementationsAsync(
 			snapshot,
@@ -86,11 +84,10 @@ public sealed class ImplementationTests
 	[Test]
 	public async Task Says_which_question_it_answered_for_a_class()
 	{
-		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.MultiType;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var path = fixture.Path("MultiType", "Shapes", "Shapes.cs");
+		var path = workspace.Path("MultiType", "Shapes", "Shapes.cs");
 		var (line, column) = At(path, "Square(double side)");
 
 		var result = await NavigationService.FindImplementationsAsync(
@@ -103,11 +100,10 @@ public sealed class ImplementationTests
 	[Test]
 	public async Task Reports_what_a_member_implements()
 	{
-		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.MultiType;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var path = fixture.Path("MultiType", "Shapes", "Shapes.cs");
+		var path = workspace.Path("MultiType", "Shapes", "Shapes.cs");
 		var (line, column) = At(path, "Area() => Math.PI");
 
 		var info = await NavigationService.DescribeAsync(
@@ -145,9 +141,8 @@ public sealed class ImplementationTests
 	[Test]
 	public async Task Finds_implementations_by_name()
 	{
-		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.MultiType;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await NavigationService.FindImplementationsAsync(
 			snapshot,
@@ -168,9 +163,8 @@ public sealed class ImplementationTests
 	[Test]
 	public async Task Lists_only_this_solutions_implementations_of_an_interface_from_metadata()
 	{
-		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Hierarchy;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await NavigationService.FindImplementationsAsync(
 			snapshot,
@@ -197,9 +191,8 @@ public sealed class ImplementationTests
 	[Test]
 	public async Task Narrows_to_one_project_before_it_cuts_the_list()
 	{
-		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Hierarchy;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		var target = new SymbolTarget { Symbol = "Core.IStore" };
 
 		var app = await NavigationService.FindImplementationsAsync(
@@ -233,9 +226,8 @@ public sealed class ImplementationTests
 	[Test]
 	public async Task Narrows_a_multi_targeted_project_to_what_one_framework_declares()
 	{
-		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Hierarchy;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		var target = new SymbolTarget { Symbol = "Core.IStore" };
 
 		var older = await NavigationService.FindImplementationsAsync(
@@ -259,9 +251,8 @@ public sealed class ImplementationTests
 	[Test]
 	public async Task Narrows_to_each_project_a_linked_file_is_compiled_by()
 	{
-		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Hierarchy;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		var target = new SymbolTarget { Symbol = "App.IShelf" };
 
 		foreach (var project in new[] { "App", "App.Tests" })
@@ -283,9 +274,8 @@ public sealed class ImplementationTests
 	[Test]
 	public async Task Refuses_to_narrow_to_a_project_that_is_not_there()
 	{
-		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.Hierarchy;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var error = await Should.ThrowAsync<ArgumentException>(() =>
 			NavigationService.FindImplementationsAsync(

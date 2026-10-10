@@ -859,7 +859,7 @@ public sealed class WorkspaceManager(
 
 		// Read here rather than inside the task, so the loop holds the token it was started with.
 		var stopping = _stopping.Token;
-		_sweeping = Task.Run(() => SweepLoopAsync(idleAfter, stopping));
+		_sweeping = Detached.Run(() => SweepLoopAsync(idleAfter, stopping));
 	}
 
 	/// <summary>

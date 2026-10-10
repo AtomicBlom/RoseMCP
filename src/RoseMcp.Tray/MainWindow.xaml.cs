@@ -527,6 +527,27 @@ public sealed partial class MainWindow : Window
 	}
 
 	/// <summary>
+	/// Shows the worker log that explains one workspace. The file when the worker named one, else the
+	/// folder worker logs go in -- which is still the right place to look, just not the right line.
+	/// </summary>
+	private void OnOpenWorkerLog(object sender, RoutedEventArgs e)
+	{
+		if (sender is not FrameworkElement { Tag: string solutionPath }) return;
+
+		var row = _rows.FirstOrDefault(candidate => Same(candidate.SolutionPath, solutionPath));
+
+		if (row?.WorkerLogPath is { Length: > 0 } path && File.Exists(path))
+		{
+			OpenInExplorer($"/select,\"{path}\"");
+			return;
+		}
+
+		var directory = RoseLogFile.DirectoryFor("Worker");
+		Directory.CreateDirectory(directory);
+		OpenInExplorer($"\"{directory}\"");
+	}
+
+	/// <summary>
 	/// The folder above this component's: Server, Worker and Tray sit side by side under it, and
 	/// the question that brings someone here is usually which of them has the answer.
 	/// </summary>

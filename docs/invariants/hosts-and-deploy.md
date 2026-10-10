@@ -1,6 +1,6 @@
 # Framework detection, hosts, and deploy
 
-Read before changing `XamlStackModules`, architecture detection, `tools/deploy.ps1`, or which runtimes an install carries.
+Read before changing `XamlStackModules`, architecture detection, `tools/deploy.ps1`, `tools/published-layout.json`, where anything sits in an install, or which runtimes an install carries.
 
 - **Which XAML framework a target is running is asked of the target, and the order of the asking is
   the trick.** The live half had no idea: it hard-coded UWP in four places -- the
@@ -65,8 +65,10 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   than two: `build.ps1` exits 3 for "this machine has no toolset for it", which a developer machine
   may legitimately hit, while a build agent is the machine that is supposed to have every toolset. So
   `promote` warns, `package` refuses, and CI fails on any non-zero exit -- because nothing else in CI
-  compiles a line of the C++, and the first thing to notice used to be a release failing to package,
-  after the tag was already cut. Main builds all six combinations as Release. A pull request builds
+  compiles the C++ for every architecture a release ships, and a break found by a release failing to
+  package is found after the tag is already cut. The probe-apps job builds both providers too, but
+  x64 Debug only, as the tests it runs load them, and it fails on exit 3 for the same reason this
+  does. Main builds all six combinations as Release. A pull request builds
   x64 Debug only, and only when a provider's inputs changed: the ARM64 cross-toolset is an installer
   run that costs more than every compile together, and a break that only one architecture or the
   optimiser sees, in headers all of them share, is rare enough to be caught on main, before any tag,
@@ -78,3 +80,30 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   partway leaves nothing running and a half-written install that may not start. Keep anything that
   can fail -- a publish, a provider build, a layout check -- ahead of the first `Stop-*` call; after
   it, the only work is a copy.
+- **Where anything sits in an install is written once, in `tools/published-layout.json`, and every
+  other party reads that file or is tested against it.** Five parties have to agree: `deploy.ps1`
+  publishes the layout, `build-installer.ps1` checks a stage of it, `install.ps1` and `rosemcp.iss`
+  lay it down from a package, and the C# resolvers look for things in it. Two of those are packaged
+  content that runs on somebody else's machine, so a disagreement does not turn a build red; it is an
+  install that cannot find its worker, its inspector or a debug host. Hence one file, and no path
+  literal in any script: the PowerShell reads it through `Get-PublishedLayout` and the helpers beside
+  it in `RoseMcp.Deploy.ps1`; `Assert-PackagedRuntime` holds a package to it both when packaging and
+  again when installing; `PublishedLayoutTests` stages it and drives every resolver with the
+  repository fallback off; and `InstallerLayoutTests` reads `rosemcp.iss` against it, because Inno
+  cannot read JSON. To move something, change the file, then whatever those tests name. Why each
+  placement is what it is lives in the file's own `why` fields. See
+  [the decision](../decisions/the-published-layout-is-one-file-every-party-reads.md).
+  <br>
+  The file travels with the scripts that read it: it is in the package's own script list, copied to
+  the root of the archive beside `install.ps1` and `RoseMcp.Deploy.ps1`, and `Assert-WindowsPackage`
+  refuses a package without it. It is read when first asked for rather than when `RoseMcp.Deploy.ps1`
+  is dot-sourced, because the Inno installer runs that script alone out of a temporary folder to stop
+  and clear an install, which needs no layout -- loading it eagerly would break the one path that has
+  no copy of it. And it is plain ASCII JSON with no comments, because `install.ps1` is run by
+  whichever shell somebody has: Windows PowerShell 5.1's `ConvertFrom-Json` refuses a comment, and
+  its `Get-Content` reads a file with no byte-order mark as the machine's ANSI code page.
+  <br>
+  Every executable and provider the layout names is a native image, so none can be deduplicated into
+  `shared/` -- two images for different machines are never byte-identical. `Assert-PackagedRuntime`
+  therefore looks for each only in its own architecture's folder and checks its PE machine, and
+  reports one found in `shared/` as deduplication matching something it should not have.

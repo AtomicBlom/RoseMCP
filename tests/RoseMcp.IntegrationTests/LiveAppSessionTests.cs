@@ -726,7 +726,7 @@ public sealed class LiveAppSessionTests
 			await Task.Delay(1500, cancellationToken);
 			if (child.HasExited)
 			{
-				Skip.Test($"The x64 probe target exited (code {child.ExitCode}); the x64 .NET runtime is not available here.");
+				MachineLimit.Reached($"The x64 probe target exited (code {child.ExitCode}); the x64 .NET runtime is not available here.");
 			}
 
 			var target = new LiveAppTarget
@@ -789,7 +789,7 @@ public sealed class LiveAppSessionTests
 
 			if (child.HasExited)
 			{
-				Skip.Test($"The x86 probe target exited (code {child.ExitCode}); the x86 .NET runtime is not available here.");
+				MachineLimit.Reached($"The x86 probe target exited (code {child.ExitCode}); the x86 .NET runtime is not available here.");
 			}
 
 			var target = new LiveAppTarget

@@ -2,26 +2,33 @@
 
 Read before adding or changing a test in `LiveAppSessionTests` or a live-app fixture.
 
-**What CI runs is decided by what a test needs, and the need is the fixture it takes.** A class that
-asks for a probe app in its constructor wants a C++ toolset, the Windows App SDK, developer mode and
-a machine-wide package registration, so it carries `[Category("ProbeApp")]` and the hosted runner
-skips it -- and an absent toolchain there answers by skipping, which reads as a pass, so excluding
-the class is what says the coverage is not there. Everything else in this half drives
-`DebugProbeTarget`, an ordinary .NET child process, and a hosted Windows runner attaches a real
-ICorDebug session to one without complaint. Thirty-three debugger tests run there on that basis,
-eleven of which proved it by running for weeks after a file split dropped their category.
+**Which CI job runs a test is decided by what it needs, and the need is the fixture it takes.** A
+class that asks for a probe app in its constructor wants a C++ toolset, the Windows App SDK,
+developer mode and a machine-wide package registration, so it carries `[Category("ProbeApp")]`: the
+integration job excludes it, and the probe-apps job, whose steps set all of that up first, runs it.
+Everything else in this half drives `DebugProbeTarget`, an ordinary .NET child process, and any
+hosted Windows runner attaches a real ICorDebug session to one, so it runs in the integration job
+on every change rather than only when the probe apps' inputs do.
 
-**Nothing in that half is allowed to skip, and CI carries what it takes not to.** A runner has no
-x86 .NET runtime of its own, so `Attaches_to_an_x86_target` builds a host and a target that cannot
-start and reports the exit code -- which reads as a pass. The workflow installs one and points
-`DOTNET_ROOT_X86` at it instead, for half a minute a run. The rule that makes that worth doing is
-the one above: a skip is how a capability stops being tested while the build stays green, so the
-answer to one is a runtime, a toolchain or an exclusion that says out loud what is not covered --
-never a skip left in place. A new skip appearing in this job is a real gap, not weather.
+**Nothing in CI is allowed to skip, and each job carries what it takes not to.** Every skip in this
+suite goes through `MachineLimit.Reached`, which skips on a developer machine and fails where
+`ROSEMCP_TESTS_REQUIRE_TOOLCHAIN` is set -- and both integration jobs set it. So a runner that lost a
+component fails naming it instead of reporting the same green as one that ran everything. The cost
+is that each job has to install what its tests need: a runner has no x86 .NET runtime, so the
+integration job installs one for `Attaches_to_an_x86_target` and points `DOTNET_ROOT_X86` at it; it
+has no developer mode, Windows App Runtime or, sometimes, UWP tooling, so the probe-apps job sets
+those up, each in a step that checks its result and says what it found. The UWP probes' debug
+frameworks are the exception: the fixtures install them from their own build's recipe when a
+registration is refused for one, so a developer machine gets them the same way (see
+[the decision](../decisions/the-probe-app-tests-run-on-a-hosted-runner.md)). A skip is how a capability
+stops being tested while the build stays green, so the answer to one is a runtime, a toolchain or an
+exclusion that says out loud what is not covered -- never a skip left in place. A test that calls the
+framework's skip directly is out of the switch's reach, and `ProbeAppCategoryTests` fails on one.
 
 Do not apply the category by hand in either direction. `ProbeAppCategoryTests` decides from the
 constructor and fails both ways, because a probe-app test without it is a red build on a runner that
-could never have served it, and a debugger test wearing it is coverage nobody knows they have lost.
+was never set up to serve it, and a debugger test wearing it runs only when the probe apps' inputs
+change. It also holds the two jobs' filters to the category and checks that both set the switch.
 
 The live-app tests are the expensive part, and they are phased by what each one can share (D33, D35).
 A launch of the UWP probe costs about 6.5 seconds and the XAML work in a test costs about 1.2, so the

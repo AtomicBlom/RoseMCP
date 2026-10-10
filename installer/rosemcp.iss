@@ -88,6 +88,11 @@ Name: "startup"; Description: "Start {#AppName} when I sign in"; GroupDescriptio
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts"; Flags: unchecked
 
 [Files]
+; Inno cannot read the published layout (tools/published-layout.json), so it restates it here, and the
+; unit suite holds the two together: every payload line below, its Check: condition, the setup icon
+; and every exe this script names under {app} are tested against that file by InstallerLayoutTests.
+; A layout change made there and not here fails that test rather than an install.
+;
 ; Everything both architectures build identically, which is most of a payload: the managed assemblies
 ; are architecture-neutral IL and the two publishes emit the same bytes. Carried once and laid down
 ; whichever machine this is.

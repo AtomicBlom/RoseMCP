@@ -13,7 +13,7 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 02 Worker and Roslyn | 23 | 5/11/7 | Core strong, edges adequate, **editing stack fragile** |
 | 03 LiveApp, debugger, tap | 22 | 2/12/8 | Adequate leaning strong |
 | 04 Agentic citizenship | 23 | 7/14/2 | Adequate, and unusually self-aware about it |
-| 05 UI code, tests, process | 27 | 3/14/10 | **Strong**, one structural hole, one growing debt |
+| 05 UI code, tests, process | 27 | 3/14/10 | **Strong**, one growing debt; its structural hole closed (#384) |
 | 06 IPC and protocols | 10 | 1/3/6 | Adequate tending strong; 11 of 12 boundaries right |
 | 07 Hot-reload readiness | 12 | 4/7/1 | Fragile but well-aimed; 5-6.5 weeks to v1 |
 | 08 UI usability | 17 | 3/10/4 | Adequate, and **aimed at the wrong job** |
@@ -61,7 +61,7 @@ still to decide.
 Issues filed after the review, up to #362, are triaged into the cards below. The ones no card fits
 are listed after tier 6, so none of them is re-derived from scratch.
 
-Three cards came out of closing others: the layout half of **21**, **11f**, and card 0e's finding
+Three cards came out of closing others: **21a**, **11f**, and card 0e's finding
 that three of the phrases the comment convention lists are not history clauses at all. Card 9 also
 found a wrong answer the review missed -- four write tools reporting a project clean while the
 caller's errors sat in it.
@@ -141,9 +141,8 @@ And then the test review found the boundary exactly:
 So: "every result carries a revision" was guarded on 3 tools out of ~45 and review-only for the rest;
 it is now enumerated over the declared surface, and its other half is a compile-time constraint
 (card 0c). The comment conventions had no CI grep and now have one against a baseline (card 0e).
-What is still an arrangement nobody checks: the stdout rule, the one that corrupts the protocol, has
-no guard of its own; the tap's tier rule is prose; and the published layout is asserted against a
-layout the test stages itself rather than the one the deploy script writes. Those three are card 21.
+The published layout is one file every party reads or is tested against (card 21a), and the stdout
+rule and the tap's tier rule are each checked over the source rather than held by review (card 21).
 
 **About fifty inversions are proposed across the eight files**; the ones that had to come first were
 Tier 0, and are built (PR #295). The seven highest-leverage:
@@ -216,8 +215,7 @@ choice, and it pays three times over, because the worker and the live-app host a
 MCP servers a person can drive with any client, the tests exploit exactly that, and progress and
 cancellation arrive on a protocol the broker already speaks outward.
 
-The costs are real and mostly unpriced: JSON with no binary path, no correlation id on any internal
-hop, cancellation re-implemented by hand because the SDK never sends it, and one SDK's quirks
+The costs are real and mostly unpriced: JSON with no binary path, cancellation re-implemented by hand because the SDK never sends it, and one SDK's quirks
 load-bearing in four processes.
 
 Polling for the inspector is **correct**, and the premise that it might not be was wrong: the event
@@ -366,12 +364,13 @@ Highest leverage on adoption. Cheap relative to impact.
 
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
-| 16 | **Put the XAML and tap half into CI**, the part card 0a leaves out: a C++ toolset, the Windows App SDK and developer mode. Three invariant documents are review-only until this lands. | UIP-25 | new | L |
+| ~~16~~ | **#384.** The tap, the visual tree, the overlay and the live-edit apply ran in no CI job, so three invariant documents were held by review alone. A job sets the runner up for the probe apps and runs their tests, and fails rather than skips where anything is missing. | UIP-25 | — | — |
 | 17 | *(moved to card 0a -- the accidental inclusion turned out to be proof that debugger tests run fine on a hosted runner, so it is widened deliberately rather than reverted.)* | UIP-14 | new | -- |
-| 18 | **Share fixtures on the Roslyn half.** 254 solution loads and 299 fixture copies over six fixtures, with a proven sharing model already in use next door. Issue #39 understates it by four times. | UIP-13 | #39 | L |
+| 18 | **Share fixtures on the Roslyn half: the tests that write.** A test that only reads shares one load per fixture (#39). The tests that write still copy and load a fixture each, which is most of the loads left. What remains is a copy that keeps its restore output for all but the generator tests, then a pool of loaded workspaces handed out the way the live-app slots are, with a hand-back check. The broker-process classes (`BrokerForwardingTests`, `IdleEvictionTests`, `WorkspaceRoutingTests`) start real workers rather than load through a test session, and are their own question. | UIP-13 | #39 | L |
 | 19 | *(moved to card 0d -- it is worth having before the work starts, not after.)* | IPC-02, BRK-05 | new | -- |
-| 20 | **A correlation id on every internal hop**, into every log line. Today a failure cannot be traced across the four processes it crossed. | BRK-15, IPC-07 | new | M |
-| 21 | **Guard the remaining arrangements**, after cards 0c and 0e take the two urgent ones: a stdout test of its own, a shared layout manifest, and tap tier purity checked rather than described. **The layout half has got sharply more urgent** — PR #277 took the parties to the layout from two to five, two of them packaged content a user runs, so a layout change now fails at install time on somebody else's machine rather than in CI. Worth splitting out and pulling forward. | UIP-18, UIP-22, UIP-24 | new | M |
+| ~~20~~ | **#385.** A call could not be traced across the processes it crossed, and nothing said which file was a workspace's worker log. Every log line carries the id of the call it was written for, the same in every process, and a workspace names its worker's log. | BRK-15, IPC-07 | — | — |
+| ~~21~~ | **#386.** The stdout rule, whose violation reads as a protocol error far from its cause, and the tap's header tiers were each held by review alone. Both are checked over the source by the unit suite, on every runner; formatting and linting the C++ and the PowerShell is declined. | UIP-18, UIP-24 | — | — |
+| ~~21a~~ | **#387.** Five parties each wrote the published layout down for themselves, two of them packaged content a user runs, so a layout change passed every test and failed at install time. They all read one committed layout, or are tested against it. | UIP-22 | — | — |
 
 ### Tier 5 — re-aim the UIs
 

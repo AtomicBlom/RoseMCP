@@ -5,6 +5,7 @@ using ModelContextProtocol;
 using RoseMcp.Broker;
 using RoseMcp.Broker.Tools;
 using RoseMcp.Contracts;
+using RoseMcp.Logging;
 using RoseMcp.TestSupport;
 
 using static RoseMcp.IntegrationTests.BrokerHarness;
@@ -24,6 +25,92 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class BrokerForwardingTests
 {
+	/// <summary>
+	/// One search finds a call in every process it crossed. The worker names the log it writes, so the
+	/// workspace that answered says which file to open, and the call's id -- minted here, carried in the
+	/// hop's <c>_meta</c> -- is on the worker's lines for that call, with nothing on the broker's side
+	/// passing it but the ambient.
+	/// </summary>
+	[Test]
+	public async Task A_forwarded_call_is_found_by_its_id_in_the_log_the_worker_names()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		string id;
+		using (CallCorrelation.Begin(null))
+		{
+			id = CallCorrelation.Id!;
+
+			await manager.CallAsync<ReadBatch<OutlineResult>>(
+				WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
+				ToolNames.Outline,
+				new Dictionary<string, object?> { ["filePath"] = Path.Combine(Path.GetDirectoryName(fixture.SolutionPath)!, "Core", "Calculator.cs") },
+				retryIfWorkerDied: true,
+				cancellationToken);
+		}
+
+		var logPath = manager.Describe().ShouldHaveSingleItem().WorkerLogPath;
+		logPath.ShouldNotBeNull("the worker names the log it writes");
+		logPath.ShouldEndWith(".log", Case.Sensitive);
+
+		// Shared for writing, because the worker still holds the file open and is still writing to it.
+		using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+		using var reader = new StreamReader(stream);
+		var lines = (await reader.ReadToEndAsync(cancellationToken)).Split('\n');
+
+		lines.ShouldContain(line => line.Contains($"] {id} ", StringComparison.Ordinal),
+			$"the worker's log carries no line for call {id}");
+	}
+
+	/// <summary>
+	/// Work a call queues and waits on is logged as that call's, though the worker runs it on a loop of
+	/// its own: a project file edited between two calls makes the second one reload the solution first,
+	/// and the reload is written under the id of the call that is waiting on it.
+	/// </summary>
+	[Test]
+	public async Task A_reload_a_call_waits_on_is_logged_under_that_calls_id()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		var root = Path.GetDirectoryName(fixture.SolutionPath)!;
+		var arguments = new Dictionary<string, object?> { ["filePath"] = Path.Combine(root, "Core", "Calculator.cs") };
+
+		await OutlineAsync();
+
+		var project = Path.Combine(root, "Core", "Core.csproj");
+		await File.AppendAllTextAsync(project, Environment.NewLine + "<!-- edited -->" + Environment.NewLine, cancellationToken);
+
+		string id;
+		using (CallCorrelation.Begin(null))
+		{
+			id = CallCorrelation.Id!;
+			await OutlineAsync();
+		}
+
+		var logPath = manager.Describe().ShouldHaveSingleItem().WorkerLogPath.ShouldNotBeNull();
+
+		using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+		using var reader = new StreamReader(stream);
+		var reloads = (await reader.ReadToEndAsync(cancellationToken))
+			.Split('\n')
+			.Where(line => line.Contains("Reloading ", StringComparison.Ordinal))
+			.ToList();
+
+		reloads.ShouldContain(line => line.Contains($"] {id} ", StringComparison.Ordinal),
+			$"no reload was logged under call {id}: {string.Join(Environment.NewLine, reloads)}");
+
+		Task OutlineAsync() => manager.CallAsync<ReadBatch<OutlineResult>>(
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
+			ToolNames.Outline,
+			arguments,
+			retryIfWorkerDied: true,
+			cancellationToken);
+	}
+
 	/// <summary>
 	/// The failure that started this said "An error occurred invoking 'rose_rename_symbol'." and
 	/// nothing else, because the SDK drops the message of an exception it does not recognise. The

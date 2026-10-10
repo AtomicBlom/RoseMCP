@@ -10,6 +10,7 @@ using ModelContextProtocol.Protocol;
 
 using RoseMcp.Broker.Tools;
 using RoseMcp.Contracts;
+using RoseMcp.Logging;
 
 namespace RoseMcp.Broker;
 
@@ -177,12 +178,31 @@ public static class ServiceCollectionExtensions
 		if (OperatingSystem.IsWindows()) builder = builder.WithTools<LiveAppDebugTools>(ToolSerializerOptions);
 
 		return builder
+			.WithCallCorrelation()
 			.WithArgumentAliases(aliases)
 			.WithIgnoredArgumentNotices()
 			.WithCallOrigin()
 			.WithToolErrorMessages()
 			.WithLeanListing();
 	}
+
+	/// <summary>
+	/// Gives every tool call this server answers its correlation id for the length of the call: the one
+	/// the previous hop sent, or a fresh one when this is the first Rose process the call has reached.
+	/// <para>
+	/// Public because the stdio relay is an MCP boundary of its own and has to start the call there --
+	/// it is the outermost process, so its id is the one every later hop repeats. Placed first in every
+	/// pipeline it is in, so that whatever the later filters log is already written for the call. See
+	/// <see cref="CallCorrelation"/>.
+	/// </para>
+	/// </summary>
+	public static IMcpServerBuilder WithCallCorrelation(this IMcpServerBuilder builder) =>
+		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
+		{
+			using var correlation = CallCorrelation.Begin(context.Params?.Meta);
+
+			return await next(context, cancellationToken);
+		}));
 
 	/// <summary>
 	/// Normalises the argument spellings the tools declare aliases for, before the SDK binds them.

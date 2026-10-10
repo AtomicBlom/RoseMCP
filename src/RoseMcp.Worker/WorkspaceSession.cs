@@ -4,6 +4,8 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
 using Microsoft.Extensions.Logging;
 
+using RoseMcp.Logging;
+
 namespace RoseMcp.Worker;
 
 /// <summary>
@@ -408,7 +410,10 @@ public sealed class WorkspaceSession : IAsyncDisposable
 				continue;
 			}
 
-			await item.RunAsync(_shutdown.Token);
+			using (item.Call.Resume())
+			{
+				await item.RunAsync(_shutdown.Token);
+			}
 		}
 	}
 
@@ -430,7 +435,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 			{
 				completion.TrySetException(exception);
 			}
-		}, () => completion.TrySetCanceled()), cancellationToken);
+		}, () => completion.TrySetCanceled(), CallCorrelation.Capture()), cancellationToken);
 
 		// The caller's token abandons the wait; it does not abandon the queued work, which must run
 		// to completion or the writer's ordering guarantee breaks.
@@ -458,5 +463,10 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		_shutdown.Dispose();
 	}
 
-	private sealed record WorkItem(Func<CancellationToken, Task> RunAsync, Action Cancel);
+	/// <summary>
+	/// One queued operation, with the call that queued it. The pump runs on the context it was started
+	/// with at load, so without the call carried here every reload, restore and mutation the pump runs
+	/// for a call would be logged as though no call had asked for it.
+	/// </summary>
+	private sealed record WorkItem(Func<CancellationToken, Task> RunAsync, Action Cancel, CallCorrelation.Captured Call);
 }

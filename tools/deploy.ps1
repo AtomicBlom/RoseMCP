@@ -142,32 +142,25 @@ function Publish-Tree
 
     Write-Host "  publishing $Rid -> $Into"
 
-    # Worker and broker land flat together so the broker finds the worker beside itself, which is
-    # its first lookup and the one that needs no configuration.
-    foreach ($project in 'RoseMcp.Worker', 'RoseMcp.Server')
+    # Each component into the folder the published layout gives it, which is the same file the C#
+    # resolvers are tested against -- so where the worker, the tray and the inspector go, and why
+    # each goes there, is written down once, in tools/published-layout.json.
+    foreach ($component in Get-LayoutComponent -Rid $Rid)
     {
-        Invoke-Dotnet @('publish', "$repo/src/$project", '-c', 'Release', '-r', $Rid,
-            '--self-contained', 'false', '-o', $Into) "$project ($Rid)"
+        Invoke-Dotnet @('publish', "$repo/src/$($component.project)", '-c', 'Release', '-r', $Rid,
+            '--self-contained', 'false', '-o', (Join-LayoutPath $Into, $component.folder)) "$($component.project) ($Rid)"
     }
 
     if (-not (Test-WindowsRid $Rid))
     {
-        Write-Host '  (no tray, no live-app hosts: both are Windows-only)'
+        Write-Host '  (no live-app hosts: they are Windows-only)'
         return
     }
 
-    # The tray goes in a subfolder: WinUI drags in a lot, and mixing it with the server risks one
-    # overwriting shared assemblies with windows-targeted variants of a different version.
-    Invoke-Dotnet @('publish', "$repo/src/RoseMcp.Tray", '-c', 'Release', '-r', $Rid,
-        '--self-contained', 'false', '-o', "$Into/tray") "RoseMcp.Tray ($Rid)"
-
-    # The inspector gets a folder of its own for the same reason, and one more: two WinUI publishes
-    # into one directory overwrite each other's WindowsAppSDK payload, and `publish -o` never
-    # removes what it does not write, so the loser keeps whichever files the winner did not have.
-    Invoke-Dotnet @('publish', "$repo/src/RoseMcp.Inspector", '-c', 'Release', '-r', $Rid,
-        '--self-contained', 'false', '-o', "$Into/inspector") "RoseMcp.Inspector ($Rid)"
-
-    if (-not $NoLiveApp) { Publish-LiveAppHosts -Into $Into -HostRids (Get-LiveAppRuntimes -Rid $Rid) }
+    if (-not $NoLiveApp)
+    {
+        Publish-LiveAppHosts -Into $Into -Folder (Get-PublishedLayout).liveAppHost.folder -HostRids (Get-LiveAppRuntimes -Rid $Rid)
+    }
 }
 
 function Get-PackagedLiveAppRuntimes
@@ -193,16 +186,18 @@ function Get-PackagedLiveAppRuntimes
 function Publish-LiveAppHosts
 {
     <#
-        The layout is the one LiveAppHostLauncher looks for: live-app/<rid> beside the broker, with
-        each host's native XAML providers under xaml-provider/<rid> beside that host.
+        One host per architecture into $Folder under $Into -- the install's live-app folder when
+        promoting, the package's when packaging -- each with its native XAML providers where the
+        published layout puts them beside it.
     #>
-    param([string] $Into, [string[]] $HostRids)
+    param([string] $Into, [string] $Folder, [string[]] $HostRids)
 
     foreach ($hostRid in $HostRids)
     {
-        $hostDir = "$Into/live-app/$hostRid"
-        Invoke-Dotnet @('publish', "$repo/src/RoseMcp.LiveApp", '-c', 'Release', '-r', $hostRid,
-            '--self-contained', 'false', '-o', $hostDir) "RoseMcp.LiveApp ($hostRid)"
+        $hostDir = Join-LayoutPath $Into, (Expand-LayoutPath $Folder -HostRid $hostRid)
+        $project = (Get-PublishedLayout).liveAppHost.project
+        Invoke-Dotnet @('publish', "$repo/src/$project", '-c', 'Release', '-r', $hostRid,
+            '--self-contained', 'false', '-o', $hostDir) "$project ($hostRid)"
 
         Copy-XamlProviders -Rid $hostRid -HostDir $hostDir -Required:$xamlProviderRequired
     }
@@ -231,10 +226,14 @@ function Split-SharedPayload
     #>
     param([Parameter(Mandatory)][string] $Stage, [Parameter(Mandatory)][string[]] $Rids)
 
+    $payloads = @{}
+    foreach ($rid in $Rids) { $payloads[$rid] = Get-PackagePath -Stage $Stage -Rid $rid }
+    $sharedRoot = Get-PackagePath -Stage $Stage -Shared
+
     $hashesByRid = @{}
     foreach ($rid in $Rids)
     {
-        $root = [System.IO.Path]::GetFullPath("$Stage/payload/$rid")
+        $root = [System.IO.Path]::GetFullPath($payloads[$rid])
         $map = @{}
 
         foreach ($file in Get-ChildItem $root -Recurse -File)
@@ -270,19 +269,19 @@ function Split-SharedPayload
     $bytes = 0
     foreach ($relative in $shared)
     {
-        $target = "$Stage/payload/shared/$relative"
+        $target = "$sharedRoot/$relative"
         New-Item -ItemType Directory -Force -Path (Split-Path $target -Parent) | Out-Null
 
-        $bytes += (Get-Item "$Stage/payload/$first/$relative").Length
-        Move-Item "$Stage/payload/$first/$relative" $target -Force
+        $bytes += (Get-Item "$($payloads[$first])/$relative").Length
+        Move-Item "$($payloads[$first])/$relative" $target -Force
 
-        foreach ($rid in $others) { Remove-Item "$Stage/payload/$rid/$relative" -Force }
+        foreach ($rid in $others) { Remove-Item "$($payloads[$rid])/$relative" -Force }
     }
 
-    foreach ($rid in $Rids) { Remove-EmptyDirectory -Path "$Stage/payload/$rid" }
+    foreach ($rid in $Rids) { Remove-EmptyDirectory -Path $payloads[$rid] }
 
     $saved = [math]::Round(($bytes * $others.Count) / 1MB)
-    Write-Host ("  deduplicated {0} file(s) into payload/shared, {1} MB not shipped again" -f $shared.Count, $saved)
+    Write-Host ("  deduplicated {0} file(s) into {1}, {2} MB not shipped again" -f $shared.Count, $sharedRoot, $saved)
 }
 
 function Remove-EmptyDirectory
@@ -328,9 +327,12 @@ function Copy-XamlProviders
     #>
     param([string] $Rid, [string] $HostDir, [switch] $Required)
 
-    foreach ($project in 'RoseMcp.Xaml.Uwp.Tap', 'RoseMcp.Xaml.WinUi.Tap')
+    $providers = (Get-PublishedLayout).liveAppHost.xamlProviders
+    $into = Join-LayoutPath $HostDir, (Expand-LayoutPath $providers.folder -HostRid $Rid)
+
+    foreach ($provider in $providers.files)
     {
-        Copy-XamlProvider -Project $project -Rid $Rid -HostDir $HostDir -Required:$Required
+        Copy-XamlProvider -Project $provider.project -File $provider.file -Rid $Rid -Into $into -Required:$Required
     }
 }
 
@@ -344,11 +346,11 @@ function Copy-XamlProvider
         may not want. For a package it is fatal, because a release that quietly ships without it is
         indistinguishable from a product bug.
     #>
-    param([string] $Project, [string] $Rid, [string] $HostDir, [switch] $Required)
+    param([string] $Project, [string] $File, [string] $Rid, [string] $Into, [switch] $Required)
 
     $platform = Get-ProviderPlatform -Rid $Rid
     $build = "$repo/src/$Project/build.ps1"
-    $dll = "$repo/src/$Project/bin/$platform/Release/$Project.dll"
+    $dll = "$repo/src/$Project/bin/$platform/Release/$File"
 
     Write-Host "  building $Project ($platform)"
     & pwsh -NoProfile -File $build -Platform $platform -Configuration Release *> $null
@@ -372,133 +374,45 @@ function Copy-XamlProvider
         return
     }
 
-    $into = "$HostDir/xaml-provider/$Rid"
-    New-Item -ItemType Directory -Force -Path $into | Out-Null
-    Copy-Item $dll $into -Force
-    Write-Host "  $Project ($platform) -> $into"
-}
-
-function Test-PayloadFile
-{
-    <#
-        Whether an install for $Rid would end up with a file, wherever the package keeps it: in that
-        architecture's folder, or in the shared one every architecture is laid down on top of.
-    #>
-    param(
-        [Parameter(Mandatory)][string] $Stage,
-        [Parameter(Mandatory)][string] $Rid,
-        [Parameter(Mandatory)][string] $Relative
-    )
-
-    return (Test-Path "$Stage/payload/$Rid/$Relative") -or (Test-Path "$Stage/payload/shared/$Relative")
+    New-Item -ItemType Directory -Force -Path $Into | Out-Null
+    Copy-Item $dll $Into -Force
+    Write-Host "  $Project ($platform) -> $Into"
 }
 
 function Assert-WindowsPackage
 {
     <#
-        Every win-* package must carry a debug host for each architecture its machine can execute,
-        both native XAML providers for each of those, and each
-        provider must actually be built for the architecture its folder claims.
+        Every win-* package must carry what the published layout says an install of each packaged
+        architecture needs -- see Assert-PackagedRuntime -- and the scripts that lay it down.
 
         This exists because the failure it catches is silent. Copy-XamlProvider warns and returns
         when the MSVC toolset is missing -- right for a laptop that only publishes managed code -- and
         nothing downstream looked. release.yml asserts only that an archive exists, which is true of a
         zip with no xaml-provider directory in it at all, so the release went green, the checksums
         were computed over it, and rose_xaml_tree failed on every target of that architecture for a
-        reason that was in a log nobody reads on a green run.
+        reason that was in a log nobody reads on a green run. A package missing the inspector is no
+        more visible: the tray comes up, and Inspect reports that it cannot find the exe -- which reads
+        like a lookup bug rather than a package that never carried one.
 
         Asserted here rather than at the upload step, which is as close to the cause as it can be put.
     #>
     param([string] $Stage, [string[]] $Rids)
 
-    $hostRids = Get-PackagedLiveAppRuntimes -Rids $Rids
+    $layout = Get-PublishedLayout
+
+    # The installer, the half of it that install.ps1 and deploy.ps1 share, and the layout both read.
+    # A package that carries the binaries and not the script that lays them down is an archive
+    # somebody has to read the wiki to use, and nothing else in the release would say it was missing.
+    foreach ($script in $layout.package.scripts)
+    {
+        if (-not (Test-Path (Join-LayoutPath $Stage, $script.file))) { throw "the package is missing $($script.file)" }
+    }
+
     $checked = 0
+    foreach ($rid in $Rids) { $checked += Assert-PackagedRuntime -Stage $Stage -Rid $rid }
 
-    # The installer and the half of it that install.ps1 and deploy.ps1 share. A package that carries
-    # the binaries and not the script that lays them down is an archive somebody has to read the wiki
-    # to use, and nothing else in the release would say it was missing.
-    foreach ($script in 'install.ps1', 'RoseMcp.Deploy.ps1')
-    {
-        if (-not (Test-Path "$Stage/$script")) { throw "the package is missing $script" }
-    }
-
-    foreach ($Rid in $Rids)
-    {
-        foreach ($required in 'RoseMcp.Server.exe', 'RoseMcp.Worker.exe')
-        {
-            # Either place. Deduplication moves whatever is identical across architectures into
-            # shared/, and which files those are is a fact about a given build rather than something
-            # to assert -- what matters is that an install assembled from shared plus this
-            # architecture has them.
-            if (-not (Test-PayloadFile -Stage $Stage -Rid $Rid -Relative $required))
-            {
-                throw "$Rid payload is missing $required"
-            }
-        }
-
-        # Both windows, and each built for the architecture whose payload it is in. A package missing
-        # the inspector is not obviously broken from the outside: the tray comes up, and Inspect
-        # reports that it cannot find the exe -- which reads like a lookup bug rather than a package
-        # that never carried one.
-        foreach ($window in 'tray/RoseMcp.Tray.exe', 'inspector/RoseMcp.Inspector.exe')
-        {
-            # These can never be shared -- two PE images built for different machines cannot be
-            # byte-identical -- so finding one outside its architecture's folder means the
-            # deduplication matched something it should not have.
-            $exe = "$Stage/payload/$Rid/$window"
-            if (-not (Test-Path $exe))
-            {
-                if (Test-Path "$Stage/payload/shared/$window")
-                {
-                    throw "$window was deduplicated into payload/shared, which cannot be right for a " +
-                        'native image: the two architectures would have had to produce identical bytes.'
-                }
-
-                throw "$Rid payload is missing $exe"
-            }
-
-            $machine = Get-PeMachine $exe
-            if ($machine -ne (Get-ExpectedPeMachine -Rid $Rid))
-            {
-                throw (("$Rid payload has the wrong {0}: it reports machine 0x{1:X4}, expected 0x{2:X4}.") -f
-                    $window, $machine, (Get-ExpectedPeMachine -Rid $Rid))
-            }
-        }
-    }
-
-    foreach ($hostRid in $hostRids)
-    {
-        $hostExe = "$Stage/payload/live-app/$hostRid/RoseMcp.LiveApp.exe"
-        if (-not (Test-Path $hostExe)) { throw "the package is missing $hostExe" }
-
-        foreach ($project in 'RoseMcp.Xaml.Uwp.Tap', 'RoseMcp.Xaml.WinUi.Tap')
-        {
-            $dll = "$Stage/payload/live-app/$hostRid/xaml-provider/$hostRid/$project.dll"
-            if (-not (Test-Path $dll))
-            {
-                throw "the package is missing the XAML provider at $dll. XAML inspection and live " +
-                    "editing would be unavailable for $hostRid targets, and nothing else would say " +
-                    "so. On a build agent this is usually a missing MSVC cross-toolset for that " +
-                    "architecture."
-            }
-
-            $machine = Get-PeMachine $dll
-            if ($machine -ne (Get-ExpectedPeMachine -Rid $hostRid))
-            {
-                # Parenthesised before -f on purpose: -f binds tighter than +, so formatting a
-                # concatenation without these brackets formats only the last piece of it and leaves
-                # the placeholders in the rest sitting there as literal text.
-                throw (("the package has the wrong XAML provider for {0}: {1} reports machine " +
-                    "0x{2:X4}, expected 0x{3:X4}. It would be injected into a target of the other " +
-                    "architecture.") -f
-                    $hostRid, $dll, $machine, (Get-ExpectedPeMachine -Rid $hostRid))
-            }
-
-            $checked++
-        }
-    }
-
-    Write-Host ("  layout checked: {0} architecture(s) ({1}), {2} shared debug host(s) ({3}) and {4} XAML provider(s), all correctly built" -f
+    $hostRids = Get-PackagedLiveAppRuntimes -Rids $Rids
+    Write-Host ("  layout checked: {0} architecture(s) ({1}), {2} shared debug host(s) ({3}) and {4} XAML provider check(s), all correctly built" -f
         $Rids.Count, ($Rids -join ', '), $hostRids.Count, ($hostRids -join ', '), $checked)
 }
 
@@ -558,23 +472,29 @@ if ($windowsRids.Count -gt 0)
     $stage = "$artifacts/stage/win"
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 
+    $layout = Get-PublishedLayout
+
     foreach ($rid in $windowsRids)
     {
-        Publish-Tree -Rid $rid -Into "$stage/payload/$rid" -NoLiveApp
+        Publish-Tree -Rid $rid -Into (Get-PackagePath -Stage $stage -Rid $rid) -NoLiveApp
     }
 
     # Once, shared. The debug hosts and their native taps are the expensive half of the package and
     # the sets overlap completely: an ARM64 machine can execute all three architectures and an x64
     # machine two of them, so a per-architecture copy would be the same bytes twice.
-    Publish-LiveAppHosts -Into "$stage/payload" -HostRids (Get-PackagedLiveAppRuntimes -Rids $windowsRids)
+    Publish-LiveAppHosts -Into $stage -Folder $layout.package.liveAppHost -HostRids (Get-PackagedLiveAppRuntimes -Rids $windowsRids)
 
     # Only with something to compare against. One architecture's payload is trivially identical to
     # itself, and hoisting all of it into shared/ would leave an architecture folder that exists but
     # holds nothing -- a layout neither installer expects and both would lay down as an empty install.
     if ($windowsRids.Count -gt 1) { Split-SharedPayload -Stage $stage -Rids $windowsRids }
 
-    Copy-Item "$repo/installer/install.ps1" "$stage/install.ps1" -Force
-    Copy-Item "$PSScriptRoot/RoseMcp.Deploy.ps1" "$stage/RoseMcp.Deploy.ps1" -Force
+    # install.ps1, the half of it deploy.ps1 shares, and the layout both of them read, all at the root
+    # of the archive: RoseMcp.Deploy.ps1 finds the layout beside itself.
+    foreach ($script in $layout.package.scripts)
+    {
+        Copy-Item "$repo/$($script.source)/$($script.file)" (Join-LayoutPath $stage, $script.file) -Force
+    }
 
     $archive = "$artifacts/rosemcp-win.zip"
     if (Test-Path $archive) { Remove-Item $archive -Force }

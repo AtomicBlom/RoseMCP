@@ -72,11 +72,11 @@ public sealed class UwpProbeApp : IAsyncDisposable
 		lock (_gate)
 		{
 			var msbuild = MsBuild();
-			if (msbuild is null) Skip.Test("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+			if (msbuild is null) MachineLimit.Reached("No Visual Studio MSBuild with the classic-UWP tooling was found.");
 
 			if (needsXamlProvider && !ProviderBuilt())
 			{
-				Skip.Test("The native XAML provider could not be built (no C++ toolset).");
+				MachineLimit.Reached("The native XAML provider could not be built (no C++ toolset).");
 			}
 
 			// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
@@ -99,8 +99,9 @@ public sealed class UwpProbeApp : IAsyncDisposable
 				_registered = true;
 				try
 				{
-					_layoutDirectory = Stage(Build(msbuild!));
-					_aumid = Register(_layoutDirectory, out _registrationFailure);
+					var buildOutput = Build(msbuild!);
+					_layoutDirectory = Stage(buildOutput);
+					_aumid = Register(_layoutDirectory, buildOutput, out _registrationFailure);
 				}
 				catch (Exception exception)
 				{
@@ -115,7 +116,7 @@ public sealed class UwpProbeApp : IAsyncDisposable
 			// of this machine. A build failure quietly skipped is a capability silently not tested.
 			if (_aumid is null)
 			{
-				Skip.Test($"The UWP probe app could not be registered: {_registrationFailure}");
+				MachineLimit.Reached($"The UWP probe app could not be registered: {_registrationFailure}");
 			}
 
 			return _aumid!;
@@ -776,10 +777,15 @@ public sealed class UwpProbeApp : IAsyncDisposable
 
 	/// <summary>
 	/// Registers the staged UWP layout and returns its AUMID, or null with the reason it could not.
+	/// The recipe is the build's, read for the framework packages the layout depends on.
 	/// </summary>
-	private static string? Register(string layoutDirectory, out string? failure)
+	private static string? Register(string layoutDirectory, string buildOutputDirectory, out string? failure)
 	{
-		var family = RegisterAppxLayout(Path.Combine(layoutDirectory, "AppxManifest.xml"), PackageName, out failure);
+		var family = RegisterAppxLayout(
+			Path.Combine(layoutDirectory, "AppxManifest.xml"),
+			PackageName,
+			Path.Combine(buildOutputDirectory, "Rose.ProbeApp.UwpClassic.build.appxrecipe"),
+			out failure);
 
 		return family is null ? null : $"{family}!App";
 	}

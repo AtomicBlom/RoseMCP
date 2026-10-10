@@ -87,7 +87,7 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 		{
 			if (needsXamlProvider && !ProviderBuilt())
 			{
-				Skip.Test("The UWP XAML provider could not be built (no C++ toolset, or no Windows SDK).");
+				MachineLimit.Reached("The UWP XAML provider could not be built (no C++ toolset, or no Windows SDK).");
 			}
 
 			// A modern UWP app runs as whatever it was built for, so the host matches it. On x64 that is
@@ -102,7 +102,7 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 
 			if (_built is null)
 			{
-				Skip.Test(
+				MachineLimit.Reached(
 					"The modern UWP probe app could not be built: it needs full MSBuild from a Visual Studio "
 						+ "install and the Windows SDK's XAML compiler, which dotnet build cannot substitute for.");
 			}
@@ -115,7 +115,7 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 
 			if (_aumid is null)
 			{
-				Skip.Test($"The modern UWP probe app could not be registered: {_registrationFailure}");
+				MachineLimit.Reached($"The modern UWP probe app could not be registered: {_registrationFailure}");
 			}
 
 			return (_built!, _aumid!);
@@ -201,12 +201,17 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 	/// probe. That one produces a managed assembly and a native CoreCLR apphost in different folders and
 	/// needs its AppX layout staged from a build recipe before anything can register it. A modern UWP
 	/// build writes AppxManifest.xml beside a native apphost and coreclr.dll in one flat, self-contained
-	/// folder, so registering it needs no staging at all.
+	/// folder, so registering it needs no staging at all. It still writes a recipe there, which is
+	/// where the framework packages it depends on are found.
 	/// </para>
 	/// </summary>
 	private static string? Register(string layoutDirectory, out string? failure)
 	{
-		var family = RegisterAppxLayout(Path.Combine(layoutDirectory, "AppxManifest.xml"), PackageName, out failure);
+		var family = RegisterAppxLayout(
+			Path.Combine(layoutDirectory, "AppxManifest.xml"),
+			PackageName,
+			Path.Combine(layoutDirectory, "Rose.ProbeApp.UwpModern.build.appxrecipe"),
+			out failure);
 
 		return family is null ? null : $"{family}!App";
 	}

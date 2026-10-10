@@ -11,15 +11,15 @@ namespace RoseMcp.IntegrationTests;
 /// generator, and have the code-behind bind. The fixture declares its own Windows.UI.Xaml types, so
 /// this needs no Windows SDK and no UWP tooling -- only the shape of the problem, not its scale.
 /// </summary>
-public sealed class XamlWorkspaceTests
+[ClassDataSource<SharedWorkspaces>(Shared = SharedType.PerAssembly)]
+public sealed class XamlWorkspaceTests(SharedWorkspaces workspaces)
 {
 	[Test]
 	public async Task A_xaml_project_compiles_without_its_markup_compiler_ever_running()
 	{
-		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.XamlStub;
 
-		var diagnostics = await DiagnoseAsync(session);
+		var diagnostics = await DiagnoseAsync(workspace);
 
 		// Without the stub, this project has an unresolved InitializeComponent and an unknown Save.
 		diagnostics.Diagnostics.ShouldBeEmpty();
@@ -32,10 +32,9 @@ public sealed class XamlWorkspaceTests
 	[Test]
 	public async Task The_stub_is_generated_code_and_stays_out_of_the_tree()
 	{
-		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.XamlStub;
 
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		var generated = await GeneratedDocumentService.ListAsync(
 			snapshot, null, TestContext.Current!.Execution.CancellationToken);
 
@@ -43,7 +42,7 @@ public sealed class XamlWorkspaceTests
 			document.HintName.Contains("xamlstub", StringComparison.OrdinalIgnoreCase)).ShouldHaveSingleItem();
 
 		stub.HintName.ShouldContain("Widget", Case.Sensitive);
-		File.Exists(fixture.Path("XamlStub", "Ui", "Widget.xamlstub.g.cs")).ShouldBeFalse();
+		File.Exists(workspace.Path("XamlStub", "Ui", "Widget.xamlstub.g.cs")).ShouldBeFalse();
 
 		var content = await GeneratedDocumentService.ReadAsync(
 			snapshot, stub.HintName, null, TestContext.Current!.Execution.CancellationToken);
@@ -55,13 +54,12 @@ public sealed class XamlWorkspaceTests
 	[Test]
 	public async Task Reports_which_dialect_it_chose_and_on_what_evidence()
 	{
-		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
+		var workspace = workspaces.XamlStub;
 
 		// Generators are lazy; asking for the compilation is what runs them.
-		await DiagnoseAsync(session);
+		await DiagnoseAsync(workspace);
 
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		var project = snapshot.Solution.Projects.Single(candidate => candidate.Name.StartsWith("Ui", StringComparison.Ordinal));
 		var report = await XamlStubReportReader.ReadAsync(project, TestContext.Current!.Execution.CancellationToken);
 
@@ -189,13 +187,12 @@ public sealed class XamlWorkspaceTests
 	[Test]
 	public async Task Finds_references_to_a_member_of_a_project_carrying_stub_generation()
 	{
-		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.XamlStub;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var references = await NavigationService.FindReferencesAsync(
 			snapshot,
-			new SymbolTarget { FilePath = fixture.Path("XamlStub", "Ui", "Greeter.cs"), Line = 16, Column = 24 },
+			new SymbolTarget { FilePath = workspace.Path("XamlStub", "Ui", "Greeter.cs"), Line = 16, Column = 24 },
 			200,
 			TestContext.Current!.Execution.CancellationToken);
 
@@ -207,22 +204,21 @@ public sealed class XamlWorkspaceTests
 	[Test]
 	public async Task Finds_implementations_of_a_member_of_a_project_carrying_stub_generation()
 	{
-		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
-		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var workspace = workspaces.XamlStub;
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var implementations = await NavigationService.FindImplementationsAsync(
 			snapshot,
-			new SymbolTarget { FilePath = fixture.Path("XamlStub", "Ui", "Greeter.cs"), Line = 11, Column = 9 },
+			new SymbolTarget { FilePath = workspace.Path("XamlStub", "Ui", "Greeter.cs"), Line = 11, Column = 9 },
 			200,
 			TestContext.Current!.Execution.CancellationToken);
 
 		implementations.Matches.ShouldContain(match => match.Signature.Contains("Greeter.Greet", StringComparison.Ordinal));
 	}
 
-	private static async Task<DiagnosticsResult> DiagnoseAsync(WorkspaceSession session)
+	private static async Task<DiagnosticsResult> DiagnoseAsync(SharedWorkspace workspace)
 	{
-		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var snapshot = await workspace.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		return await new DiagnosticsService(NullLogger<DiagnosticsService>.Instance).AnalyseAsync(
 			snapshot, new DiagnosticsRequest(), TestContext.Current!.Execution.CancellationToken);

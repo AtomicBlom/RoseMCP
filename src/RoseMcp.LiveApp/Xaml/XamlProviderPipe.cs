@@ -99,10 +99,11 @@ public sealed class XamlProviderPipe : IDisposable
 	/// makes the channel able to carry a request.
 	/// <para>
 	/// Not <c>NamedPipeServerStream.IsConnected</c>, which is the server's own state rather than the
-	/// far end's and stays true after the provider's process has gone. Every decision the recovery
-	/// turns on is asked of this one property, so answering it from something that cannot observe a
-	/// departure is a session that never hangs up and never listens again -- reporting a dead tap as
-	/// present while every request on it spends its bound and times out.
+	/// far end's and stays true after the provider's process has gone, unless a read happened to fail
+	/// on the departure first. Every decision the recovery turns on is asked of this one property, so
+	/// answering it from something that cannot observe a departure is a session that never hangs up and
+	/// never listens again -- reporting a dead tap as present while every request on it spends its bound
+	/// and times out.
 	/// </para>
 	/// </summary>
 	public bool Connected => _connected;
@@ -378,11 +379,23 @@ public sealed class XamlProviderPipe : IDisposable
 	/// Forgets the provider that has gone and puts the stream back to listening. What is left of its
 	/// connection is discarded first: a reply nobody collected answers a question the next provider
 	/// was never asked, and a completed greeting would tell the next caller a departed tap is up.
+	/// <para>
+	/// The stream is disconnected whatever <c>IsConnected</c> says, because a stream the far end has left
+	/// is not always one that says it is connected. A provider that goes under a pending read leaves the
+	/// stream connected; one that goes while the reader is between reads fails the next read at once, and
+	/// the stream marks itself broken. A broken stream is not connected, and is still holding the departed
+	/// client: listening on it again throws, the reader stops for good, and every provider after that --
+	/// a re-injected tap included -- waits out its connect bound against a pipe nobody is listening on.
+	/// Which of the two a departure lands on is down to where the reader was when it happened.
+	/// </para>
 	/// </summary>
 	private void HangUp(NamedPipeServerStream server)
 	{
-		_connected = false;
+		// The fresh source goes in before the provider is said to be gone, so a caller that sees Connected
+		// false and then waits snapshots a greeting the next provider will answer, rather than the departed
+		// one's, already completed.
 		_greeting = NewGreeting();
+		_connected = false;
 
 		while (_replies.Reader.TryRead(out _))
 		{
@@ -390,12 +403,12 @@ public sealed class XamlProviderPipe : IDisposable
 
 		try
 		{
-			if (server.IsConnected) server.Disconnect();
+			server.Disconnect();
 		}
 		catch (Exception exception) when (exception is IOException or InvalidOperationException or ObjectDisposedException)
 		{
-			// A stream the far end or our own teardown already took down. There is nothing left to
-			// hang up on, and the next WaitForConnectionAsync reports whichever of the two it was.
+			// A stream with no client left to hang up on, or one our own teardown already took down. The
+			// next WaitForConnectionAsync listens on the first and reports the second.
 		}
 
 		_logger.LogInformation("The XAML provider on {PipeName} has gone; listening for another.", Name);

@@ -6,6 +6,7 @@ using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
 using RoseMcp.Contracts;
+using RoseMcp.Logging;
 
 namespace RoseMcp.Broker;
 
@@ -111,13 +112,16 @@ public static class CancellableToolCall
 	}
 
 	/// <summary>
-	/// The out-of-band half of the request: the progress token, and the directory the calling session
-	/// lives in.
+	/// The out-of-band half of the request: the progress token, the directory the calling session
+	/// lives in, and the id of the call this one is being made for.
 	/// <para>
 	/// ProgressToken is read-only and derived from <c>_meta</c>, so the token goes in there directly.
 	/// The origin directory rides alongside it rather than in the arguments because it belongs to no
-	/// tool's schema -- see <see cref="CallOrigin"/>. Null when there is nothing to say, since an
-	/// empty <c>_meta</c> is not the same as none and there is no reason to send one.
+	/// tool's schema -- see <see cref="CallOrigin"/>. The correlation id is read from the ambient
+	/// rather than passed, because this is the one place every internal hop is built: reading it here
+	/// puts it on every hop without any caller having to remember it -- see
+	/// <see cref="CallCorrelation"/>. Null when there is nothing to say, since an empty <c>_meta</c> is
+	/// not the same as none and there is no reason to send one.
 	/// </para>
 	/// </summary>
 	private static JsonObject? Meta(
@@ -125,16 +129,18 @@ public static class CancellableToolCall
 		IProgress<ProgressNotificationValue>? progress,
 		string? originDirectory)
 	{
-		if (progress is null && string.IsNullOrWhiteSpace(originDirectory)) return null;
+		var correlationId = CallCorrelation.Id;
+		var hasOrigin = !string.IsNullOrWhiteSpace(originDirectory);
+
+		if (progress is null && !hasOrigin && correlationId is null) return null;
 
 		var meta = new JsonObject();
 
 		if (progress is not null) meta["progressToken"] = JsonValue.Create(progressToken.ToString());
 
-		if (!string.IsNullOrWhiteSpace(originDirectory))
-		{
-			meta[CallOrigin.MetaKey] = JsonValue.Create(originDirectory);
-		}
+		if (hasOrigin) meta[CallOrigin.MetaKey] = JsonValue.Create(originDirectory);
+
+		if (correlationId is not null) meta[CallCorrelation.MetaKey] = JsonValue.Create(correlationId);
 
 		return meta;
 	}

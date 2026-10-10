@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -183,7 +185,25 @@ internal static class TestToolchain
 	/// process. Removing a variable that was never set costs nothing, so there is no condition on it.
 	/// </para>
 	/// </summary>
-	internal static (int ExitCode, string Output) RunProcess(string fileName, string arguments)
+	internal static (int ExitCode, string Output) RunProcess(string fileName, string arguments) =>
+		RunProcess(fileName, arguments, Timeout.InfiniteTimeSpan, fileName);
+
+	/// <summary>
+	/// Runs a tool as <see cref="RunProcess(string, string)"/> does, but gives up on it after
+	/// <paramref name="timeout"/>: the tool and everything it started are killed, and a
+	/// <see cref="TimeoutException"/> names what it was doing, how long it ran, and what it had written.
+	/// </summary>
+	/// <param name="fileName">The tool.</param>
+	/// <param name="arguments">Its command line.</param>
+	/// <param name="timeout">How long to wait; <see cref="Timeout.InfiniteTimeSpan"/> waits for ever.</param>
+	/// <param name="purpose">What the tool is doing, as the failure names it.</param>
+	/// <remarks>
+	/// For a tool run under a lock other work queues on, where one that never returns would hold every
+	/// waiter until the job's own limit kills the run and names whichever test happened to be waiting.
+	/// The output is read as it arrives rather than after the exit, so a tool that fills a pipe cannot
+	/// stall itself and a killed one still says how far it got.
+	/// </remarks>
+	internal static (int ExitCode, string Output) RunProcess(string fileName, string arguments, TimeSpan timeout, string purpose)
 	{
 		var start = new ProcessStartInfo(fileName, arguments)
 		{
@@ -194,10 +214,38 @@ internal static class TestToolchain
 
 		foreach (var inherited in MSBuildEnvironment) start.Environment.Remove(inherited);
 
+		var elapsed = Stopwatch.StartNew();
 		using var process = Process.Start(start) ?? throw new InvalidOperationException($"{fileName} did not start.");
-		var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-		process.WaitForExit();
-		return (process.ExitCode, output);
+		var standardOutput = process.StandardOutput.ReadToEndAsync();
+		var standardError = process.StandardError.ReadToEndAsync();
+
+		if (process.WaitForExit(timeout))
+		{
+			process.WaitForExit();
+			return (process.ExitCode, standardOutput.Result + standardError.Result);
+		}
+
+		var id = process.Id;
+		try
+		{
+			process.Kill(entireProcessTree: true);
+		}
+		catch (InvalidOperationException)
+		{
+			// It exited between the wait giving up and the kill, which is the outcome the kill wanted.
+		}
+
+		process.WaitForExit(TimeSpan.FromSeconds(10));
+
+		// The pipes close once everything holding them is dead; a grandchild the kill could not reach
+		// would hold them open, so the reads get a bound of their own rather than a second hang.
+		var drained = Task.WaitAll([standardOutput, standardError], TimeSpan.FromSeconds(10));
+		var written = drained ? (standardOutput.Result + standardError.Result).Trim() : string.Empty;
+
+		throw new TimeoutException(
+			$"{purpose} did not finish within {timeout.TotalSeconds:0} s: {Path.GetFileName(fileName)} (pid {id}) and the "
+				+ $"processes it started were killed after {elapsed.Elapsed.TotalSeconds:0.0} s. "
+				+ (written.Length == 0 ? "It had written nothing." : $"It had written: {written}"));
 	}
 
 	internal static string RepositoryRoot()
@@ -217,29 +265,54 @@ internal static class TestToolchain
 			: "Debug";
 
 	/// <summary>
-	/// Registers a loose AppX layout and returns its package family name, installing any framework it
-	/// depends on that this machine does not have.
+	/// Registers a loose AppX layout and returns its package family name, installing the frameworks it
+	/// depends on where this machine does not have them.
 	/// </summary>
 	/// <param name="manifest">The layout's AppxManifest.xml.</param>
 	/// <param name="packageName">The package identity name, to read the family name back by.</param>
+	/// <param name="recipe">
+	/// The build's <c>.build.appxrecipe</c>, whose resolved SDK references name the framework packages
+	/// the build linked against and where each one's <c>.appx</c> sits; null where the build writes
+	/// none.
+	/// </param>
 	/// <param name="failure">Why it could not be registered, when it could not.</param>
 	/// <remarks>
 	/// A framework dependency is the one registration failure that is neither a bug nor a limit of the
-	/// machine: it is a package sitting unregistered in the Windows SDK, and installing it is a single
+	/// machine: it is a package sitting unregistered beside the build, and installing it is a single
 	/// call. Leaving it to the person means an acceptance test skips for as long as nobody reads an
 	/// event log -- <c>Microsoft.VCLibs.140.00.Debug</c> was installed for x64 only on an ARM64 machine
-	/// here, and the two modern-UWP tests skipped every run until somebody looked.
+	/// here, and the two modern-UWP tests skipped every run until somebody looked. A machine Visual
+	/// Studio has never deployed a UWP app from, a hosted CI runner among them, need have none of the
+	/// three debug frameworks the classic probe depends on.
 	/// <para>
-	/// Which framework is asked of Windows rather than worked out from the manifest. The deployment
-	/// error names the package, the architecture and the minimum version it wants, which is more than a
-	/// manifest read would give and cannot drift from what the deployment engine actually enforces.
+	/// Whether a framework is missing, and for which architecture, is asked of Windows rather than
+	/// worked out from the manifest: the deployment error names the package, the architecture and the
+	/// minimum version it wants, and that cannot drift from what the deployment engine enforces. Where
+	/// to get it is asked of the build. The recipe lists the same framework packages Visual Studio's
+	/// deploy installs, for every architecture the build could target, so everything the recipe holds
+	/// for the architecture Windows named is installed at once -- a classic UWP debug build needs three,
+	/// and Windows names only the first it finds missing. A framework the recipe does not hold is looked
+	/// for in the Windows SDK's <c>ExtensionSDKs</c>, which is where the VCLibs ones live.
+	/// </para>
+	/// <para>
+	/// Installed as packages of their own, then the layout registered, because that is the only order
+	/// the deployment engine accepts: <c>Add-AppxPackage -Register -DependencyPath</c> takes the
+	/// dependencies as further loose layouts to register and refuses an <c>.appx</c> with "the manifest
+	/// is not in the package root".
 	/// </para>
 	/// <para>
 	/// One retry, and then it says what it could not do. Installing a framework twice is harmless but a
 	/// loop that keeps trying hides a failure that is not about frameworks at all.
 	/// </para>
+	/// <para>
+	/// Under one gate for every fixture, because the UWP probes register in parallel and share their
+	/// frameworks: two fixtures installing <c>Microsoft.VCLibs.140.00.Debug</c> at once would race a
+	/// machine-wide deployment for no gain, when the second only needs to find it done. Every script
+	/// run under it has a time limit, so a deployment that never returns fails the registration it
+	/// belongs to, naming the step, rather than holding every other fixture until the job is killed.
+	/// </para>
 	/// </remarks>
-	internal static string? RegisterAppxLayout(string manifest, string packageName, out string? failure)
+	internal static string? RegisterAppxLayout(string manifest, string packageName, string? recipe, out string? failure)
 	{
 		failure = null;
 
@@ -249,53 +322,81 @@ internal static class TestToolchain
 			return null;
 		}
 
-		var registered = TryRegister(manifest, packageName, out var reported);
-		if (registered is not null) return registered;
-
-		if (MissingFramework(reported) is not { } wanted)
+		lock (RegistrationGate)
 		{
-			failure = reported;
+			var registered = TryRegister(manifest, packageName, out var reported);
+			if (registered is not null) return registered;
+
+			if (MissingFramework(reported) is not { } wanted)
+			{
+				failure = reported;
+				return null;
+			}
+
+			var installed = InstallFrameworks(wanted, recipe, out var installFailure);
+			if (installed is null)
+			{
+				failure = $"{reported} Installing {wanted.Name} for {wanted.Architecture} failed: {installFailure}";
+				return null;
+			}
+
+			registered = TryRegister(manifest, packageName, out var retried);
+			if (registered is not null) return registered;
+
+			failure = $"{retried} This is the second attempt, after installing {string.Join(", ", installed)} "
+				+ $"for {wanted.Architecture} because the first was refused for want of {wanted.Name}.";
 			return null;
 		}
-
-		if (InstallFramework(wanted, out var installFailure) is false)
-		{
-			failure = $"{reported} Installing {wanted.Name} for {wanted.Architecture} failed: {installFailure}";
-			return null;
-		}
-
-		registered = TryRegister(manifest, packageName, out reported);
-		if (registered is not null) return registered;
-
-		failure = $"{reported} {wanted.Name} for {wanted.Architecture} was installed first, so this is not the missing framework.";
-		return null;
 	}
 
 	/// <summary>
 	/// One attempt at registering the layout: the package family name, or null with whatever the
-	/// deployment engine said.
+	/// deployment engine said, the deployment log's errors for that activity included.
 	/// </summary>
 	private static string? TryRegister(string manifest, string packageName, out string reported)
 	{
+		// The log is read here, while the activity id is in hand, because the exception's message is
+		// the deployment engine's summary and the log is its whole account: a refusal whose message
+		// names nothing useful still has the step that failed, and the package, in the log's errors.
 		var script =
-			$"try {{ Add-AppxPackage -Register '{manifest}' -ErrorAction Stop }} catch {{ Write-Output ('ERROR: ' + $_.Exception.Message); exit 0 }}; "
-				+ $"$p = Get-AppxPackage '{packageName}'; if ($p) {{ Write-Output ('PFN: ' + $p.PackageFamilyName) }}";
+			$$"""
+			$ProgressPreference = 'SilentlyContinue'
+			try { Add-AppxPackage -Register {{Quoted(manifest)}} -ErrorAction Stop }
+			catch
+			{
+				$message = $_.Exception.Message
+				foreach ($line in $message -split '\r?\n') { if ($line.Trim()) { 'ERROR: ' + $line.Trim() } }
+				if ($message -match '\[ActivityId\]\s+([0-9a-fA-F-]{36})')
+				{
+					try
+					{
+						Get-AppPackageLog -ActivityID $Matches[1] -ErrorAction Stop |
+							Where-Object { $_.Level -le 2 } |
+							ForEach-Object { 'LOG: ' + ($_.Message -replace '\s+', ' ').Trim() }
+					}
+					catch { 'LOG: the deployment log for that activity could not be read: ' + $_.Exception.Message }
+				}
+				exit 0
+			}
+			$p = Get-AppxPackage {{Quoted(packageName)}}
+			if ($p) { 'PFN: ' + $p.PackageFamilyName }
+			""";
 
-		var (_, output) = RunProcess("powershell", $"-NoProfile -NonInteractive -Command \"{script}\"");
-
-		var lines = output.Split('\n').Select(line => line.Trim()).ToArray();
-		var pfn = lines.FirstOrDefault(line => line.StartsWith("PFN: ", StringComparison.Ordinal));
-
-		if (pfn is not null)
+		string output;
+		try
 		{
-			reported = string.Empty;
-			return pfn["PFN: ".Length..].Trim();
+			(_, output) = RunPowerShell(script, $"Registering {manifest}");
+		}
+		catch (TimeoutException timeout)
+		{
+			reported = timeout.Message;
+			return null;
 		}
 
-		reported = lines.FirstOrDefault(line => line.StartsWith("ERROR: ", StringComparison.Ordinal))
-			?? "Add-AppxPackage reported nothing and the package is not registered.";
+		var result = ReadRegistration(output);
 
-		return null;
+		reported = result.Reported;
+		return result.FamilyName;
 	}
 
 	/// <summary>
@@ -309,12 +410,18 @@ internal static class TestToolchain
 	/// ..." with neutral or ARM64 processor architecture and minimum version 14.0.33519.0, along with
 	/// this package to install.
 	/// </code>
+	/// That sentence is on the third line of the exception's message, under a first line that says only
+	/// "Package failed updates, dependency or conflict validation", so it is looked for in the whole
+	/// report rather than at its start: read from the first line alone, every missing framework looks
+	/// like a failure that is not about frameworks, and nothing is ever installed.
+	/// <para>
 	/// Parsing prose is not something to do lightly, and it earns it here: the alternative is a list of
 	/// framework names kept in the fixture by hand, which is a guess about what the deployment engine
 	/// wants rather than a reading of what it asked for, and it goes stale the first time a probe gains
 	/// a dependency.
+	/// </para>
 	/// </remarks>
-	private static FrameworkDependency? MissingFramework(string reported)
+	internal static FrameworkDependency? MissingFramework(string reported)
 	{
 		var name = Regex.Match(reported, @"Provide the framework ""([^""]+)""");
 		if (!name.Success) return null;
@@ -327,65 +434,247 @@ internal static class TestToolchain
 	}
 
 	/// <summary>A framework package a layout needs, as the deployment engine described it.</summary>
-	private readonly record struct FrameworkDependency(string Name, string Architecture);
+	internal readonly record struct FrameworkDependency(string Name, string Architecture);
 
 	/// <summary>
-	/// Installs a framework package from the Windows SDK, or says why it could not.
+	/// Installs every framework package the build's recipe holds for the architecture Windows asked
+	/// for, plus the one it named from the Windows SDK where the recipe does not hold it. The names of
+	/// what was installed, or null with why not.
 	/// </summary>
 	/// <remarks>
-	/// The SDK ships these under <c>ExtensionSDKs</c>, one folder per architecture, and the file names
-	/// do not match the package names -- <c>Microsoft.VCLibs.140.00.Debug</c> is
-	/// <c>Microsoft.VCLibs.arm64.Debug.14.00.appx</c> on disk. So the search matches on the parts that
-	/// do carry over: the family (the name up to its version), the architecture folder, and whether the
-	/// wanted package is the Debug flavour, which is a different package identity rather than a
-	/// different build of one.
+	/// Only the named architecture, because the recipe lists each framework for every architecture
+	/// the project could target and installing an x86 framework does nothing for an x64 package.
 	/// </remarks>
-	private static bool InstallFramework(FrameworkDependency wanted, out string failure)
+	private static IReadOnlyList<string>? InstallFrameworks(FrameworkDependency wanted, string? recipe, out string failure)
 	{
 		failure = string.Empty;
 
-		var roots = new[]
+		var packages = RecipeFrameworks(recipe, wanted.Architecture);
+		if (!packages.Any(package => string.Equals(package.Name, wanted.Name, StringComparison.OrdinalIgnoreCase)))
 		{
-			Path.Combine(
-				Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-				"Microsoft SDKs", "Windows Kits", "10", "ExtensionSDKs"),
-			Path.Combine(
-				Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-				"Microsoft SDKs", "Windows Kits", "10", "ExtensionSDKs"),
-		};
+			if (SdkFramework(wanted, SdkExtensionRoots()) is not { } fromSdk)
+			{
+				failure = $"the build's recipe ({recipe ?? "none"}) holds no {wanted.Name} for {wanted.Architecture}, and no "
+					+ $"package for it was found under the Windows SDK's ExtensionSDKs either. Install it by hand, or "
+					+ "install the Visual Studio or Windows SDK component that ships it.";
+				return null;
+			}
 
+			packages = [.. packages, new FrameworkPackage(wanted.Name, fromSdk)];
+		}
+
+		var absent = packages.Where(package => !File.Exists(package.Path)).ToList();
+		if (absent.Count > 0)
+		{
+			failure = "the build names framework packages that are not on disk: "
+				+ string.Join("; ", absent.Select(package => $"{package.Name} at {package.Path}"));
+			return null;
+		}
+
+		// 0x80073D06 is "a higher version is already installed", which leaves the machine with what the
+		// package needs; registering it again is what finds out whether it is enough.
+		var script = "$ProgressPreference = 'SilentlyContinue'\n"
+			+ string.Concat(packages.Select(package =>
+				$"try {{ Add-AppxPackage -Path {Quoted(package.Path)} -ErrorAction Stop }} "
+					+ "catch { if ($_.Exception.Message -notmatch '0x80073D06') "
+					+ $"{{ 'ERROR: {package.Name.Replace("'", "''")} from ' + {Quoted(package.Path)} + ': ' + ($_.Exception.Message -replace '\\s+', ' ') }} }}\n"));
+
+		string output;
+		try
+		{
+			(_, output) = RunPowerShell(script, $"Installing {string.Join(", ", packages.Select(package => package.Name))}");
+		}
+		catch (TimeoutException timeout)
+		{
+			failure = timeout.Message;
+			return null;
+		}
+
+		var errors = output.Split('\n')
+			.Select(line => line.Trim())
+			.Where(line => line.StartsWith("ERROR: ", StringComparison.Ordinal))
+			.Select(line => line["ERROR: ".Length..])
+			.ToList();
+
+		if (errors.Count > 0)
+		{
+			failure = string.Join(" ", errors);
+			return null;
+		}
+
+		return packages.Select(package => package.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+	}
+
+	/// <summary>A framework package's identity name and the file it installs from.</summary>
+	private readonly record struct FrameworkPackage(string Name, string Path);
+
+	/// <summary>
+	/// The framework packages a build's <c>.build.appxrecipe</c> resolved for one architecture, or none
+	/// where there is no recipe.
+	/// </summary>
+	/// <remarks>
+	/// Each is a <c>ResolvedSDKReference</c> carrying the framework's identity name, its architecture and
+	/// an <c>AppxLocation</c>: the package Visual Studio's deploy would install beside the app. The paths
+	/// are MSBuild-escaped -- <c>Program Files %28x86%29</c> -- and some climb out of a <c>build</c>
+	/// folder with <c>..</c>, so both are undone before anything looks for the file.
+	/// </remarks>
+	private static List<FrameworkPackage> RecipeFrameworks(string? recipe, string architecture)
+	{
+		if (recipe is null || !File.Exists(recipe)) return [];
+
+		XNamespace ns = "http://schemas.microsoft.com/developer/msbuild/2003";
+
+		return XDocument.Load(recipe)
+			.Descendants(ns + "ResolvedSDKReference")
+			.Select(reference => (
+				Name: reference.Element(ns + "Name")?.Value.Trim(),
+				Architecture: reference.Element(ns + "Architecture")?.Value.Trim(),
+				Location: reference.Element(ns + "AppxLocation")?.Value.Trim()))
+			.Where(reference => !string.IsNullOrEmpty(reference.Name) && !string.IsNullOrEmpty(reference.Location))
+			.Where(reference => string.Equals(reference.Architecture, architecture, StringComparison.OrdinalIgnoreCase))
+			.Select(reference => new FrameworkPackage(reference.Name!, Path.GetFullPath(Uri.UnescapeDataString(reference.Location!))))
+			.Distinct()
+			.ToList();
+	}
+
+	/// <summary>
+	/// A framework package from the Windows SDK's <c>ExtensionSDKs</c>, or null where it has none.
+	/// </summary>
+	/// <param name="wanted">The framework and architecture the deployment engine asked for.</param>
+	/// <param name="roots">The <c>ExtensionSDKs</c> folders to search.</param>
+	/// <remarks>
+	/// The SDK ships these one folder per architecture, and the file names do not match the package
+	/// names -- <c>Microsoft.VCLibs.140.00.Debug</c> is <c>Microsoft.VCLibs.arm64.Debug.14.00.appx</c>
+	/// on disk. So the search matches on the parts that do carry over: the family (the name up to its
+	/// version), the architecture, and whether the wanted package is the Debug flavour, which is a
+	/// different package identity rather than a different build of one.
+	/// <para>
+	/// The architecture is matched as the folder the file sits in or as a dotted segment of its name,
+	/// never anywhere in the path, because the SDK lives under <c>Program Files (x86)</c>: every file
+	/// there contains "x86", and an x86 ask would take the x64 package and report it installed the
+	/// x86 one.
+	/// </para>
+	/// </remarks>
+	internal static string? SdkFramework(FrameworkDependency wanted, IEnumerable<string> roots)
+	{
 		// "Microsoft.VCLibs.140.00.Debug" -> "Microsoft.VCLibs", which is the ExtensionSDKs folder.
 		var family = string.Join('.', wanted.Name.Split('.').Take(2));
 		var debug = wanted.Name.Contains(".Debug", StringComparison.OrdinalIgnoreCase);
 
-		var candidate = roots
+		return roots
 			.Where(Directory.Exists)
 			.SelectMany(root => SafeFiles(Path.Combine(root, family), "*.appx"))
-			.Where(path => path.Contains(wanted.Architecture, StringComparison.OrdinalIgnoreCase))
-			.Where(path => path.Contains(".Debug", StringComparison.OrdinalIgnoreCase) == debug)
+			.Where(path => IsForArchitecture(path, wanted.Architecture))
+			.Where(path => Path.GetFileName(path).Contains(".Debug.", StringComparison.OrdinalIgnoreCase) == debug)
 			.OrderByDescending(File.GetLastWriteTimeUtc)
 			.FirstOrDefault();
 
-		if (candidate is null)
+		static bool IsForArchitecture(string path, string architecture)
 		{
-			failure = $"no {wanted.Name} package for {wanted.Architecture} was found under the Windows SDK's "
-				+ $"ExtensionSDKs\\{family}. Install it by hand, or install the Windows SDK component that ships it.";
-			return false;
+			var folder = Path.GetFileName(Path.GetDirectoryName(path));
+			var inFolder = string.Equals(folder, architecture, StringComparison.OrdinalIgnoreCase);
+			var inName = Path.GetFileName(path).Contains($".{architecture}.", StringComparison.OrdinalIgnoreCase);
+			return inFolder || inName;
+		}
+	}
+
+	/// <summary>Where the Windows SDK keeps its extension SDKs, the framework packages among them.</summary>
+	private static string[] SdkExtensionRoots() =>
+	[
+		Path.Combine(
+			Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+			"Microsoft SDKs", "Windows Kits", "10", "ExtensionSDKs"),
+		Path.Combine(
+			Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+			"Microsoft SDKs", "Windows Kits", "10", "ExtensionSDKs"),
+	];
+
+	/// <summary>
+	/// What one registration attempt's output says: the package family name where it registered, and
+	/// otherwise the deployment engine's whole account of why not.
+	/// </summary>
+	internal readonly record struct RegistrationOutput(string? FamilyName, string Reported);
+
+	/// <summary>
+	/// Reads the output of <see cref="TryRegister"/>'s script: <c>PFN:</c> on success, and on a refusal
+	/// one <c>ERROR:</c> line per line of the exception's message and one <c>LOG:</c> line per error in
+	/// the deployment log for that activity.
+	/// </summary>
+	/// <remarks>
+	/// Every <c>ERROR:</c> line is kept, not the first. Add-AppxPackage's message is a headline, a blank
+	/// line, the reason and a note naming the activity, and the headline alone -- "Package failed
+	/// updates, dependency or conflict validation" -- is what a refusal for a missing framework looks
+	/// like with the framework's name cut off.
+	/// <para>
+	/// A log error the message already says is left out, because the log repeats the reason twice --
+	/// once as itself and once as "the specific error text for this failure is" -- and a failure that
+	/// says the same sentence three times hides whatever else the log had to add.
+	/// </para>
+	/// </remarks>
+	internal static RegistrationOutput ReadRegistration(string output)
+	{
+		const string Specific = "The specific error text for this failure is: ";
+
+		var lines = output.Split('\n').Select(line => line.Trim()).ToArray();
+
+		var pfn = lines.FirstOrDefault(line => line.StartsWith("PFN: ", StringComparison.Ordinal));
+		if (pfn is not null) return new RegistrationOutput(pfn["PFN: ".Length..].Trim(), string.Empty);
+
+		var message = string.Join(" ", Tagged("ERROR: "));
+		var log = Tagged("LOG: ")
+			.Where(line =>
+			{
+				var at = line.IndexOf(Specific, StringComparison.Ordinal);
+				var reason = at < 0 ? line : line[(at + Specific.Length)..];
+				return !message.Contains(reason, StringComparison.Ordinal);
+			})
+			.ToList();
+
+		var saidNothing = message.Length == 0 && !Tagged("LOG: ").Any();
+		if (saidNothing)
+		{
+			var said = output.Trim();
+			return new RegistrationOutput(
+				null,
+				said.Length == 0
+					? "Add-AppxPackage reported nothing and the package is not registered."
+					: $"Add-AppxPackage reported no error and the package is not registered. PowerShell wrote: {said}");
 		}
 
-		var (_, output) = RunProcess(
-			"powershell",
-			$"-NoProfile -NonInteractive -Command \"try {{ Add-AppxPackage -Path '{candidate}' -ErrorAction Stop }} "
-				+ "catch { Write-Output ('ERROR: ' + $_.Exception.Message) }\"");
+		var reported = log.Count == 0
+			? message
+			: $"{message} The deployment log for that activity also says: {string.Join(" ", log)}";
+		return new RegistrationOutput(null, reported.Trim());
 
-		var error = output.Split('\n').Select(line => line.Trim())
-			.FirstOrDefault(line => line.StartsWith("ERROR: ", StringComparison.Ordinal));
-
-		if (error is null) return true;
-
-		failure = $"{error} (from {candidate})";
-		return false;
+		IEnumerable<string> Tagged(string tag) =>
+			lines.Where(line => line.StartsWith(tag, StringComparison.Ordinal)).Select(line => line[tag.Length..].Trim());
 	}
+
+	/// <summary>
+	/// How long one deployment script under <see cref="RegistrationGate"/> may run. A registration or a
+	/// framework install takes seconds and reading an activity's deployment log about ten, so a script
+	/// still running after this is stuck rather than slow -- and every probe fixture is queued behind it.
+	/// </summary>
+	private static readonly TimeSpan DeploymentTimeout = TimeSpan.FromMinutes(4);
+
+	/// <summary>
+	/// Runs a Windows PowerShell script, passed encoded so that no path or quote in it has to survive a
+	/// command line, and gives up on it after <see cref="DeploymentTimeout"/>.
+	/// </summary>
+	/// <exception cref="TimeoutException">The script did not finish; it names <paramref name="purpose"/>.</exception>
+	private static (int ExitCode, string Output) RunPowerShell(string script, string purpose) => RunProcess(
+		"powershell",
+		$"-NoProfile -NonInteractive -EncodedCommand {Convert.ToBase64String(Encoding.Unicode.GetBytes(script))}",
+		DeploymentTimeout,
+		purpose);
+
+	/// <summary>A string as a single-quoted PowerShell literal.</summary>
+	private static string Quoted(string value) => $"'{value.Replace("'", "''")}'";
+
+	/// <summary>
+	/// The one gate every registration takes; see <see cref="RegisterAppxLayout"/> for why it is shared.
+	/// </summary>
+	private static readonly Lock RegistrationGate = new();
 
 	/// <summary>
 	/// Every file under a directory that may not be there, because a machine without a given Windows

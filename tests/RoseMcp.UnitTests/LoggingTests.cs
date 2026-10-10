@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+
 using Microsoft.Extensions.Logging;
 
 using RoseMcp.Logging;
@@ -198,6 +200,37 @@ public sealed class LoggingTests : IDisposable
 		var written = Directory.GetFiles(directory, "*.log").Select(File.ReadAllText);
 
 		written.ShouldContain(text => text.Contains("a distinctive line", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// Every line names the call it was written for, in the same column, so one search over the log
+	/// folder finds the call in every process it crossed -- and a line written outside any call says so
+	/// with a dash rather than borrowing an id.
+	/// </summary>
+	[Test]
+	public void Writes_the_id_of_the_call_on_every_line_written_for_it()
+	{
+		const string Id = "0123456789ab";
+
+		using (var factory = LoggerFactory.Create(logging =>
+			logging.SetMinimumLevel(LogLevel.Information).AddRoseFileLogging("Worker", null, _root)))
+		{
+			var logger = factory.CreateLogger("Test");
+
+			using (CallCorrelation.Begin(new JsonObject { [CallCorrelation.MetaKey] = Id }))
+			{
+				logger.LogInformation("inside the call");
+			}
+
+			logger.LogInformation("outside any call");
+		}
+
+		var lines = Directory.GetFiles(RoseLogFile.DirectoryFor("Worker", _root), "*.log")
+			.SelectMany(File.ReadAllLines)
+			.ToList();
+
+		lines.ShouldContain(line => line.Contains($"[INF] {Id} Test: inside the call", StringComparison.Ordinal));
+		lines.ShouldContain(line => line.Contains("[INF] - Test: outside any call", StringComparison.Ordinal));
 	}
 
 	/// <summary>

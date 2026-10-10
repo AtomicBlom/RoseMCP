@@ -15,7 +15,9 @@
     It installs over a running instance the way deploy.ps1 promotes over one -- the inspector, then
     the tray, then the workers it owned, then any stdio server holding the same assemblies -- because
     a running exe cannot be overwritten and the failure otherwise arrives halfway through the copy,
-    with the install already unusable.
+    with the install already unusable. The relay a client registers is the exception: its folder is
+    left alone, and its relays running, when the relay in it speaks the relay protocol this package
+    does, so those sessions reconnect to the new tray by themselves.
 
     State is kept, not replaced: settings.json and Logs/ sit under the same root as the binaries and
     survive an install. Only -Uninstall -Purge removes them.
@@ -50,8 +52,8 @@ param(
     # Working directory for the tray, which is where a tool call with no path looks for a solution.
     [string] $WorkspaceRoot,
 
-    # Register the tray's http endpoint with Claude Code. Off by default: an installer that edits
-    # somebody's agent configuration without being asked is doing more than installing.
+    # Register RoseMCP with Claude Code, through the installed relay. Off by default: an installer that
+    # edits somebody's agent configuration without being asked is doing more than installing.
     [switch] $Register,
 
     [switch] $StartWithWindows,
@@ -263,22 +265,30 @@ Write-Host "  version $version"
 $problems = Get-PrerequisiteProblem
 foreach ($problem in $problems) { Write-Warning $problem }
 
-$stopped = Stop-Install -Root $Destination
+$stopped = Stop-Install -Root $Destination -KeepCurrentRelay
 
-Clear-InstallPayload -Root $Destination
+Clear-InstallPayload -Root $Destination -KeepCurrentRelay
 New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 
 # Shared first, then this architecture's own files. The two never name the same path -- a file is
 # shared exactly when every architecture had it identical, and left in place otherwise -- so the
-# order is for reading rather than for correctness.
+# order is for reading rather than for correctness. The relay is laid down on its own, below.
 if (Test-Path $shared)
 {
     Write-Host '  copying shared payload'
-    Copy-Item -Path "$shared/*" -Destination $Destination -Recurse -Force
+    Copy-InstallPayload -From $shared -To $Destination
 }
 
 Write-Host "  copying $rid payload"
-Copy-Item -Path "$payload/*" -Destination $Destination -Recurse -Force
+Copy-InstallPayload -From $payload -To $Destination
+
+# Only where the relay installed is not this one: a current relay's folder was kept, with its relays
+# still running out of it.
+if (-not (Test-RelayCurrent -Root $Destination))
+{
+    $relayFolder = $layout.relay.folder
+    Install-Relay -From @((Join-LayoutPath $shared, $relayFolder), (Join-LayoutPath $payload, $relayFolder)) -Root $Destination
+}
 
 # Only the hosts this machine can execute. The package carries every architecture's, and copying the
 # ones nothing can load is weight in the install for no reachable capability.
@@ -300,7 +310,7 @@ Write-ArpEntry -Root $Destination -Version $version
 
 if ($StartWithWindows) { Set-StartupRegistration -Root $Destination }
 
-$endpoint = "http://127.0.0.1:$Port"
+$trayStarted = $false
 
 if ($NoStart)
 {
@@ -313,15 +323,26 @@ else
     # and look at rather than a reason to report that installing failed. An installer that says it
     # failed while the install is live is worse than the problem it is reporting, because anything
     # automating it believes the installer.
-    try { Start-Tray -Root $Destination -WorkspaceRoot $WorkspaceRoot -Port $Port }
+    try
+    {
+        Start-Tray -Root $Destination -WorkspaceRoot $WorkspaceRoot -Port $Port
+        $trayStarted = $true
+    }
     catch { Write-Warning "  the tray did not start: $($_.Exception.Message). The install is complete; start it from $(Get-InstalledExecutable -Root $Destination -Project 'RoseMcp.Tray')" }
 }
+
+# The relay form, which is what keeps a session connected across the next install: user scope, since
+# the relay finds each session's solution from the directory it starts in. The port is passed only
+# where it is not the one a relay looks at anyway.
+$relayExecutable = (Get-RelayExecutable -Root $Destination).Replace('/', '\')
+$registration = @('mcp', 'add', 'rose', '-s', 'user', '--', $relayExecutable)
+if ($Port -ne 5077) { $registration += @('--port', [string] $Port) }
 
 if ($Register)
 {
     if (Get-Command claude -ErrorAction SilentlyContinue)
     {
-        & claude mcp add --transport http rose $endpoint
+        & claude @registration
         if ($LASTEXITCODE -eq 0)
         {
             Write-Host '  registered with Claude Code'
@@ -346,6 +367,20 @@ if ($Register)
 
 Write-Host ''
 Write-Host "installed RoseMCP $version to $Destination"
-if (-not $Register) { Write-Host "register it with your agent:  claude mcp add --transport http rose $endpoint" }
-if ($stopped.ServersStopped) { Write-Host 'reconnect the MCP client with /mcp; the first call reloads the solution' }
+
+if (-not $Register)
+{
+    $shown = @($registration | ForEach-Object { if ($_ -match '\s') { "`"$_`"" } else { $_ } }) -join ' '
+    Write-Host "register it with your agent:  claude $shown"
+}
+
+if ($stopped.ServersStopped -gt 0) { Write-Host 'sessions connected to the install''s own server lost their connection: reconnect them with /mcp, or register the relay above' }
+if ($stopped.RelaysStopped -gt 0) { Write-Host 'the relay protocol changed, so the relays running were stopped: reconnect those sessions with /mcp' }
+
+if ($trayStarted -and $stopped.RelaysKept -gt 0)
+{
+    $relays = Wait-RelayReconnect -Root $Destination -Port $Port
+    Write-Host ('{0} of {1} relay(s) reconnected to the new tray' -f $relays.Connected, $relays.Expected)
+}
+
 if ($problems.Count -gt 0) { Write-Host 'install the prerequisites above before expecting a solution to load' }

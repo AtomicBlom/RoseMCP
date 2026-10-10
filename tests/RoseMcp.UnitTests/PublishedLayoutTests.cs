@@ -1,6 +1,8 @@
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 using RoseMcp.Logging;
+using RoseMcp.Server;
+using RoseMcp.Ui.Core;
 
 namespace RoseMcp.UnitTests;
 
@@ -221,6 +223,67 @@ public sealed class PublishedLayoutTests : IDisposable
 		{
 			runtime.LiveAppHosts.ShouldContain(runtime.Rid);
 		}
+	}
+
+	/// <summary>
+	/// The protocol a deploy compares is the one the relay speaks, and the folder it keeps the relay
+	/// in is the one the relay knows itself by. A number raised in the code and not here would leave
+	/// every running relay in place through a deploy that changed what it says to the broker; one
+	/// raised here and not in the code would stop every relay on every deploy for nothing.
+	/// </summary>
+	[Test]
+	public void The_relay_is_installed_where_and_as_what_the_code_expects()
+	{
+		Layout.Relay.Protocol.ShouldBe(RelayProtocol.Version);
+		Layout.Relay.Folder.ShouldBe(RelayProtocol.Folder);
+		Layout.Relay.Executable.ShouldBe(Layout.ComponentFor(Layout.Relay.Project).Executable);
+		Layout.Components.Select(component => component.Folder).ShouldNotContain(Layout.Relay.Folder, "the relay's folder is its own");
+	}
+
+	/// <summary>
+	/// An installed relay with no tray hands the session to the install root's broker, one level above
+	/// its own folder, rather than hosting one from its own older assemblies. Anywhere that is not a
+	/// relay folder hosts the broker itself.
+	/// </summary>
+	[Test]
+	public void An_installed_relay_finds_the_broker_of_its_install()
+	{
+		var relayFolder = PublishedLayout.Under(_root, Layout.Relay.Folder);
+		Stage(PublishedLayout.Under(relayFolder, PublishedLayout.OnThisMachine(Layout.Relay.Executable)));
+
+		var broker = RelayInstall.BrokerFor(relayFolder);
+
+		broker.ShouldNotBeNull();
+		Path.GetFullPath(broker).ShouldBe(Path.GetFullPath(ExecutableOf(Layout.ComponentFor("RoseMcp.Server"))));
+
+		RelayInstall.BrokerFor(_root).ShouldBeNull("the install root is not a relay folder");
+		RelayInstall.BrokerFor(PublishedLayout.Under(_root, Layout.ComponentFor("RoseMcp.Tray").Folder)).ShouldBeNull();
+	}
+
+	/// <summary>
+	/// The tray's setup command names the installed relay, quoted for the space an install path often
+	/// has, and falls back to the http endpoint only where there is no relay beside it.
+	/// </summary>
+	[Test]
+	public void The_tray_registers_the_relay_beside_it()
+	{
+		var trayFolder = PublishedLayout.Under(_root, Layout.ComponentFor("RoseMcp.Tray").Folder);
+		RelayRegistration.RelayFor(trayFolder).ShouldBeNull("nothing is staged in the relay folder yet");
+
+		var relay = PublishedLayout.Under(_root, Layout.Relay.Folder, Layout.Relay.Executable + ".exe");
+		Stage(relay);
+
+		var found = RelayRegistration.RelayFor(trayFolder);
+		found.ShouldNotBeNull();
+		Path.GetFullPath(found).ShouldBe(Path.GetFullPath(relay));
+
+		RelayRegistration.Command(@"C:\Program Files\Rose\relay\RoseMcp.Server.exe", "127.0.0.1", 5077)
+			.ShouldBe(@"claude mcp add rose -s user -- ""C:\Program Files\Rose\relay\RoseMcp.Server.exe""");
+
+		RelayRegistration.Command(@"C:\Rose\relay\RoseMcp.Server.exe", "127.0.0.1", 5078)
+			.ShouldBe(@"claude mcp add rose -s user -- ""C:\Rose\relay\RoseMcp.Server.exe"" --port 5078");
+
+		RelayRegistration.Command(relay: null, "127.0.0.1", 5077).ShouldBe("claude mcp add --transport http rose http://127.0.0.1:5077");
 	}
 
 	/// <summary>

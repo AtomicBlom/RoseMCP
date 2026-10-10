@@ -103,7 +103,8 @@ public sealed partial class MainWindow : Window
 
 		_endpoint = $"http://{_app.Options.Host}:{_app.Options.Port}";
 		EndpointText.Text = _endpoint;
-		RegistrationText.Text = RegistrationCommand(_endpoint);
+		RegistrationText.Text = RelayRegistration.Command(
+			RelayRegistration.RelayFor(AppContext.BaseDirectory), _app.Options.Host, _app.Options.Port);
 		Workspaces.ItemsSource = _rows;
 		Sessions.ItemsSource = _sessionRows;
 
@@ -504,9 +505,6 @@ public sealed partial class MainWindow : Window
 			existing.Update(summary);
 		}
 	}
-
-	/// <summary>How a Claude Code user points their agent at this broker over http.</summary>
-	public static string RegistrationCommand(string endpoint) => $"claude mcp add --transport http rose {endpoint}";
 
 	private static bool Same(string left, string right) =>
 		string.Equals(left, right, StringComparison.OrdinalIgnoreCase);

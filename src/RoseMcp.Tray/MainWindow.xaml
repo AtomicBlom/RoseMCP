@@ -452,7 +452,7 @@
 			<TextBlock MaxWidth="440" TextAlignment="Center" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
 				Text="A solution is loaded the first time a client asks about it, and stays warm here for every session after that." />
 			<TextBlock Margin="0,12,0,0" TextAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
-				Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Register the endpoint with your agent:" />
+				Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Register RoseMCP with your agent:" />
 			<Button Style="{StaticResource ChipButtonStyle}" Click="OnCopyRegistration" HorizontalAlignment="Center"
 				ToolTipService.ToolTip="Copy">
 				<Grid ColumnSpacing="10" ColumnDefinitions="*,Auto">

@@ -40,16 +40,24 @@ One archive covers x64 and ARM64: it reads the machine and lays down only what t
 execute, so there is nothing to choose when downloading. It installs over a running instance, keeps
 `settings.json` and `Logs/`, and adds an Add/Remove Programs entry.
 
-Then register the endpoint with your agent -- the tray shows this command too:
+Then register RoseMCP with your agent through the relay the install puts down -- the tray shows this
+command too, with your install's path in it:
 
 ```
-claude mcp add --transport http rose http://127.0.0.1:5077
+claude mcp add rose -s user -- "%LOCALAPPDATA%\BinaryVibrance\RoseMCP\relay\RoseMcp.Server.exe"
 ```
 
-Or run the broker over stdio and skip the tray entirely, which is what a Linux install does:
+The relay is a small stdio process each session starts. It forwards to the tray, tells it which
+directory the session runs in, and outlives an update: it reconnects to the new tray by itself, and
+tells Claude Code to reload the tool list only when the tools changed, so a session needs no `/mcp`.
+With no tray running it starts the installed broker itself. Registering the tray's http endpoint
+directly (`claude mcp add --transport http rose http://127.0.0.1:5077`) still works, but gets none
+of that.
+
+On Linux there is no tray or relay; run the broker over stdio:
 
 ```
-claude mcp add rose -- <path>/RoseMcp.Server.exe
+claude mcp add rose -- <path>/RoseMcp.Server
 ```
 
 That is the whole setup. There is no `workspace_open` to call first -- every tool resolves its own
@@ -259,11 +267,14 @@ the live-app debugging surface and its security model.
 ### Dogfooding
 
 Work on this repository with this server running against it, registered globally rather than per
-project:
+project, through the relay of the install `./tools/deploy.ps1` promotes to:
 
 ```
-claude mcp add rose -s user -- <path>/RoseMcp.Server.exe
+claude mcp add rose -s user -- <install>/relay/RoseMcp.Server.exe
 ```
+
+A deploy then leaves every session connected; a session registered with `<install>/RoseMcp.Server.exe`
+instead is stopped by every deploy, and the deploy says so.
 
 There is deliberately no `.mcp.json` here. Committing one would either pin every contributor to one
 machine's install path or point at a build output that may not exist yet; a user-scope registration

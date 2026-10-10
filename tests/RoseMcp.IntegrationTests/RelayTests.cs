@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using ModelContextProtocol.Client;
 
@@ -189,6 +190,160 @@ public sealed class RelayTests
 		Structured(relayed).GetProperty("changedFiles")[0].GetProperty("filePath").GetString()
 			.ShouldBe(Path.Combine("Simple", "Core", "Calculator.cs"));
 	}
+
+	/// <summary>
+	/// What a deploy does to a session, over two real processes: the broker is killed and a new one
+	/// started on the same port, and the relay finds it with no call to prompt it, sends no
+	/// <c>list_changed</c> because the tools are the same, and says the restart on the next result --
+	/// that one, and not the one after.
+	/// </summary>
+	/// <remarks>
+	/// The same build restarted is the case every deploy that touched only the code behind the tools
+	/// produces, and it is the one that must cost a session nothing. A changed tool list is the
+	/// relay's decision about two surfaces, and the unit suite drives that against brokers whose tools
+	/// it chooses; what only real processes can show is that the relay notices a killed broker by
+	/// itself, over the watch, and that the broker counts it as connected again.
+	/// </remarks>
+	[Test]
+	public async Task A_relay_finds_a_restarted_broker_by_itself_and_says_the_restart_once()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		var directory = Path.GetDirectoryName(fixture.SolutionPath)!;
+		await using var relay = await RelayFixture.StartAsync(directory, cancellationToken);
+
+		var before = await relay.WaitForRelaysAsync(1, cancellationToken);
+		before.RelayProtocol.ShouldBe(RelayProtocol.Version);
+
+		using (var first = await relay.Session.CallToolAsync(ToolNames.WorkspaceList, "{}", cancellationToken))
+		{
+			NoticesOf(Structured(first)).ShouldBeEmpty("nothing has happened yet to say");
+		}
+
+		await relay.StopBrokerAsync(cancellationToken);
+		await relay.RestartBrokerAsync(cancellationToken);
+
+		// No call in between: the relay found the new broker over its watch, and is counted by it.
+		var after = await relay.WaitForRelaysAsync(1, cancellationToken);
+		after.Instance.ShouldNotBe(before.Instance, "the broker counting the relay is the one just started");
+
+		using var next = await relay.Session.CallToolAsync(ToolNames.WorkspaceList, "{}", cancellationToken);
+		var line = NoticesOf(Structured(next)).ShouldHaveSingleItem();
+
+		line.ShouldStartWith($"RoseMCP restarted and is now build {after.Build.Describe()}", Case.Sensitive);
+		line.ShouldContain("load again on the first call that needs them", Case.Sensitive);
+
+		relay.Session.Notifications.ShouldNotContain(
+			"notifications/tools/list_changed",
+			"the new broker has the same tools, so the client has nothing to refresh");
+
+		using var later = await relay.Session.CallToolAsync(ToolNames.WorkspaceList, "{}", cancellationToken);
+		NoticesOf(Structured(later)).ShouldBeEmpty("the restart is said once");
+	}
+
+	/// <summary>
+	/// A relay installed in an install's relay folder, with no tray running, hands the session to the
+	/// install root's broker as a child rather than hosting one from its own assemblies -- and ends
+	/// when that child does, which is what a deploy does to it.
+	/// </summary>
+	/// <remarks>
+	/// The install is staged from this build's output, twice: once as the root and once as the relay
+	/// folder under it, which is the arrangement a deploy produces. The relay's own assemblies are the
+	/// same build here, so what shows the child served the call is the child process itself, found by
+	/// where it runs from.
+	/// </remarks>
+	[Test]
+	public async Task An_installed_relay_with_no_tray_relays_to_the_install_broker_and_ends_with_it()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		var install = Path.Combine(Path.GetTempPath(), $"rosemcp-install-{Guid.NewGuid():N}");
+		var output = Path.GetDirectoryName(RoseServerProcess.ExecutablePath())!;
+		CopyDirectory(output, install);
+		CopyDirectory(output, Path.Combine(install, RelayProtocol.Folder));
+
+		try
+		{
+			var relayExecutable = Path.Combine(install, RelayProtocol.Folder, Path.GetFileName(RoseServerProcess.ExecutablePath()));
+			using var session = RoseServerProcess.StartExecutable(relayExecutable, Path.GetDirectoryName(fixture.SolutionPath));
+			await session.InitializeAsync(cancellationToken);
+
+			using (var answer = await session.CallToolAsync(ToolNames.WorkspaceList, "{}", cancellationToken))
+			{
+				Structured(answer);
+			}
+
+			var broker = ProcessesRunningFrom(install).ShouldHaveSingleItem("the install root's broker is running as the session's child");
+
+			using (broker)
+			{
+				broker.Kill(entireProcessTree: true);
+			}
+
+			(await session.WaitForExitAsync(TimeSpan.FromSeconds(30), cancellationToken)).ShouldBeTrue(
+				"a relay whose broker has gone ends, so its client can start a session on the build installed now");
+		}
+		finally
+		{
+			foreach (var straggler in ProcessesRunningFrom(install))
+			{
+				using (straggler)
+				{
+					straggler.Kill(entireProcessTree: true);
+				}
+			}
+
+			Directory.Delete(install, recursive: true);
+		}
+	}
+
+	/// <summary>The servers running from directly under <paramref name="install"/>, which leaves its relay folder out.</summary>
+	private static IReadOnlyList<Process> ProcessesRunningFrom(string install)
+	{
+		var name = Path.GetFileNameWithoutExtension(RoseServerProcess.ExecutablePath());
+		var running = new List<Process>();
+
+		foreach (var process in Process.GetProcessesByName(name))
+		{
+			string? path;
+			try
+			{
+				path = process.MainModule?.FileName;
+			}
+			catch (Exception)
+			{
+				path = null;
+			}
+
+			var isTheInstallBroker = path is not null
+				&& string.Equals(Path.GetDirectoryName(path), install, StringComparison.OrdinalIgnoreCase);
+
+			if (isTheInstallBroker) running.Add(process);
+			else process.Dispose();
+		}
+
+		return running;
+	}
+
+	private static void CopyDirectory(string source, string destination)
+	{
+		Directory.CreateDirectory(destination);
+
+		foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+		{
+			var target = Path.Combine(destination, Path.GetRelativePath(source, file));
+			Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+			File.Copy(file, target);
+		}
+	}
+
+	/// <summary>The notices a structured result carries, or none.</summary>
+	private static IReadOnlyList<string> NoticesOf(JsonElement structured) =>
+		structured.TryGetProperty("notices", out var notices)
+			? [.. notices.EnumerateArray().Select(notice => notice.GetString()!)]
+			: [];
 
 	/// <summary>The structured half of a tool reply, or the error text when the call failed.</summary>
 	internal static JsonElement Structured(JsonDocument reply)

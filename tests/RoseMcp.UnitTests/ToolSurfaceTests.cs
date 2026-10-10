@@ -1,6 +1,9 @@
+using System.IO.Pipelines;
+
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
+using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -284,6 +287,52 @@ public sealed class ToolSurfaceTests
 		var options = provider.GetRequiredService<IOptions<McpServerOptions>>().Value;
 
 		options.Filters.Request.ListToolsFilters.ShouldNotBeEmpty();
+	}
+
+	/// <summary>
+	/// The trim leaves the definitions the SDK answers calls with alone. The SDK decides from a tool's
+	/// own output schema whether its result carries structured content, so a listing that cleared the
+	/// schema in place would leave every later call -- every client's, since a client always lists
+	/// first -- answering in text alone. A relay reads its notices and the debug sessions out of
+	/// structured content, so it would hear nothing.
+	/// </summary>
+	[Test]
+	public async Task A_listing_leaves_later_results_structured()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		var toServer = new Pipe();
+		var toClient = new Pipe();
+
+		var services = new ServiceCollection();
+		services.AddLogging();
+		services.AddRoseMcpBroker().WithStreamServerTransport(toServer.Reader.AsStream(), toClient.Writer.AsStream());
+
+		await using var provider = services.BuildServiceProvider();
+		using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		var running = provider.GetRequiredService<McpServer>().RunAsync(stop.Token);
+
+		await using (var client = await McpClient.CreateAsync(
+			new StreamClientTransport(toServer.Writer.AsStream(), toClient.Reader.AsStream()),
+			cancellationToken: cancellationToken))
+		{
+			var listed = await client.ListToolsAsync(cancellationToken: cancellationToken);
+			listed.ShouldAllBe(tool => tool.ProtocolTool.OutputSchema == null, "the listing is trimmed");
+
+			var answer = await client.CallToolAsync(ToolNames.WorkspaceList, cancellationToken: cancellationToken);
+
+			answer.StructuredContent.ShouldNotBeNull("a call after a listing still carries its structured content");
+		}
+
+		await stop.CancelAsync();
+
+		try
+		{
+			await running;
+		}
+		catch (OperationCanceledException)
+		{
+		}
 	}
 
 	/// <summary>

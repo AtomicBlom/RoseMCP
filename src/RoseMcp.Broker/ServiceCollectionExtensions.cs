@@ -289,14 +289,15 @@ public static class ServiceCollectionExtensions
 
 	/// <summary>
 	/// Applies <see cref="ToolListing.Trim"/> at the one place every listing passes through, so no tool
-	/// can be added that skips it.
+	/// can be added that skips it -- to copies, through <see cref="ToolListing.Trimmed"/>, since the
+	/// tools a listing returns are the ones the SDK answers calls with.
 	/// </summary>
 	private static IMcpServerBuilder WithLeanListing(this IMcpServerBuilder builder) =>
 		builder.WithRequestFilters(filters => filters.AddListToolsFilter(next => async (context, cancellationToken) =>
 		{
 			var result = await next(context, cancellationToken);
 
-			foreach (var tool in result.Tools) ToolListing.Trim(tool);
+			result.Tools = [.. result.Tools.Select(ToolListing.Trimmed)];
 
 			return result;
 		}));

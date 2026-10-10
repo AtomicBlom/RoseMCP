@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -20,6 +21,7 @@ public sealed class RoseServerProcess : IDisposable
 	private readonly Process _process;
 	private readonly Task<string> _draining;
 	private int _nextId = 1;
+	private readonly ConcurrentQueue<string> _notifications = new();
 
 	private RoseServerProcess(Process process)
 	{
@@ -33,6 +35,9 @@ public sealed class RoseServerProcess : IDisposable
 	public int Id => _process.Id;
 
 	public bool HasExited => _process.HasExited;
+
+	/// <summary>The method of every notification read past on the way to a reply, in the order they came.</summary>
+	public IReadOnlyCollection<string> Notifications => _notifications;
 
 	/// <summary>
 	/// The server executable from this repository's own build output, in the configuration the tests
@@ -86,9 +91,16 @@ public sealed class RoseServerProcess : IDisposable
 	/// Starts a server in a given directory. That directory is not decoration: it is the one fact a
 	/// stdio session has that an http broker cannot learn, and the relay sends it with every call.
 	/// </summary>
-	public static RoseServerProcess StartIn(string? workingDirectory, params string[] arguments)
+	public static RoseServerProcess StartIn(string? workingDirectory, params string[] arguments) =>
+		StartExecutable(ExecutablePath(), workingDirectory, arguments);
+
+	/// <summary>
+	/// Starts a server from somewhere other than this repository's build output -- a copy staged where
+	/// an install would put it, for the behaviour that depends on where the executable sits.
+	/// </summary>
+	public static RoseServerProcess StartExecutable(string executable, string? workingDirectory, params string[] arguments)
 	{
-		var start = new ProcessStartInfo(ExecutablePath())
+		var start = new ProcessStartInfo(executable)
 		{
 			RedirectStandardInput = true,
 			RedirectStandardOutput = true,
@@ -218,7 +230,8 @@ public sealed class RoseServerProcess : IDisposable
 	/// <remarks>
 	/// Skipping matters: the broker reports progress as it loads a solution, and those notifications
 	/// arrive on the same stream. Reading one line and calling it the reply reads a progress report
-	/// as an answer.
+	/// as an answer. Each one skipped is kept in <see cref="Notifications"/>, since whether one was
+	/// sent at all is sometimes the thing under test.
 	/// </remarks>
 	private async Task<string> ReadReplyAsync(int id, CancellationToken cancellationToken)
 	{
@@ -241,6 +254,11 @@ public sealed class RoseServerProcess : IDisposable
 
 			using var message = JsonDocument.Parse(line);
 			if (message.RootElement.TryGetProperty("id", out var replied) && replied.GetInt32() == id) return line;
+
+			var isNotification = !message.RootElement.TryGetProperty("id", out _)
+				&& message.RootElement.TryGetProperty("method", out _);
+
+			if (isNotification) _notifications.Enqueue(message.RootElement.GetProperty("method").GetString()!);
 		}
 	}
 

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 
 namespace RoseMcp.Broker;
@@ -38,6 +39,26 @@ public static class ToolListing
 		tool.InputSchema = Normalised(tool.InputSchema);
 
 		if (tool.Description is { Length: > 0 } description) tool.Description = OneLineBreak(description);
+	}
+
+	/// <summary>
+	/// A trimmed copy of <paramref name="tool"/>, leaving the definition the SDK holds as it was.
+	/// <para>
+	/// A copy, because the listing hands out the SDK's own <see cref="Tool"/> instances, and the SDK
+	/// decides from a tool's output schema whether its results carry <c>structuredContent</c>. Trimmed in
+	/// place, every tool would lose its schema for good the first time anything listed them -- and a client
+	/// always lists first -- so every result after that would come back as text alone, for every client of
+	/// the broker.
+	/// </para>
+	/// </summary>
+	public static Tool Trimmed(Tool tool)
+	{
+		var shape = McpJsonUtilities.DefaultOptions.GetTypeInfo(typeof(Tool));
+		var copy = (Tool)JsonSerializer.Deserialize(JsonSerializer.SerializeToElement(tool, shape), shape)!;
+
+		Trim(copy);
+
+		return copy;
 	}
 
 	/// <summary>

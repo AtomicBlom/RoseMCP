@@ -1,4 +1,5 @@
 using System.Text.Json;
+using RoseMcp.Contracts;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -113,6 +114,39 @@ public sealed class RelayFixture : IAsyncDisposable
 		var body = await client.GetStringAsync(new Uri($"http://127.0.0.1:{Port}/admin/workspaces"), cancellationToken);
 
 		return JsonDocument.Parse(body);
+	}
+
+	/// <summary>What the broker tells a relay about itself: which instance it is, and how many relays are watching it.</summary>
+	public async Task<RelayHello> HelloAsync(CancellationToken cancellationToken)
+	{
+		using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+		var body = await client.GetStringAsync(new Uri($"http://127.0.0.1:{Port}{RelayProtocol.HelloRoute}"), cancellationToken);
+
+		return JsonSerializer.Deserialize<RelayHello>(body, ContractJson.Options)
+			?? throw new InvalidOperationException($"The broker on port {Port} answered its hello with nothing.");
+	}
+
+	/// <summary>
+	/// Waits until the broker counts <paramref name="relays"/> relays watching it, which a relay does
+	/// only once it has connected and read what the broker offers -- so it is how a test learns that a
+	/// relay found a restarted broker by itself, with no call to prompt it.
+	/// </summary>
+	public async Task<RelayHello> WaitForRelaysAsync(int relays, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
+
+		while (true)
+		{
+			var hello = await HelloAsync(cancellationToken);
+			if (hello.Relays >= relays) return hello;
+
+			if (DateTime.UtcNow > deadline)
+			{
+				throw new InvalidOperationException($"The broker on port {Port} counted {hello.Relays} relays, never {relays}.");
+			}
+
+			await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+		}
 	}
 
 	private static async Task WaitForBrokerAsync(int port, CancellationToken cancellationToken)

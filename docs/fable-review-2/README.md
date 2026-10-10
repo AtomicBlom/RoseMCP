@@ -100,6 +100,7 @@ thing a future review will re-derive from scratch at full cost.
 | `06-ipc-and-protocols.md` | Every process boundary and the protocol crossing it |
 | `07-hot-reload-readiness.md` | Distance to C# hot reload, and the path |
 | `08-ui-usability.md` | Product review of the three UIs: tray, inspector, in-app Rose panel. Usability and whether each earns its place. Not a code review; `05` covers the code. |
+| `09-windows-redesign.html` | Tier 5's design, written after the review: the use cases the windows serve, the tray, the RoseMCP window, the Inspector and the in-app panel redrawn from them, what Rose needs underneath, and the decisions taken. Open it in a browser. |
 
 ## Report format (every file)
 

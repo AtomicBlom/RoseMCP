@@ -1,0 +1,1119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RoseMCP Windows Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  /* Layout: a reading column for the argument (requirements, principles, foundations, order, decisions) that widens
+     to 1240px for mock-ups. Page chrome follows the viewer's theme; mock-ups are pictures of a dark-themed Windows
+     app and keep one look. */
+  :root {
+    --bg: #faf8f8; --surface: #ffffff; --fg: #231d1f; --muted: #6b5f63; --line: #e7dfe1; --accent: #b03060;
+    --new: #b03060; --new-bg: #fbe6ee; --chg: #2b62b8; --chg-bg: #e4edfb; --keep: #2f7d4f; --keep-bg: #e3f2e8;
+    --bug: #a3283f; --bug-bg: #fbe3e7; --def: #6b5f63; --def-bg: #efeaeb;
+    --font-body: "Public Sans", "Segoe UI", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+
+    /* The app's look, fixed dark. */
+    --m-desk: #0f0d0d; --m-win: #201c1b; --m-pane: #262120; --m-card: #2b2625; --m-card2: #352f2e; --m-line: #433b39; --m-line2: #332d2c;
+    --m-fg: #f1ecea; --m-fg2: #b8afac; --m-fg3: #8a817e;
+    --m-rose: #ea7aa0; --m-rose-bg: #4b2534; --m-amber: #f3cd4f; --m-amber-bg: #45391a;
+    --m-red: #f2918a; --m-red-bg: #4a2624; --m-green: #86cf8f; --m-green-bg: #1f3a24; --m-blue: #6cb2ff; --m-blue-bg: #1d3150;
+    --m-cyan: #5fd4ec; --m-sel: #3b2f45;
+    --m-font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --m-mono: "Cascadia Mono", Consolas, "JetBrains Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #171314; --surface: #1f1a1b; --fg: #efe8ea; --muted: #a89ca0; --line: #352d2f; --accent: #f08cab;
+      --new: #f08cab; --new-bg: #3d1a28; --chg: #8db8f5; --chg-bg: #1b2a44; --keep: #8fd6a6; --keep-bg: #18301f;
+      --bug: #f29aa8; --bug-bg: #3a1a20; --def: #a89ca0; --def-bg: #2a2425;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #171314; --surface: #1f1a1b; --fg: #efe8ea; --muted: #a89ca0; --line: #352d2f; --accent: #f08cab;
+    --new: #f08cab; --new-bg: #3d1a28; --chg: #8db8f5; --chg-bg: #1b2a44; --keep: #8fd6a6; --keep-bg: #18301f;
+    --bug: #f29aa8; --bug-bg: #3a1a20; --def: #a89ca0; --def-bg: #2a2425;
+    color-scheme: dark;
+  }
+
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+  .page { max-width: 1240px; margin: 0 auto; padding-inline: 16px; padding-block: 40px 80px; display: grid; gap: 56px; }
+  .read { max-width: 78ch; }
+  a { color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+  h1, h2, h3 { text-wrap: balance; margin: 0; }
+  p { margin: 0; }
+
+  header { display: grid; gap: 14px; }
+  .eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.12; font-weight: 800; }
+  .lede { max-width: 72ch; }
+  .sub { max-width: 72ch; color: var(--muted); }
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; }
+  .toc a { font-size: 13px; text-decoration: none; border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; background: var(--surface); color: var(--fg); }
+  .toc a:hover, .toc a:focus-visible { border-color: var(--accent); }
+
+  section { display: grid; gap: 16px; scroll-margin-top: 16px; }
+  .shead { display: grid; gap: 6px; padding-bottom: 10px; border-bottom: 2px solid var(--fg); }
+  .shead h2 { font-size: 24px; line-height: 1.2; }
+  .shead p { color: var(--muted); max-width: 78ch; }
+  h3 { font-size: 18px; line-height: 1.3; }
+
+  .shifts { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; display: grid; gap: 10px; }
+  .shifts h2 { font-size: 16px; }
+  .shifts ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 86ch; }
+
+  /* Requirements table */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+  table.req { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 760px; }
+  .req th, .req td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  .req thead th { font-size: 12px; font-family: var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .req tr.grp th { background: var(--bg); font-size: 13px; font-weight: 700; padding-top: 12px; }
+  .req .rid { white-space: nowrap; font-family: var(--font-mono); font-weight: 600; color: var(--accent); width: 7.5rem; }
+  .req .rid .st { margin-top: 4px; }
+  .req .said { color: var(--muted); font-size: 13.5px; width: 34%; }
+  .req .said q { font-style: italic; }
+  .st { display: block; width: max-content; font-family: var(--font-body); font-size: 11.5px; font-weight: 600; border-radius: 999px; padding: 0 8px; }
+  .st.new { color: var(--new); background: var(--new-bg); }
+  .st.chg { color: var(--chg); background: var(--chg-bg); }
+  .st.keep { color: var(--keep); background: var(--keep-bg); }
+  .st.bug { color: var(--bug); background: var(--bug-bg); }
+  .st.def { color: var(--def); background: var(--def-bg); }
+  .key { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted); align-items: center; }
+  .key .st { display: inline-block; }
+
+  /* Principles */
+  .principles { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .pr { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; }
+  .pr h3 { font-size: 16px; }
+  .pr p { font-size: 14px; color: var(--muted); }
+
+  /* Mock-up figures */
+  figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+  figcaption { font-size: 14px; color: var(--muted); max-width: 86ch; }
+  figcaption b { color: var(--fg); font-weight: 600; }
+  .shot { overflow-x: auto; padding-bottom: 4px; }
+  .notes { margin: 0; padding-left: 20px; display: grid; gap: 5px; font-size: 14px; max-width: 86ch; }
+  .notes li::marker { color: var(--accent); }
+  .row2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; align-items: start; }
+
+  .win { background: var(--m-win); color: var(--m-fg); font-family: var(--m-font); font-size: 13px; line-height: 1.4;
+         border: 1px solid #3a3433; border-radius: 8px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.18); }
+  .cap { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px; background: #1a1716; border-bottom: 1px solid var(--m-line2); font-size: 12px; color: var(--m-fg2); }
+  .cap .t { display: inline-flex; align-items: center; gap: 8px; }
+  .cap .b { letter-spacing: 14px; color: var(--m-fg3); font-size: 11px; }
+  .mark { width: 16px; height: 16px; color: var(--m-rose); flex: none; }
+  .win .mono { font-family: var(--m-mono); font-size: 12px; }
+  .win, .win * { font-variant-ligatures: none; }
+  .mt td.nw { white-space: nowrap; }
+  .dim { color: var(--m-fg3); } .dim2 { color: var(--m-fg2); }
+  .ok { color: var(--m-green); } .bad { color: var(--m-red); } .warn { color: var(--m-amber); } .rose { color: var(--m-rose); } .blue { color: var(--m-blue); }
+
+  .m-btn { display: inline-flex; align-items: center; gap: 6px; background: var(--m-card2); border-radius: 6px; padding: 4px 10px; font-size: 12.5px; white-space: nowrap; }
+  .m-btn.pri { background: var(--m-rose); color: #2a0f1a; font-weight: 600; }
+  .m-btn.ghost { background: transparent; border: 1px solid var(--m-line); }
+  .m-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--m-card2); border-radius: 999px; padding: 2px 10px; font-size: 12px; white-space: nowrap; }
+  .m-chip.rose { background: var(--m-rose-bg); color: var(--m-rose); }
+  .m-chip.amber { background: var(--m-amber-bg); color: var(--m-amber); }
+  .m-chip.green { background: var(--m-green-bg); color: var(--m-green); }
+  .m-chip.blue { background: var(--m-blue-bg); color: var(--m-blue); }
+  .m-chip.red { background: var(--m-red-bg); color: var(--m-red); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; flex: none; }
+  .m-sec { color: var(--m-fg3); font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .m-h { font-size: 20px; font-weight: 600; }
+  .m-progress { display: inline-block; vertical-align: middle; margin-left: 10px; height: 3px; border-radius: 2px; background: linear-gradient(90deg, var(--m-rose) 0 38%, var(--m-card2) 38%); width: 90px; }
+
+  /* Rose window */
+  .rw { display: grid; grid-template-columns: 196px minmax(0, 1fr); min-height: 560px; }
+  .appico { display: inline-block; width: 16px; height: 16px; flex: none; background: center / contain no-repeat; }
+  .appico.rose { background-image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAALiSURBVFhHvZc7iNRQFIZTWtrozVSzlVjZCRYWgo1gIzbr3AgzjSA2bqOIIDaKCOI0gmihiIXbiOU0YkjUVWRkWXwsMsiq+FzEXcVlfCCRL3hD5r4yy874w89kck7O+yTcINCQ1hp70lCeSUMZp2GUjYbYku1EyFZcb67TfeaINzTDRMiO+fCIKaL5uNbYPOhcTE6koVwylMdFIfvxxmhbEcBoyz0kqQTtSEVjnyEcgjObDmTPWuez+YMXsodbDhnyYZiI6FiQiuiiLqgiTn9/XckU/vz4lb08cd3QqyIzF6RhNKsLfHy883ju0IYnjbOGvp9yiQAsAjcXb83ofgt86/YM/Sp6A6DPLw5fyl6fu5mX+NHWqYHS29DdfiTrHb2SP8Nv1Xw4A5jbe8rqDKOuFiycns5+floeuIcuM6Pb9wZwr94yDClQFdscqP7bgkbXVQlrAKyXC8oRWSmQOfcovwuuLbEGQN9d+NzpFnoMHZWiYvx/e7mjqxdgJnQ/zgB8mQDmAz2qoAzzjN6WMlwrag0A+tat/2Yx3wg4u/tkPhffn77S1Qr41tMZgDIKaQnOlIxsmRN01DWDqeQMHNVZvv+8CFa3XxkApLzQNsE4pvcY51qXExzDyVyoGbHRGQCOy1jpvcszggwePcUwmUPuKbnejo/TiWHfGwAZ+wZKrRTDSHu49q0uKLeoMoDyjusgO6VHZmSs/rOiLqh3hc5VB6AyLq+dWjF+XVhVALTABWT62qlJZyZcrWNddT/OACAR20Dm+pABgsAJvzreX7tt2K8MAFJSXkj0mf7yJbR9bMpAp/wMw6nbHToAG3mruUD2un4VCWBBv+mjb91cXzwnhewHSRjdMAQVZP10fLkz533j2SkfBEktmjIF1eQlxGuWAavqs5uyHcT15vo0lB9M4ZjJ6UhMTuQno7si2mEojJkcVEunQ45n+3f9l0oI2TecK/xrR5vhMB5cOzkAXdVPxn8ByAhbLQ/DCqgAAAAASUVORK5CYII=); }
+  .appico.insp { background-image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAK1SURBVFhHvZc9aBRBFMe3tLTR2asulVjZCRYWloJNsIk3I9w1gqQxjWIjaRJEEA+CIFooYmEaEWyuEZcdTSJyEIImIRwhGvxKEPOB4fxARv6Hc86+mdkd8O4e/Jp7b9/85735uIkiYrJUGZYxvypjnshYqN6AXLyeMl5LytV9dMyOJQeqccp4w/64xzCxnJQqh7ODs5EhGfMtK7hfMN5ODopjXQG9LXcgqATaIVnljOUcECkTlyPJxC3qyOPlkVG1cuG2enf9kdqeWeqwPvVEtS7dVa+OjlnxeWDNRTIW89ThYvbQObX5eFYVGQQ1j1+0vnfDtyDA4cjyunJN/djYpmN57ff3n2ptctrK46JQwPs7DZq/Y7929rot8InbbbbUi3LNyhksYPn8TZpTfZ5Onb3G2sBaoIbfaKyJVwASmjPDjNEKGkeZPzWu9lofMiLwG43TeAV8aTQzSUIG16BCWAfaIMjXCqcAJDDt4/2nVkwR2JamLdZuWDHAKWD1yoPMx9iCNCaE9vpmNwfWDvUDpwAEa0MS6g/FbOO3N28tP3AKwNbShiTUHwpOS21YxNQPnAKwf7X5SheC2UosSuoHTgHmkesrXQhmHuwE6gdOAWbpYL4tVATEa/O10ikAB4dp2FI0poiF0xOZHLhBaQxwCgDmaYb+uY5fH6iYuQWxAHGy0jjgFUCrgJ0Rch5gcHpt+2YPvAIAvVxwN+Qdya574OuzBSvOJFcAZkMTwrBNcTxjm2F94Mo2zw5teaUPEgBQdvNkDDXMvGhwLWCN/ugi9F8RZp3X8wyMt6M0Fg8thwdUAyXHnqb/FTBjtCRk1v/gc1FaEmO2Y1DwepSUq/tlzD/Zzj6D1xEbGeq8jJ4zccIK6DN4qBqvQzzPzp4cSCUYb1uDa/vbjjoWh/Xh/4MH0D36Mv4DbaLZz3b6Vc8AAAAASUVORK5CYII=); }
+  .ticon .appico { width: 18px; height: 18px; }
+  .ticon.off .appico { filter: grayscale(1) brightness(.7); }
+  .panel .mark { color: var(--m-fg); }
+  .rw { grid-template-rows: minmax(0, 1fr) auto; }
+  .sbar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 14px; border-top: 1px solid var(--m-line2); background: #1a1716; font-size: 11.5px; color: var(--m-fg2); }
+  .sbar .k { color: var(--m-fg3); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; font-size: 10.5px; }
+  .sbar .v { color: var(--m-fg); font-variant-numeric: tabular-nums; }
+  .sbar .div { width: 1px; height: 14px; background: var(--m-line); }
+  .sbar .sp { flex: 1; }
+  .memstrip { display: inline-flex; width: 110px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--m-card2); }
+  .memstrip i { display: block; height: 100%; }  .nav { background: var(--m-pane); border-right: 1px solid var(--m-line2); padding: 12px 8px; display: flex; flex-direction: column; gap: 2px; }
+  .nav .it { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-radius: 6px; color: var(--m-fg2); }
+  .nav .it.on { background: var(--m-card2); color: var(--m-fg); box-shadow: inset 3px 0 0 var(--m-rose); }
+  .nav .it .n { font-size: 11.5px; color: var(--m-fg3); font-variant-numeric: tabular-nums; }
+  .nav .spacer { flex: 1; }
+  .nav .build { border-top: 1px solid var(--m-line2); padding: 10px 10px 2px; display: grid; gap: 3px; font-size: 11.5px; color: var(--m-fg3); }
+  .nav .build b { color: var(--m-fg); font-weight: 600; font-size: 12px; }
+  .main { padding: 16px 18px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+  .mhead { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 16px; }
+  .mhead .s { color: var(--m-fg2); font-size: 12.5px; }
+
+  .agent { background: var(--m-card); border-radius: 8px; padding: 12px 14px; display: grid; gap: 8px; }
+  .agent.quiet { background: transparent; border: 1px dashed var(--m-line); }
+  .a-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; }
+  .a-name { font-size: 15px; font-weight: 600; display: inline-flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .a-meta { color: var(--m-fg3); font-size: 12px; }
+  .a-grid { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 5px 10px; align-items: baseline; font-size: 12.5px; }
+  .a-grid > .k { color: var(--m-fg3); font-size: 11.5px; }
+  .a-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+  .calls { display: grid; gap: 2px; }
+  .call { display: grid; grid-template-columns: 50px 14px minmax(0, 13rem) minmax(0, 1fr) 46px; gap: 8px; align-items: baseline; font-size: 12px; }
+  .call .t, .call .el { font-family: var(--m-mono); font-size: 11px; color: var(--m-fg3); }
+  .call .el { text-align: right; }
+  .call .tool { font-family: var(--m-mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .call .tgt { color: var(--m-fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .call .err { grid-column: 3 / -1; color: var(--m-red); }
+  .call.run .el { color: var(--m-blue); }
+  .call.open { background: var(--m-pane); border-radius: 6px 6px 0 0; padding-top: 3px; }
+  .opd { background: var(--m-pane); border-radius: 0 0 6px 6px; padding: 6px 12px 12px 80px; display: grid; gap: 10px; margin-bottom: 4px; }
+  .opd.flat { background: transparent; padding: 2px 0 6px; }
+  .opd .sec { display: grid; gap: 4px; min-width: 0; }
+  .opd .sec-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .opd .link { font-size: 11.5px; }
+  .diff { font-family: var(--m-mono); font-size: 11.5px; line-height: 1.6; background: #191615; border-radius: 6px; padding: 6px 0; overflow-x: auto; }
+  .diff div { display: grid; grid-template-columns: 34px 18px max-content; white-space: pre; padding-right: 12px; }
+  .diff .ln { color: var(--m-fg3); text-align: right; padding-right: 8px; }
+  .diff .s { text-align: center; }
+  .diff .hunk { color: var(--m-blue); }
+  .diff .add { background: rgba(134, 207, 143, .12); } .diff .add .s { color: var(--m-green); }
+  .diff .del { background: rgba(242, 145, 138, .12); } .diff .del .s { color: var(--m-red); }
+  .sq { text-decoration: underline wavy var(--m-red); text-underline-offset: 3px; }
+  .kv { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 3px 10px; font-size: 12px; }
+  .kv > .k { color: var(--m-fg3); }
+  .ol { display: grid; grid-template-columns: max-content max-content 1fr; gap: 2px 18px; font-family: var(--m-mono); font-size: 11.5px; background: #191615; border-radius: 6px; padding: 8px 12px; }
+  .ol .h { grid-column: 1 / -1; color: var(--m-fg2); }
+  .ol .ty { color: #7fd1c7; } .ol .ln { color: var(--m-fg3); }
+  .link { color: var(--m-blue); }
+
+  /* Tables in mocks */
+  .mt { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .mt th { text-align: left; color: var(--m-fg3); font-weight: 600; font-size: 11.5px; padding: 5px 10px 5px 0; border-bottom: 1px solid var(--m-line); white-space: nowrap; }
+  .mt td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--m-line2); vertical-align: top; }
+  .mt tr.sel td { background: var(--m-card); }
+  .mt tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--m-rose); padding-left: 8px; }
+  .mt .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .fold { display: inline-flex; align-items: center; gap: 5px; color: var(--m-blue); white-space: nowrap; }
+  .fold svg { width: 13px; height: 13px; flex: none; }
+  .drawer { background: var(--m-card); border-radius: 8px; padding: 14px 16px; display: grid; gap: 10px; }
+  .hl { display: grid; gap: 4px; padding: 10px 12px; border-radius: 6px; background: var(--m-pane); }
+  .hl.acc { border-left: 3px solid var(--m-fg3); }
+  .agentline { font-family: var(--m-mono); font-size: 11.5px; background: #191615; border-radius: 6px; padding: 8px 10px; color: var(--m-fg2); white-space: pre-wrap; }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .search { background: #191615; border: 1px solid var(--m-line); border-radius: 6px; padding: 4px 10px; color: var(--m-fg3); font-size: 12.5px; min-width: 220px; }
+  .restart td { color: var(--m-fg3); font-size: 11.5px; text-align: center; background: repeating-linear-gradient(90deg, transparent 0 6px, var(--m-line2) 6px 7px); }
+  .restart span { background: var(--m-win); padding: 0 10px; }
+
+  /* Tray */
+  .desk { background: linear-gradient(160deg, #2a3446, #1b1f2b); border-radius: 8px; padding: 18px; display: grid; gap: 14px; justify-items: end; min-height: 300px; align-content: end; font-family: var(--m-font); color: var(--m-fg); font-size: 13px; }
+  .taskbar { display: flex; align-items: center; gap: 14px; background: rgba(20,20,24,.92); border-radius: 6px; padding: 6px 12px; font-size: 12px; color: #d8d8de; }
+  .ticon { position: relative; display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; }
+  .ticon .badge { position: absolute; right: -2px; top: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--m-amber); border: 1.5px solid #141418; }
+  .ticon.off .mark { color: #7c7c86; }
+  .ticon.off .badge { background: var(--m-red); }
+  .tip { background: #2c2726; border: 1px solid var(--m-line); border-radius: 6px; padding: 8px 12px; font-size: 12px; max-width: 360px; box-shadow: 0 8px 24px rgba(0,0,0,.45); display: grid; gap: 2px; justify-self: end; }
+  .menu { background: #2c2726; border: 1px solid var(--m-line); border-radius: 8px; padding: 4px 0; display: grid; font-size: 12.5px; box-shadow: 0 8px 24px rgba(0,0,0,.45); min-width: 260px; }
+  .menu span { padding: 5px 14px; display: flex; justify-content: space-between; gap: 18px; }
+  .menu span.hi { background: var(--m-card2); }
+  .menu hr { border: 0; border-top: 1px solid var(--m-line); margin: 3px 0; }
+  .toast { background: #2b2b30; border: 1px solid #44444c; border-radius: 8px; padding: 12px 14px; width: 360px; max-width: 100%; display: grid; gap: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.5); font-family: var(--m-font); color: #f0f0f4; font-size: 13px; }
+  .toast .from { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: #b8b8c2; }
+  .toast .h { font-weight: 600; }
+  .toast .b { color: #c9c9d2; font-size: 12.5px; }
+  .toast .acts { display: flex; gap: 6px; margin-top: 4px; }
+  .toast .acts span { flex: 1; text-align: center; background: #3a3a42; border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+  .states { display: grid; gap: 8px; }
+  .state { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; align-items: center; font-size: 14px; }
+  .state .ic { background: #141418; border-radius: 6px; height: 34px; display: flex; align-items: center; justify-content: center; }
+
+  /* Debugger */
+  .dbg-head { padding: 12px 16px 10px; display: grid; gap: 8px; border-bottom: 1px solid var(--m-line2); }
+  .dbg-title { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 16px; }
+  .stopbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; background: var(--m-amber-bg); border-radius: 6px; padding: 8px 12px; }
+  .stopbar .what { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .stopbar .what b { color: var(--m-amber); }
+  .exec { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .ib { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 26px; border-radius: 6px; background: var(--m-card2); color: var(--m-fg); }
+  .ib svg { width: 16px; height: 16px; }
+  .ib.go { color: var(--m-green); }
+  .ib.off { color: var(--m-fg3); background: transparent; }
+  .ib.hover { box-shadow: inset 0 0 0 1px var(--m-fg2); }
+  .exec .sep { width: 1px; height: 18px; background: var(--m-line); margin: 0 4px; }
+  .itip { position: absolute; top: 32px; left: 50%; transform: translateX(-50%); background: #2c2726; border: 1px solid var(--m-line); border-radius: 4px; padding: 3px 8px; font-size: 11.5px; white-space: nowrap; box-shadow: 0 6px 18px rgba(0,0,0,.45); z-index: 3; color: var(--m-fg); }
+  .tabs { display: flex; gap: 18px; font-size: 13px; padding: 0 16px; border-bottom: 1px solid var(--m-line2); }
+  .tabs span { padding: 8px 0 7px; color: var(--m-fg2); }
+  .tabs span.on { color: var(--m-fg); border-bottom: 2px solid var(--m-rose); }
+  .dbg { display: grid; grid-template-columns: 250px minmax(0, 1fr) 300px; min-height: 660px; }
+  .col { padding: 12px 14px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+  .col + .col { border-left: 1px solid var(--m-line2); }
+  .list { display: grid; gap: 1px; font-size: 12.5px; }
+  .list .r { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 6px; padding: 4px 6px; border-radius: 4px; }
+  .list .r.on { background: var(--m-card2); }
+  .list .r .sub { color: var(--m-fg3); font-size: 11.5px; }
+  .src { background: #191615; border-radius: 6px; padding: 8px 0; font-family: var(--m-mono); font-size: 11.5px; line-height: 1.6; overflow-x: auto; }
+  .src div { display: grid; grid-template-columns: 22px 30px max-content; padding-right: 12px; white-space: pre; }
+  .src .ln { color: var(--m-fg3); text-align: right; padding-right: 10px; }
+  .src .bp { color: var(--m-red); text-align: center; }
+  .src .cur { background: rgba(243, 205, 79, .14); box-shadow: inset 3px 0 0 var(--m-amber); }
+  .src .kw { color: #c9a0ff; } .src .ty { color: #7fd1c7; }
+  .vars { position: relative; display: grid; gap: 1px; font-size: 12.5px; }
+  .var { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 70px; gap: 8px; padding: 3px 6px; border-radius: 4px; align-items: baseline; }
+  .var .n { font-family: var(--m-mono); font-size: 11.5px; }
+  .var .v { font-family: var(--m-mono); font-size: 11.5px; }
+  .var .ty { color: var(--m-fg3); font-size: 11.5px; }
+  .var.ind .n { padding-left: 16px; }
+  .var.sel { background: var(--m-sel); box-shadow: inset 0 0 0 1px var(--m-rose); }
+  .watch { display: flex; gap: 8px; align-items: center; font-size: 12.5px; }
+  .watch .in { flex: 1; background: #191615; border: 1px solid var(--m-line); border-radius: 4px; padding: 3px 8px; font-family: var(--m-mono); font-size: 11.5px; }
+  .pop { position: absolute; top: 128px; left: 96px; width: 370px; background: #2f2928; border: 1px solid var(--m-rose); border-radius: 8px; padding: 12px; display: grid; gap: 8px; box-shadow: 0 14px 40px rgba(0,0,0,.6); z-index: 2; }
+  .pop::before { content: ""; position: absolute; top: -7px; left: 40px; width: 12px; height: 12px; background: #2f2928; border-left: 1px solid var(--m-rose); border-top: 1px solid var(--m-rose); transform: rotate(45deg); }
+  .pop .h { font-weight: 600; }
+  .subject { background: #191615; border-radius: 6px; padding: 7px 9px; display: grid; gap: 2px; }
+  .subject .mono { font-size: 11.5px; }
+  .ta { background: #191615; border: 1px solid var(--m-line); border-radius: 6px; padding: 7px 9px; min-height: 52px; font-size: 12.5px; }
+  .pop .foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; }
+  .stream { display: grid; gap: 8px; font-size: 12px; }
+  .ev { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; }
+  .ev .t { font-family: var(--m-mono); font-size: 11px; color: var(--m-fg3); }
+  .ev .b { display: grid; gap: 2px; min-width: 0; }
+  .ev .who { font-size: 11px; font-weight: 600; }
+  .ev .mono { font-size: 11px; overflow-wrap: anywhere; }
+  .ev.note .b { background: var(--m-rose-bg); border-radius: 6px; padding: 6px 8px; }
+  .ev.reply .b { background: var(--m-blue-bg); border-radius: 6px; padding: 6px 8px; }
+  .ev.stop .b { border-left: 2px solid var(--m-amber); padding-left: 8px; }
+
+  /* Start page */
+  .start { padding: 18px 20px; display: grid; gap: 16px; }
+  .apps .mt td:last-child, .apps .mt th:last-child { text-align: right; padding-right: 0; }
+  .launch { display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; gap: 8px 10px; align-items: center; font-size: 12.5px; }
+  .field { background: #191615; border: 1px solid var(--m-line); border-radius: 6px; padding: 4px 10px; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .callout { background: var(--m-pane); border-radius: 6px; padding: 9px 12px; color: var(--m-fg2); font-size: 12.5px; }
+
+  /* XAML and the app */
+  .xaml { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 380px; }
+  .tree { font-family: var(--m-mono); font-size: 11.5px; display: grid; gap: 1px; }
+  .tree div { padding: 2px 6px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tree .chg::after { content: "changed"; font-family: var(--m-font); font-size: 10.5px; color: var(--m-cyan); border: 1px solid var(--m-cyan); border-radius: 999px; padding: 0 6px; margin-left: 8px; }
+  .tree .on { background: var(--m-sel); }
+  .props { display: grid; gap: 1px; font-size: 12px; }
+  .prop { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; padding: 3px 6px; }
+  .prop .n { color: var(--m-fg2); }
+  .prop.chg { background: rgba(95, 212, 236, .1); border-radius: 4px; }
+  .prop .was { color: var(--m-fg3); text-decoration: line-through; }
+  .toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; }
+  .sw { width: 30px; height: 16px; border-radius: 999px; background: var(--m-rose); position: relative; flex: none; }
+  .sw::after { content: ""; position: absolute; right: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #2a0f1a; }
+  .app { background: #f3f3f3; color: #1b1b1b; border-radius: 8px; overflow: hidden; font-family: var(--m-font); font-size: 13px; border: 1px solid #3a3433; position: relative; min-height: 380px; }
+  .app .acap { background: #e8e8e8; padding: 7px 12px; font-size: 12px; color: #444; display: flex; justify-content: space-between; }
+  .app .bar { display: flex; align-items: center; gap: 14px; padding: 10px 14px; background: #fff; border-bottom: 1px solid #ddd; }
+  .app .tool { padding: 5px 10px; border-radius: 4px; background: #eee; font-size: 12.5px; }
+  .app .tool.on { background: #d8e6fb; }
+  .app .slider { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; }
+  .app .slider i { display: inline-block; width: 90px; height: 4px; background: linear-gradient(90deg, #2f6fdb 0 30%, #ccc 30%); border-radius: 2px; }
+  .app .changed { outline: 2px dashed #0e9fbf; outline-offset: 3px; position: relative; }
+  .app .changed .tag { position: absolute; bottom: -30px; left: 10px; background: #0e7c96; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+  .app .canvas { padding: 30px 20px; color: #888; font-size: 12px; }
+  .panel { position: absolute; right: 14px; bottom: 14px; background: rgba(32, 28, 27, .96); color: var(--m-fg2); border: 1px solid #3a3433; border-radius: 8px; padding: 4px; display: flex; gap: 3px; align-items: center; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .panel .pb { position: relative; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; }
+  .panel .pb svg { width: 15px; height: 15px; }
+  .panel .pb.on { background: #8a2450; color: #fff; }
+  .panel .pb.new { outline: 1.5px dashed var(--m-cyan); outline-offset: 1px; }
+  .panel .pb.grip { width: 14px; color: var(--m-fg3); }
+  .ptip { position: absolute; bottom: 34px; right: -6px; background: #2c2726; color: var(--m-fg); border: 1px solid var(--m-line); border-radius: 4px; padding: 3px 8px; font-size: 11.5px; white-space: nowrap; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
+  .ib.on2 { background: #8a2450; color: #fff; }  .measure { position: absolute; right: 14px; top: 104px; background: #0e7c96; color: #fff; font-size: 11px; border-radius: 4px; padding: 2px 8px; }
+
+  /* Foundations */
+  .found { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
+  .fd { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; }
+  .fd h3 { font-size: 16px; display: flex; gap: 10px; align-items: baseline; }
+  .fd h3 .k { font-family: var(--font-mono); font-size: 13px; color: var(--accent); }
+  .fd p, .fd li { font-size: 14px; }
+  .fd ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+  .fd .serves { font-size: 12.5px; color: var(--muted); font-family: var(--font-mono); }
+  .diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; }
+  .diagram pre.mermaid { margin: 0; background: transparent; }
+
+  /* Order and decisions */
+  ol.steps { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 0; counter-reset: s; }
+  ol.steps li { counter-increment: s; display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  ol.steps li::before { content: counter(s); font-family: var(--font-mono); font-weight: 600; color: var(--accent); font-size: 18px; line-height: 1.3; }
+  ol.steps .body { display: grid; gap: 3px; max-width: 86ch; }
+  ol.steps .uses { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
+  .subtier { display: grid; gap: 4px; }
+  .cardlist { margin: 2px 0; padding-left: 18px; display: grid; gap: 2px; }
+  .subtier h3 { font-size: 18px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding-top: 10px; }
+  .subtier h3 span { font-size: 13px; font-weight: 400; color: var(--muted); font-family: var(--font-mono); }
+  ol.steps.cards li::before { content: attr(data-id); font-size: 15px; }  ol.qs { margin: 0; padding-left: 22px; display: grid; gap: 12px; max-width: 86ch; }
+  ol.qs li::marker { color: var(--accent); font-family: var(--font-mono); }
+  ol.qs b { font-weight: 600; }
+  ol.qs .rec { color: var(--muted); }
+
+  footer { border-top: 1px solid var(--line); padding-top: 16px; color: var(--muted); font-size: 13px; display: grid; gap: 6px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="rose" viewBox="0 0 16 16"><path fill="currentColor" fill-rule="evenodd" d="M8,15.36L7.74,15.35L7.49,15.3L7.24,15.23L7,15.13L6.77,15L6.54,14.85L6.34,14.67L6.15,14.46L5.97,14.24L5.82,13.99L5.69,13.72L5.58,13.44L5.49,13.14L5.43,12.83L5.4,12.51L5.39,12.18L5.41,11.84L5.46,11.5L5.53,11.16L5.63,10.82L5.76,10.48L5.92,10.15L6.1,9.83L6.31,9.52L6.54,9.22L6.79,8.94L7.07,8.68L7.36,8.43L7.67,8.2L8,8L8.34,7.82L8.69,7.66L9.05,7.53L9.42,7.43L9.79,7.35L10.16,7.3L10.54,7.27L10.9,7.28L11.27,7.31L11.62,7.36L11.97,7.44L12.3,7.55L12.62,7.68L12.92,7.83L13.2,8L13.47,8.19L13.71,8.4L13.92,8.62L14.11,8.86L14.28,9.11L14.41,9.36L14.52,9.63L14.6,9.89L14.66,10.16L14.68,10.43L14.67,10.7L14.64,10.96L14.58,11.21L14.49,11.45L14.37,11.68L14.23,11.89L14.07,12.09L13.88,12.27L13.67,12.43L13.45,12.57L13.2,12.68L12.94,12.77L12.67,12.84L12.39,12.87L12.1,12.88L11.8,12.86L11.5,12.82L11.2,12.74L10.9,12.64L10.6,12.51L10.31,12.35L10.03,12.16L9.76,11.95L9.5,11.72L9.26,11.46L9.03,11.18L8.83,10.88L8.64,10.56L8.47,10.22L8.33,9.88L8.21,9.52L8.12,9.15L8.05,8.77L8.01,8.38L8,8L8.01,7.62L8.05,7.23L8.12,6.85L8.21,6.48L8.33,6.12L8.47,5.78L8.64,5.44L8.83,5.12L9.03,4.82L9.26,4.54L9.5,4.28L9.76,4.05L10.03,3.84L10.31,3.65L10.6,3.49L10.9,3.36L11.2,3.26L11.5,3.18L11.8,3.14L12.1,3.12L12.39,3.13L12.67,3.16L12.94,3.23L13.2,3.32L13.45,3.43L13.67,3.57L13.88,3.73L14.07,3.91L14.23,4.11L14.37,4.32L14.49,4.55L14.58,4.79L14.64,5.04L14.67,5.3L14.68,5.57L14.66,5.84L14.6,6.11L14.52,6.37L14.41,6.64L14.28,6.89L14.11,7.14L13.92,7.38L13.71,7.6L13.47,7.81L13.2,8L12.92,8.17L12.62,8.32L12.3,8.45L11.97,8.56L11.62,8.64L11.27,8.69L10.9,8.72L10.54,8.73L10.16,8.7L9.79,8.65L9.42,8.57L9.05,8.47L8.69,8.34L8.34,8.18L8,8L7.67,7.8L7.36,7.57L7.07,7.32L6.79,7.06L6.54,6.78L6.31,6.48L6.1,6.17L5.92,5.85L5.76,5.52L5.63,5.18L5.53,4.84L5.46,4.5L5.41,4.16L5.39,3.82L5.4,3.49L5.43,3.17L5.49,2.86L5.58,2.56L5.69,2.28L5.82,2.01L5.97,1.76L6.15,1.54L6.34,1.33L6.54,1.15L6.77,1L7,0.87L7.24,0.77L7.49,0.7L7.74,0.65L8,0.64L8.26,0.65L8.51,0.7L8.76,0.77L9,0.87L9.23,1L9.46,1.15L9.66,1.33L9.85,1.54L10.03,1.76L10.18,2.01L10.31,2.28L10.42,2.56L10.51,2.86L10.57,3.17L10.6,3.49L10.61,3.82L10.59,4.16L10.54,4.5L10.47,4.84L10.37,5.18L10.24,5.52L10.08,5.85L9.9,6.17L9.69,6.48L9.46,6.78L9.21,7.06L8.93,7.32L8.64,7.57L8.33,7.8L8,8L7.66,8.18L7.31,8.34L6.95,8.47L6.58,8.57L6.21,8.65L5.84,8.7L5.46,8.73L5.1,8.72L4.73,8.69L4.38,8.64L4.03,8.56L3.7,8.45L3.38,8.32L3.08,8.17L2.8,8L2.53,7.81L2.29,7.6L2.08,7.38L1.89,7.14L1.72,6.89L1.59,6.64L1.48,6.37L1.4,6.11L1.34,5.84L1.32,5.57L1.33,5.3L1.36,5.04L1.42,4.79L1.51,4.55L1.63,4.32L1.77,4.11L1.93,3.91L2.12,3.73L2.33,3.57L2.55,3.43L2.8,3.32L3.06,3.23L3.33,3.16L3.61,3.13L3.9,3.12L4.2,3.14L4.5,3.18L4.8,3.26L5.1,3.36L5.4,3.49L5.69,3.65L5.97,3.84L6.24,4.05L6.5,4.28L6.74,4.54L6.97,4.82L7.17,5.12L7.36,5.44L7.53,5.78L7.67,6.12L7.79,6.48L7.88,6.85L7.95,7.23L7.99,7.62L8,8L7.99,8.38L7.95,8.77L7.88,9.15L7.79,9.52L7.67,9.88L7.53,10.22L7.36,10.56L7.17,10.88L6.97,11.18L6.74,11.46L6.5,11.72L6.24,11.95L5.97,12.16L5.69,12.35L5.4,12.51L5.1,12.64L4.8,12.74L4.5,12.82L4.2,12.86L3.9,12.88L3.61,12.87L3.33,12.84L3.06,12.77L2.8,12.68L2.55,12.57L2.33,12.43L2.12,12.27L1.93,12.09L1.77,11.89L1.63,11.68L1.51,11.45L1.42,11.21L1.36,10.96L1.33,10.7L1.32,10.43L1.34,10.16L1.4,9.89L1.48,9.63L1.59,9.36L1.72,9.11L1.89,8.86L2.08,8.62L2.29,8.4L2.53,8.19L2.8,8L3.08,7.83L3.38,7.68L3.7,7.55L4.03,7.44L4.38,7.36L4.73,7.31L5.1,7.28L5.46,7.27L5.84,7.3L6.21,7.35L6.58,7.43L6.95,7.53L7.31,7.66L7.66,7.82L8,8L8.33,8.2L8.64,8.43L8.93,8.68L9.21,8.94L9.46,9.22L9.69,9.52L9.9,9.83L10.08,10.15L10.24,10.48L10.37,10.82L10.47,11.16L10.54,11.5L10.59,11.84L10.61,12.18L10.6,12.51L10.57,12.83L10.51,13.14L10.42,13.44L10.31,13.72L10.18,13.99L10.03,14.24L9.85,14.46L9.66,14.67L9.46,14.85L9.23,15L9,15.13L8.76,15.23L8.51,15.3L8.26,15.35L8,15.36Z"/></symbol>
+  <symbol id="p-grip" viewBox="0 0 8 16"><g fill="currentColor"><circle cx="2" cy="4" r="1.1"/><circle cx="6" cy="4" r="1.1"/><circle cx="2" cy="8" r="1.1"/><circle cx="6" cy="8" r="1.1"/><circle cx="2" cy="12" r="1.1"/><circle cx="6" cy="12" r="1.1"/></g></symbol>
+  <symbol id="p-select" viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="10" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="2 1.6"/><path d="M8 7.5 14.5 10l-2.9 1.2-1.2 2.8z" fill="currentColor"/></symbol>
+  <symbol id="p-ruler" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" transform="rotate(-45 8 8)"><rect x="1" y="5.5" width="14" height="5" rx="1"/><path d="M4 5.5v2M6.5 5.5v1.4M9 5.5v2M11.5 5.5v1.4"/></g></symbol>
+  <symbol id="p-jmx" viewBox="0 0 16 16"><path d="M6 2.5c-1.5 0-2 .6-2 1.8v1.6c0 .9-.5 1.6-1.5 2.1 1 .5 1.5 1.2 1.5 2.1v1.6c0 1.2.5 1.8 2 1.8M10 2.5c1.5 0 2 .6 2 1.8v1.6c0 .9.5 1.6 1.5 2.1-1 .5-1.5 1.2-1.5 2.1v1.6c0 1.2-.5 1.8-2 1.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+  <symbol id="p-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+  <symbol id="p-mag" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 14 14"/></g></symbol>
+  <symbol id="p-changes" viewBox="0 0 16 16"><rect x="1.8" y="3.6" width="10.4" height="10.4" rx="1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="2.2 1.6"/><circle cx="12.6" cy="3.6" r="2.4" fill="currentColor"/></symbol>
+  <symbol id="p-ask" viewBox="0 0 16 16"><path d="M2.5 3h11a1 1 0 0 1 1 1v6.2a1 1 0 0 1-1 1H7.2L4.2 13.8v-2.6H2.5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+  <symbol id="p-hide" viewBox="0 0 16 16"><path d="M10 3.5 5.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>  <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.8 4.2c0-.8.6-1.4 1.4-1.4h3l1.5 1.6h5.1c.8 0 1.4.6 1.4 1.4v6.3c0 .8-.6 1.4-1.4 1.4H3.2c-.8 0-1.4-.6-1.4-1.4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+  <symbol id="i-continue" viewBox="0 0 16 16"><path d="M4.5 2.5v11l9-5.5z" fill="currentColor"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 16 16"><g fill="currentColor"><rect x="3.5" y="2.5" width="3" height="11" rx=".5"/><rect x="9.5" y="2.5" width="3" height="11" rx=".5"/></g></symbol>
+  <symbol id="i-into" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5v7.5"/><path d="M5.2 6.4 8 9.2l2.8-2.8"/></g><circle cx="8" cy="13.2" r="1.7" fill="currentColor"/></symbol>
+  <symbol id="i-over" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.8 9.2C2.8 3.6 13.2 3.6 13.2 9.2"/><path d="M10.8 7.4l2.4 2.6 2.4-2.6"/></g><circle cx="8" cy="13.2" r="1.7" fill="currentColor"/></symbol>
+  <symbol id="i-out" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9.5V1.8"/><path d="M5.2 4.6 8 1.8l2.8 2.8"/></g><circle cx="8" cy="13.2" r="1.7" fill="currentColor"/></symbol>
+  <symbol id="i-detach" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" transform="rotate(-45 8 8)"><path d="M8 15.5v-2.3"/><rect x="5.6" y="9.6" width="4.8" height="3.6" rx="1"/><path d="M6.9 9.6V8M9.1 9.6V8"/><rect x="5.6" y="2.8" width="4.8" height="3.6" rx="1"/><path d="M8 2.8V.5"/></g></symbol>
+</svg>
+
+<div class="page">
+  <header>
+    <div class="eyebrow">RoseMCP · Fable Review 2 · tier 5 · the tray, the RoseMCP window, the Inspector and the in-app panel</div>
+    <h1>RoseMCP's windows, redesigned from the use cases</h1>
+    <p class="lede">You asked for the use cases first, then a design built on them, with the current windows treated as disposable. This page starts from <a href="https://claude.ai/artifact/VZrHqHh2GQsxR123BVUQ9b">the use-case catalogue</a> and your answers to it. It sets out the requirements as they now stand, then the windows that meet them, then what Rose needs underneath and the order to build it in.</p>
+    <p class="sub">This file is the design tier 5's cards work from; the cards themselves are in <a href="00-overview.md">00-overview.md</a>. It was drafted and reviewed as a claude.ai page, and the use-case catalogue it links to is a private page there. The mock-ups use example data: the app, its code, the agents and the timings are made up. Where Rose can't do something today, the page says what it takes, checked against RoseMCP <span class="mono">main</span> at cc977f3 and the Claude Code docs.</p>
+    <nav class="toc" aria-label="Sections">
+      <a href="#said">What you said</a><a href="#principles">Principles</a><a href="#tray">Tray icon</a><a href="#agents">Rose window</a>
+      <a href="#workspaces">Workspaces</a><a href="#activity">Activity</a><a href="#debug-start">Debug an app</a><a href="#debug-session">Debugger</a>
+      <a href="#xaml">XAML and the panel</a><a href="#underneath">Underneath</a><a href="#order">Tier 5 cards</a><a href="#decisions">Decisions for you</a>
+    </nav>
+  </header>
+
+  <section class="shifts" aria-labelledby="shifts-h">
+    <h2 id="shifts-h">What your answers changed</h2>
+    <ul>
+      <li><b>The windows are organised by agent.</b> The first thing you see is each agent session and what it's doing against which workspace. Workspaces come second.</li>
+      <li><b>Warnings written for the agent shrink to one line.</b> You can open the full detail, and you can accept a known one, such as the HintPath test projects, so it stops drawing attention.</li>
+      <li><b>You can talk to the agent from wherever you're looking.</b> Select a value, a frame, a thread, an element, a measurement or a colour, write a note, and Rose gets it to the agent. No copy-paste.</li>
+      <li><b>You can debug without an agent.</b> Open the debugger from the tray, attach to or launch an app yourself, and bring an agent in when you want one.</li>
+      <li><b>Rose knows its own build.</b> It shows the commit, whether the tree was dirty, and whether each agent's connection still matches. A restart only touches agents whose tools actually changed.</li>
+      <li><b>Kept quiet.</b> No window at start-up. Notifications only for things you can act on.</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================ REQUIREMENTS -->
+  <section id="said" aria-labelledby="said-h">
+    <div class="shead"><h2 id="said-h">Requirements, after your answers</h2><p>The catalogue's use cases, each with what the redesign does about it. The right-hand column quotes you where you answered. Rows you didn't comment on keep the catalogue's reading.</p></div>
+    <div class="key"><span class="st new">New</span> you added it <span class="st chg">Change</span> your answer changes it <span class="st keep">Keep</span> carried over, redrawn <span class="st bug">Bug</span> worth fixing in today's release <span class="st def">Deferred or dropped</span></div>
+    <div class="tablewrap">
+      <table class="req">
+        <thead><tr><th>Use case</th><th>What the redesign does</th><th>From you</th></tr></thead>
+        <tbody>
+          <tr class="grp"><th colspan="3">A · Keep Rose running</th></tr>
+          <tr><td class="rid">A1<span class="st bug">Bug</span><span class="st chg">Change</span></td><td><b>Is Rose up?</b> The tray icon is the signal, with three states. Rose never opens a window when it starts; you open one from the icon. Today the tray opens its window at every start, including sign-in and every deploy.</td><td class="said"><q>I usually have it quite visible in the system tray, so it's pretty easy to tell if it's loaded or not … the application shows the window on startup, which it shouldn't.</q></td></tr>
+          <tr><td class="rid">A2<span class="st chg">Change</span></td><td><b>Which build is running?</b> Every process carries its version, full commit, whether the tree was dirty, and when and where it was built. Rose compares them across the relay, broker, workers, live-app hosts and windows, and says when one differs.</td><td class="said"><q>the version should really be linked to the current commit</q></td></tr>
+          <tr><td class="rid">A9<span class="st new">New</span></td><td><b>Agents pick up a new build by themselves.</b> After a deploy, each agent's relay reconnects to the new broker on its own. If the tool definitions are the same, the agent carries on with nothing to do. If they changed, Rose tells Claude Code to refresh its tool list, which it does with no <code>/mcp</code>.</td><td class="said"><q>more importantly, if their MCP tool definitions are the same</q>. I've read this as: when they're the same, nothing should need restarting. <a href="#decisions">Question 6</a>: you confirmed it.</td></tr>
+          <tr><td class="rid">A3<span class="st chg">Change</span></td><td><b>Who's connected?</b> Every agent session is listed, including several sessions on one workspace, with what each is doing. This was inferred before; you've confirmed it.</td><td class="said"><q>sometimes I have multiple Claude sessions looking at the same workspace/solution</q></td></tr>
+          <tr><td class="rid">A4<span class="st keep">Keep</span></td><td><b>What's holding memory?</b> Each workspace shows its memory, idle time and when it will close, and can be closed from the list. A status bar on every view shows Rose's total, split by broker, workers and live-app hosts, with debugged apps listed apart from it.</td><td class="said"></td></tr>
+          <tr><td class="rid">A5<span class="st keep">Keep</span></td><td><b>Let go of a finished worktree.</b> This is mostly Rose's job (#454). The window shows a workspace whose folder has gone, and that it's closing.</td><td class="said"></td></tr>
+          <tr><td class="rid">A6<span class="st keep">Keep</span></td><td><b>Rose itself went wrong.</b> One notification per failure, naming the log that explains it.</td><td class="said"></td></tr>
+          <tr><td class="rid">A7<span class="st keep">Keep</span></td><td><b>Set up for an agent.</b> The setup command becomes the relay form, since that's what carries identity and survives deploys (decided, <a href="#decisions">question 2</a>).</td><td class="said"></td></tr>
+          <tr><td class="rid">A8<span class="st chg">Change</span></td><td><b>Hear about a newer version.</b> A release gets one notification and a badge on the icon. A build from your checkout says how far the checkout has moved past it. Nothing installs itself.</td><td class="said"><q>We could do better about being notified when there is a newer version.</q></td></tr>
+
+          <tr class="grp"><th colspan="3">B · Trust what an agent got from Rose</th></tr>
+          <tr><td class="rid">B3 · B4<span class="st chg">Change</span></td><td><b>What is each agent doing, against which workspace?</b> This is now the first view: each agent's operations in one list, running ones first. Any operation opens to show its arguments and response, formatted. An edit also shows the code it changed, as a diff. The record is kept on disk across reloads and restarts, and searchable in Activity.</td><td class="said"><q>The thing I want to see is what is each agent doing against a workspace, in that sense B3 is more important to me than the wall of text.</q></td></tr>
+          <tr><td class="rid">B1<span class="st chg">Change</span></td><td><b>Can this workspace's answers be trusted?</b> One line per workspace, in strong colour only when you can do something. The full detail opens on request, and you can mark a known warning as accepted for that solution. When you accept one, you choose what agents read about it: Rose's line, your own note, or nothing. Agents can acknowledge a warning for their own session.</td><td class="said"><q>For me, I'd rather it be a one line summary, with a way to see the full details if I really need to.</q></td></tr>
+          <tr><td class="rid">B2<span class="st keep">Keep</span></td><td><b>Busy, loading or stuck?</b> The agent's row shows its running call, for how long, and how far along.</td><td class="said"></td></tr>
+          <tr><td class="rid">B5<span class="st bug">Bug</span></td><td><b>Pick up a rebuilt analyzer or generator.</b> Rose notices that an analyzer, generator or code-fix DLL changed on disk. It tells the agent and you, and can reload the workspace once it's idle. Nothing detects this today; Reload is the only way.</td><td class="said"><q>editing an Analyzer we continue to report using the previous version and don't warn that a reload is needed</q></td></tr>
+
+          <tr class="grp"><th colspan="3">C · Watch an agent debug your app</th></tr>
+          <tr><td class="rid">C8<span class="st new">New</span></td><td><b>Ask the agent about this.</b> Select a local, an argument, a frame, a thread, an exception, an element, a property, a measurement or a colour, write a note, and send it. The agent gets it at once if its session listens for Rose, and otherwise with its next Rose call. You can see when it arrived and, if the agent answers through Rose, read the answer. Tasks come later: the debugger doesn't understand async tasks yet.</td><td class="said"><q>select a value in the locals, or a thread, or a task and say "I want to know more about this", or "this value doesn't look correct to me"</q></td></tr>
+          <tr><td class="rid">C1–C6<span class="st keep">Keep</span></td><td><b>Who's debugging my app, why it's stopped, what the agent is doing, how current this is, getting it back, and when it exits.</b> All of this goes in the debugger's header and its session stream, where the agent's calls sit beside the app's own events.</td><td class="said"></td></tr>
+          <tr><td class="rid">C7<span class="st def">Dropped</span></td><td><b>Approve the agent's next step.</b> Nobody asked for it.</td><td class="said"></td></tr>
+
+          <tr class="grp"><th colspan="3">D · Work on your app's UI with the agent</th></tr>
+          <tr><td class="rid">D2<span class="st chg">Change</span></td><td><b>See what the agent changed.</b> The agent's recent live edits are outlined in the app and marked in the XAML tree, with the old and new value. Each place has its own on/off switch.</td><td class="said"><q>being able to highlight a recent change in both would be very handy (I'd want this to be something the user can toggle on and off)</q></td></tr>
+          <tr><td class="rid">D8<span class="st chg">Change</span></td><td><b>Hand a fact to the agent.</b> This becomes C8: the note carries the fact. A pick, a pinned measurement or a colour from the lens can go to the agent from the panel.</td><td class="said"><q>I'm not sure I want to copy-paste too much, as much as have that feedback loop inline.</q></td></tr>
+          <tr><td class="rid">D1, D3–D7<span class="st keep">Keep</span></td><td><b>Point then talk, pick to markup, pixels, colours, using the app, stack and tree together.</b> These are redrawn in the debugger's XAML view and the panel.</td><td class="said"></td></tr>
+
+          <tr class="grp"><th colspan="3">E · Debug by hand</th></tr>
+          <tr><td class="rid">E5<span class="st new">New</span></td><td><b>Start debugging without an agent.</b> Open the debugger from the tray, then attach to a running app or launch one: an installed package, or a program with arguments.</td><td class="said"><q>I can't launch the inspector and attach or launch a process myself to do debugging without an agent if I choose to.</q></td></tr>
+          <tr><td class="rid">E6<span class="st new">New</span></td><td><b>Bring an agent into your session.</b> Share a session you started with one agent session, so you can ask it about what you're looking at. This is my inference from E5 and C8.</td><td class="said"></td></tr>
+          <tr><td class="rid">E1–E4<span class="st keep">Keep</span></td><td><b>Breakpoints and tracepoints, stepping, the event tail, threads.</b> Kept. You can now read any thread's stack, not only the one that stopped.</td><td class="said"></td></tr>
+
+          <tr class="grp"><th colspan="3">F · Build Rose itself</th></tr>
+          <tr><td class="rid">F1<span class="st def">Deferred</span></td><td><b>See a window change before it ships.</b> Left to Rose-driven UI automation. The new windows get everything through the operator API, so that feature has something to drive.</td><td class="said"><q>I have a future feature request where we'll be building Rose driven UI automation, so I'm not sure I want to go too far down this path</q></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============================================================ PRINCIPLES -->
+  <section id="principles" aria-labelledby="pr-h">
+    <div class="shead"><h2 id="pr-h">Six principles the design follows</h2><p>Each one comes from an answer above. When two screens disagree, these decide.</p></div>
+    <div class="principles">
+      <div class="pr"><h3>Quiet until it needs you</h3><p>The tray icon carries Rose's state. A window opens only when you ask. A notification only comes for something you can act on: a new release, Rose failing, or an agent answering you.</p></div>
+      <div class="pr"><h3>Organised by agent</h3><p>The first view is the agent sessions: what each is doing, against which workspace and which app. Workspaces and apps are views of their own, linked both ways.</p></div>
+      <div class="pr"><h3>One line for what the agent was told</h3><p>A warning written for the agent takes one line in the window, and the detail is a click away. Strong colour means you can do something about it.</p></div>
+      <div class="pr"><h3>Talk to the agent where you're looking</h3><p>Anything you can select, you can send to an agent with a note. Rose delivers it and shows you when it arrived.</p></div>
+      <div class="pr"><h3>You can do what an agent can</h3><p>Attach, launch, break, step and inspect without an agent. Bring one in when you want it.</p></div>
+      <div class="pr"><h3>Rose knows its own build</h3><p>Every process and every agent connection knows which commit it runs and whether its tools match. A restart touches only what changed.</p></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ TRAY -->
+  <section id="tray" aria-labelledby="tray-h">
+    <div class="shead"><h2 id="tray-h">The tray icon</h2><p>The tray process hosts the broker and the icon, and no window. Clicking the icon opens the Rose window, in a separate process (decided, <a href="#decisions">question 1</a>).</p></div>
+    <div class="row2">
+      <figure>
+        <div class="states">
+          <div class="state"><span class="ic"><span class="ticon"><i class="appico rose"></i></span></span><span><b>Serving.</b> Rose is up and nothing needs you. The tooltip has the build, and how many agents, workspaces and debugged apps there are.</span></div>
+          <div class="state"><span class="ic"><span class="ticon"><i class="appico rose"></i><i class="badge"></i></span></span><span><b>Needs you.</b> A new release, your checkout moved on, Rose failed, an agent answered your note, or an app you're debugging stopped while its window was behind others. The tooltip and the menu name which.</span></div>
+          <div class="state"><span class="ic"><span class="ticon off"><i class="appico rose"></i><i class="badge"></i></span></span><span><b>Not serving.</b> The broker can't take calls: the port is taken, or Rose is starting or stopping. The tooltip says which.</span></div>
+        </div>
+        <figcaption><b>Three states, no animation.</b> "Working" isn't a state: agents are nearly always working, and an icon that's always moving tells you nothing.</figcaption>
+      </figure>
+      <figure>
+        <div class="desk">
+          <div class="toast">
+            <div class="from"><i class="appico rose"></i>RoseMCP</div>
+            <div class="h">Rose restarted on d41a9e0</div>
+            <div class="b">3 agent sessions reconnected. Tools changed for all of them (rose_debug_attach, rose_xaml_apply), and Rose refreshed their tool lists. 2 debug sessions ended with the old broker.</div>
+            <div class="acts"><span>Open RoseMCP</span><span>Dismiss</span></div>
+          </div>
+          <div class="menu">
+            <span>Open RoseMCP</span>
+            <span>Debug an app…</span>
+            <hr>
+            <span class="hi">Your checkout is 2 commits ahead <span class="dim2">›</span></span>
+            <hr>
+            <span>Start with Windows <span class="ok">✓</span></span>
+            <span>Open the log folder</span>
+            <span>Exit</span>
+          </div>
+          <div class="taskbar"><span>⌃</span><span class="ticon"><i class="appico rose"></i><i class="badge"></i></span><span>ENG</span><span>14:06</span></div>
+        </div>
+        <figcaption><b>One menu, and notifications that report rather than alarm.</b> The window's own menu goes; it duplicated this one. After a deploy, Rose says what the restart did to the agents, so you don't announce restarts to each session.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============================================================ ROSE WINDOW: AGENTS -->
+  <section id="agents" aria-labelledby="agents-h">
+    <div class="shead"><h2 id="agents-h">The Rose window: agents first</h2><p>Opened from the icon. The left rail picks the view. Agents is the default, because it answers what you said you want to see.</p></div>
+    <figure>
+      <div class="shot"><div class="win" style="min-width: 1060px">
+        <div class="cap"><span class="t"><i class="appico rose"></i>RoseMCP</span><span class="b">─ ▢ ✕</span></div>
+        <div class="rw">
+          <nav class="nav" aria-label="Mock navigation">
+            <span class="it on">Agents <span class="n">4</span></span>
+            <span class="it">Activity</span>
+            <span class="it">Workspaces <span class="n">4</span></span>
+            <span class="it">Debugging <span class="n">1</span></span>
+            <span class="spacer"></span>
+            <div class="build"><b>1.3.0-rc.1.4</b><span class="mono">cc977f3</span><span>built 2 h ago</span><span>from D:\Personal\RoseMCP</span><span class="warn">Checkout is 2 commits ahead ›</span></div>
+          </nav>
+          <div class="main">
+            <div class="mhead"><div><div class="m-h">Agents</div><div class="s">4 sessions connected · all on this build</div></div><span class="m-btn">Debug an app…</span></div>
+
+            <div class="agent">
+              <div class="a-top"><span class="a-name">D:\Drawboard\PDF <span class="m-chip rose"><i class="dot"></i>Debugging</span></span><span class="a-meta">Claude Code · interactive · since 09:12 · feature/ink-width</span></div>
+              <div class="a-grid">
+                <span class="k">Using</span><span class="a-line"><span class="m-chip">Drawboard.All.slnx <span class="dim">· ready · 2 accepted warnings</span></span><span class="m-chip amber"><i class="dot"></i>Drawboard PDF · pid 13968 · stopped at a breakpoint</span></span>
+                <span class="k">You</span><span class="a-line"><span class="rose">1 note delivered at 14:02:41</span><span class="dim">· it replied ›</span></span>
+                <span class="k">Operations</span>
+                <div class="calls">
+                  <div class="call run"><span class="t">14:03:10</span><span class="blue">◷</span><span class="tool">rose_find_references</span><span class="tgt">InkToolbarViewModel._zoomScale<span class="m-progress" aria-hidden="true"></span></span><span class="el">0.4 s</span></div>
+                  <div class="call"><span class="t">14:02:52</span><span class="ok">✓</span><span class="tool">rose_debug_evaluate</span><span class="tgt">this._zoomScale → 0</span><span class="el">0.2 s</span></div>
+                  <div class="call"><span class="t">14:02:33</span><span class="ok">✓</span><span class="tool">rose_debug_evaluate</span><span class="tgt">value → 2.5</span><span class="el">0.2 s</span></div>
+                  <div class="call"><span class="t">14:01:55</span><span class="ok">✓</span><span class="tool">rose_debug_set_breakpoint</span><span class="tgt">InkToolbarViewModel.cs:88</span><span class="el">0.9 s</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="agent">
+              <div class="a-top"><span class="a-name">D:\Drawboard\PDF <span class="dim" style="font-weight:400;font-size:12.5px">second session</span></span><span class="a-meta">Claude Code · interactive · since 10:40 · feature/ink-width · idle 6 min</span></div>
+              <div class="a-grid">
+                <span class="k">Using</span><span class="a-line"><span class="m-chip">Drawboard.All.slnx <span class="dim">· shared with the session above</span></span></span>
+                <span class="k">Operations</span>
+                <div class="calls">
+                  <div class="call"><span class="t">13:56:12</span><span class="ok">✓</span><span class="tool">rose_outline</span><span class="tgt">InkPen</span><span class="el">0.1 s</span></div>
+                  <div class="call"><span class="t">13:55:48</span><span class="ok">✓</span><span class="tool">rose_search_symbols</span><span class="tgt">ClampWidth</span><span class="el">0.3 s</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="agent">
+              <div class="a-top"><span class="a-name">D:\Personal\RoseMCP\worktrees\activity-log <span class="m-chip blue"><i class="dot"></i>Working</span></span><span class="a-meta">Claude Code · headless · since 13:20 · feature/activity-attribution</span></div>
+              <div class="a-grid">
+                <span class="k">Using</span><span class="a-line"><span class="m-chip">RoseMcp.slnx <span class="dim">· this worktree · ready</span></span></span>
+                <span class="k">Operations</span>
+                <div class="calls">
+                  <div class="call run"><span class="t">14:06:02</span><span class="blue">◷</span><span class="tool">rose_find_references</span><span class="tgt">ActivityLog.Begin<span class="m-progress" aria-hidden="true"></span></span><span class="el">2.1 s</span></div>
+                  <div class="call open"><span class="t">14:05:59</span><span class="bad">✗</span><span class="tool">▾ rose_replace_body</span><span class="tgt">WorkerActivity.Describe · leaves 1 error</span><span class="el">0.6 s</span></div>
+                  <div class="opd">
+                    <div class="sec"><div class="sec-h"><span class="m-sec">Change · WorkerActivity.cs</span><span class="link">Open the file</span></div>
+                      <div class="diff">
+                        <div class="hunk"><span class="ln"></span><span class="s"></span><span>@@ WorkerActivity.Describe @@</span></div>
+                        <div><span class="ln">38</span><span class="s"></span><span>public string Describe()</span></div>
+                        <div><span class="ln">39</span><span class="s"></span><span>{</span></div>
+                        <div><span class="ln">40</span><span class="s"></span><span>    var verb = Outcome is null ? "running" : Operation;</span></div>
+                        <div class="del"><span class="ln">41</span><span class="s">−</span><span>    return $"{verb} {Target}";</span></div>
+                        <div class="add"><span class="ln">41</span><span class="s">+</span><span>    var who = <span class="sq">origin</span>?.Leaf ?? "an unnamed agent";</span></div>
+                        <div class="add"><span class="ln">42</span><span class="s">+</span><span>    return $"{verb} {Target} for {who}";</span></div>
+                        <div><span class="ln">43</span><span class="s"></span><span>}</span></div>
+                      </div>
+                    </div>
+                    <div class="sec"><span class="m-sec">Response</span>
+                      <div class="kv"><span class="k">Applied</span><span>Yes, to WorkerActivity.cs</span><span class="k">Leaves</span><span class="bad">CS0103 The name 'origin' does not exist in the current context · WorkerActivity.cs:41</span></div>
+                    </div>
+                    <div class="sec"><div class="sec-h"><span class="m-sec">Arguments</span><span class="link">Copy as JSON</span></div>
+                      <div class="kv"><span class="k">filePath</span><span class="mono">src/RoseMcp.Broker/Activity/WorkerActivity.cs</span><span class="k">member</span><span class="mono">WorkerActivity.Describe</span><span class="k">body</span><span class="dim2">5 lines, shown in the change</span></div>
+                    </div>
+                  </div>
+                  <div class="call"><span class="t">14:05:31</span><span class="ok">✓</span><span class="tool">rose_outline</span><span class="tgt">WorkerActivity</span><span class="el">0.1 s</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="agent quiet">
+              <div class="a-top"><span class="a-name">An HTTP client <span class="dim" style="font-weight:400;font-size:12.5px">connected without the relay</span></span><span class="a-meta">since 08:55 · last call 11:30</span></div>
+              <div class="dim2" style="font-size:12.5px">Rose can't tell which session this is, can't push notes to it, and it won't reconnect by itself after a restart. <span class="link">Set it up through the relay ›</span></div>
+            </div>
+          </div>
+
+          <div class="sbar" aria-label="Memory">
+            <span class="k">Rose</span><span class="v">4.8 GB</span>
+            <span class="memstrip" aria-hidden="true"><i style="width:8%;background:#f2a6c0"></i><i style="width:89%;background:var(--m-rose)"></i><i style="width:3%;background:#9c4f6c"></i></span>
+            <span>broker 380 MB · 4 workers 4.3 GB · 1 live-app host 120 MB</span>
+            <span class="div"></span>
+            <span class="k">Debugged</span><span>Drawboard PDF <span class="v">1.1 GB</span></span>
+            <span class="sp"></span>
+            <span class="dim">Machine: 21.6 of 32 GB in use</span>
+          </div>        </div>
+      </div></div>
+      <figcaption><b>Each card is one agent session, named by its folder and branch.</b> Whatever starts a session can give it a label instead. The card shows what the agent is using (a workspace, an app), any note you sent it, and its operations. Any operation opens to show its arguments and response, formatted. An edit also shows the code it changed, as a diff. The failed edit here also shows the error it left.</figcaption>
+    </figure>
+    <ul class="notes">
+      <li>A status bar runs along the bottom of every view. It shows Rose's own memory, split into the broker, the workers and the live-app hosts. The apps being debugged are listed separately, so your app's memory doesn't read as Rose's cost. The machine's total sits at the right.</li>
+      <li>Operations is one list with no separate "now". Running operations sit at the top. Finished ones follow, newest first by when they finished, then by when they started. The time column shows when each finished (or, for a running one, when it started), and the duration is always in the right-hand column, counting up while it runs.</li>
+      <li>Two sessions in one folder are two cards. Each is a relay process, so Rose can tell them apart, and they share the workspace card. Subagents behind one session stay one card, as before (#410).</li>
+      <li>"All on this build" changes to "1 session is using tools from before the restart" when a client didn't refresh. Only an HTTP client without the relay can end up there.</li>
+      <li>Each workspace and app chip links to its own view, and those views link back to the agents using them.</li>
+      <li>The Rose window's own reads never count as activity, so opening it can't push the agents' calls out of view the way the Inspector's polling does today.</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================ WORKSPACES -->
+  <section id="workspaces" aria-labelledby="ws-h">
+    <div class="shead"><h2 id="ws-h">Workspaces: one line of health, detail on request</h2><p>The machine view: what's loaded, for whom, what it costs, and whether its answers can be trusted. The example is the Drawboard.All.slnx case you described.</p></div>
+    <figure>
+      <div class="shot"><div class="win" style="min-width: 1060px">
+        <div class="cap"><span class="t"><i class="appico rose"></i>RoseMCP</span><span class="b">─ ▢ ✕</span></div>
+        <div class="rw" style="min-height: 0">
+          <nav class="nav" aria-label="Mock navigation">
+            <span class="it">Agents <span class="n">4</span></span>
+            <span class="it">Activity</span>
+            <span class="it on">Workspaces <span class="n">4</span></span>
+            <span class="it">Debugging <span class="n">1</span></span>
+            <span class="spacer"></span>
+            <div class="build"><b>1.3.0-rc.1.4</b><span class="mono">cc977f3</span><span>built 2 h ago</span></div>
+          </nav>
+          <div class="main">
+            <div class="mhead"><div><div class="m-h">Workspaces</div><div class="s">4 loaded · 4.3 GB · each closes after 1 h unused</div></div></div>
+            <table class="mt">
+              <thead><tr><th>Solution</th><th>Folder</th><th>Used by</th><th>Configuration</th><th>Platform</th><th>Health</th><th>Memory</th><th>Unused for</th><th></th></tr></thead>
+              <tbody>
+                <tr class="sel"><td class="nw"><b>Drawboard.All.slnx</b></td><td class="nw"><span class="fold" title="Open in Explorer"><svg><use href="#i-folder"/></svg>D:\Drawboard\PDF</span></td><td class="nw">2 sessions</td><td>Debug</td><td>x64</td><td class="dim2">Ready · 2 accepted warnings</td><td class="num">2.4 GB</td><td class="dim2">in use</td><td class="dim">▾</td></tr>
+                <tr><td class="nw"><b>RoseMcp.slnx</b></td><td class="nw"><span class="fold" title="Open in Explorer"><svg><use href="#i-folder"/></svg>…\worktrees\activity-log</span></td><td class="nw">activity-log</td><td>Debug</td><td class="nw">Any CPU</td><td class="ok">Ready</td><td class="num">610 MB</td><td class="dim2">in use</td><td class="dim">▸</td></tr>
+                <tr><td class="nw"><b>Drawboard.Tools.slnx</b></td><td class="nw"><span class="fold" title="Open in Explorer"><svg><use href="#i-folder"/></svg>D:\Drawboard\Tools</span></td><td class="dim nw">nobody now</td><td>Debug</td><td>x64</td><td><span class="warn">Drawboard.Analyzers.dll was rebuilt 3 min ago. Answers use the old build.</span> <span class="m-btn" style="padding:1px 8px;margin-left:6px">Reload</span></td><td class="num">720 MB</td><td class="dim2">25 min · closes in 35 min</td><td class="dim">▸</td></tr>
+                <tr><td class="nw"><b>RoseMcp.slnx</b></td><td class="dim nw">…\worktrees\relay-hello</td><td class="dim">nobody</td><td class="dim2">Debug</td><td class="dim2 nw">Any CPU</td><td class="dim2">Folder removed · closing</td><td class="num">590 MB</td><td class="dim2">—</td><td class="dim">▸</td></tr>
+              </tbody>
+            </table>
+
+            <div class="drawer">
+              <div class="a-top"><span class="a-name">Drawboard.All.slnx</span><span class="a-meta"><span class="fold" title="Open in Explorer"><svg><use href="#i-folder"/></svg>D:\Drawboard\PDF\Drawboard.All.slnx</span> · Debug · x64 · loaded 09:13 in 41 s · 63 projects</span></div>
+              <div class="hl"><b>61 of 63 projects loaded cleanly.</b><span class="dim2">Answers about the other two may be incomplete. You've accepted both reasons, so they don't draw attention.</span></div>
+              <div class="hl acc">
+                <div class="a-top"><span><span class="m-sec">Accepted on 2 Oct</span></span><span class="a-line"><span class="link">Show the 214 warnings</span><span class="link rose">Ask an agent why</span><span class="link">Stop accepting</span></span></div>
+                <span><b>Drawboard.Pdf.Tests.Legacy</b>, <b>Drawboard.Ink.Tests.Legacy</b></span>
+                <span class="dim2">netcoreapp3.1 projects that reference UWP assemblies by HintPath. MSBuild reports 214 warnings of 3 kinds, the same at every load.</span>
+              </div>
+              <div style="display:grid;gap:6px"><div class="a-top"><span class="m-sec">What agents are told about it, on each read</span><span class="a-line" style="font-size:12px"><span class="m-chip">Rose's line</span><span class="m-chip rose">Your note</span><span class="m-chip">Nothing</span></span></div><div class="agentline">Expected: two legacy netcoreapp3.1 test projects (Drawboard.Pdf.Tests.Legacy, Drawboard.Ink.Tests.Legacy) reference UWP assemblies by HintPath and load with errors. Ignore this unless you're working in them.</div><span class="dim" style="font-size:12px">Acknowledged this session by D:\Drawboard\PDF at 09:20, so it isn't repeated to that session.</span></div>
+              <div class="a-line"><span class="m-btn">Open folder</span><span class="m-btn">Reload</span><span class="m-btn">Close</span><span class="m-btn ghost">Open its log</span><span class="dim" style="font-size:12px">Used by D:\Drawboard\PDF (2 sessions)</span></div>
+            </div>
+          </div>
+
+          <div class="sbar" aria-label="Memory">
+            <span class="k">Rose</span><span class="v">4.8 GB</span>
+            <span class="memstrip" aria-hidden="true"><i style="width:8%;background:#f2a6c0"></i><i style="width:89%;background:var(--m-rose)"></i><i style="width:3%;background:#9c4f6c"></i></span>
+            <span>broker 380 MB · 4 workers 4.3 GB · 1 live-app host 120 MB</span>
+            <span class="div"></span>
+            <span class="k">Debugged</span><span>Drawboard PDF <span class="v">1.1 GB</span></span>
+            <span class="sp"></span>
+            <span class="dim">Machine: 21.6 of 32 GB in use</span>
+          </div>        </div>
+      </div></div>
+      <figcaption><b>The health column is one line, coloured only when you can act.</b> The rebuilt analyzer is amber because Reload fixes it. The HintPath projects are grey because you've said they're expected. The detail opens under the row instead of every card carrying an InfoBar.</figcaption>
+    </figure>
+    <ul class="notes">
+      <li>Each folder opens in Explorer from its row, and from the detail's Open folder button. Configuration and Platform show what Rose loaded the solution with, so the drawer no longer needs a note about which configuration was chosen.</li>
+      <li>Accepting is remembered per solution, per kind of reason, per project, across loads. A new kind of warning, or a new project that fails, still shows.</li>
+      <li>When you accept a warning, you choose what agents read about it: Rose's own line, a note of your own, or nothing. "What agents are told" shows the exact text (<a href="#decisions">question 4</a>).</li><li>"Ask an agent why" sends a note about that warning to an agent using the workspace, by the same route as Ask in the debugger.</li><li>An agent can acknowledge a warning so it isn't repeated on every read for its session. It can also propose accepting it, which shows here for you to confirm. An agent's acknowledgement lasts only for its own session; anything longer goes through you.</li>
+      <li>A rebuilt analyzer, generator or code-fix DLL is spotted by a cheap file check on the next read. With the setting on, Rose reloads the workspace once nobody has used it for a minute.</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================ ACTIVITY -->
+  <section id="activity" aria-labelledby="act-h">
+    <div class="shead"><h2 id="act-h">Activity: every call, by agent, kept</h2><p>Where you go after something went wrong. It holds every call into Rose with who made it, where, and how it ended. It survives reloads and restarts, and is kept for 7 days.</p></div>
+    <figure>
+      <div class="shot"><div class="win" style="min-width: 1060px">
+        <div class="cap"><span class="t"><i class="appico rose"></i>RoseMCP</span><span class="b">─ ▢ ✕</span></div>
+        <div class="main" style="padding: 14px 18px">
+          <div class="mhead"><div><div class="m-h">Activity</div><div class="s">1,284 calls today · kept for 7 days</div></div>
+            <div class="filters"><span class="m-chip rose">activity-log ✕</span><span class="m-chip">Any workspace ▾</span><span class="m-chip">Failures only</span><span class="search">Search tools, targets, errors</span></div></div>
+          <table class="mt">
+            <thead><tr><th style="width:70px">Time</th><th style="width:14px"></th><th>Call</th><th>Target</th><th>Workspace</th><th class="num" style="text-align:right">Took</th></tr></thead>
+            <tbody>
+              <tr><td class="mono dim">14:06:02</td><td class="dim">◷</td><td class="mono">rose_find_references</td><td class="dim2">ActivityLog.Begin</td><td class="dim2">RoseMcp.slnx · activity-log</td><td class="num mono dim" style="text-align:right">2.1 s…</td></tr>
+              <tr><td class="mono dim">14:05:59</td><td class="bad">✗</td><td class="mono">rose_replace_body</td><td class="dim2">WorkerActivity.Describe <span class="bad">· leaves 1 error</span></td><td class="dim2">RoseMcp.slnx · activity-log</td><td class="num mono dim" style="text-align:right">0.6 s</td></tr>
+              <tr class="sel"><td class="mono dim">14:05:31</td><td class="ok">✓</td><td class="mono">▾ rose_outline</td><td class="dim2">WorkerActivity</td><td class="dim2">RoseMcp.slnx · activity-log</td><td class="num mono dim" style="text-align:right">0.1 s</td></tr>
+              <tr class="sel"><td></td><td></td><td colspan="4"><div class="opd flat">
+                <div class="sec"><div class="sec-h"><span class="m-sec">Response</span><span class="link">Copy as JSON</span></div>
+                  <div class="ol">
+                    <span class="h">class WorkerActivity · src/RoseMcp.Broker/Activity/WorkerActivity.cs</span>
+                    <span>Operation</span><span class="ty">string</span><span class="ln">:12</span>
+                    <span>Target</span><span class="ty">string?</span><span class="ln">:13</span>
+                    <span>StartedUtc</span><span class="ty">DateTimeOffset</span><span class="ln">:14</span>
+                    <span>Elapsed</span><span class="ty">TimeSpan</span><span class="ln">:15</span>
+                    <span>Outcome</span><span class="ty">ActivityOutcome?</span><span class="ln">:16</span>
+                    <span>Describe()</span><span class="ty">string</span><span class="ln">:38</span>
+                  </div>
+                </div>
+                <div class="sec"><span class="m-sec">Arguments</span>
+                  <div class="kv"><span class="k">symbol</span><span class="mono">WorkerActivity</span></div>
+                </div>
+                <span class="a-line"><span class="link rose">Ask the agent about this…</span></span>
+              </div></td></tr>
+              <tr><td class="mono dim">14:04:10</td><td class="ok">✓</td><td class="mono">rose_diagnostics</td><td class="dim2">src/RoseMcp.Broker</td><td class="dim2">RoseMcp.slnx · activity-log</td><td class="num mono dim" style="text-align:right">4.8 s</td></tr>
+              <tr class="restart"><td colspan="6"><span>11:02 · Rose restarted, cc977f3 → d41a9e0 · this session reconnected and its tool list was refreshed</span></td></tr>
+              <tr><td class="mono dim">10:58:44</td><td class="ok">✓</td><td class="mono">rose_workspace_open</td><td class="dim2">RoseMcp.slnx</td><td class="dim2">RoseMcp.slnx · activity-log</td><td class="num mono dim" style="text-align:right">38 s</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div></div>
+      <figcaption><b>Filtered to one agent, with a read call opened.</b> The order matches the agent card: running calls first, then finished ones by when they finished. An opened call shows its response formatted (here, the outline Rose returned) and its arguments. An edit opens as it does on the agent card, with its change as a diff. A restart is a marker in the list, not a gap. "Ask the agent about this" sends the agent that made the call a note about it.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============================================================ DEBUG START -->
+  <section id="debug-start" aria-labelledby="ds-h">
+    <div class="shead"><h2 id="ds-h">Debug an app, with or without an agent</h2><p>The debugger opens from the tray menu, the Rose window, or an agent's session. Opened on its own, it starts here.</p></div>
+    <figure>
+      <div class="shot"><div class="win" style="min-width: 860px; max-width: 980px">
+        <div class="cap"><span class="t"><i class="appico insp"></i>RoseMCP Inspector</span><span class="b">─ ▢ ✕</span></div>
+        <div class="start">
+          <div class="mhead"><div class="m-h">Debug an app</div><span class="search">Find a running app</span></div>
+          <div class="apps" style="display:grid;gap:6px">
+            <span class="m-sec">Running apps with a window</span>
+            <table class="mt">
+              <tbody>
+                <tr><td><b>Drawboard PDF</b> <span class="dim">· UWP</span></td><td class="mono dim">13968</td><td class="dim2">Being debugged by D:\Drawboard\PDF · stopped</td><td><span class="m-btn">Open</span></td></tr>
+                <tr><td><b>Rose Probe</b> <span class="dim">· WinUI 3</span></td><td class="mono dim">22104</td><td class="dim2">Not being debugged</td><td><span class="m-btn pri">Attach</span></td></tr>
+                <tr><td><b>Drawboard Projects</b> <span class="dim">· UWP</span></td><td class="mono dim">18820</td><td class="dim2">Not being debugged</td><td><span class="m-btn">Attach</span></td></tr>
+              </tbody>
+            </table>
+            <span class="dim" style="font-size:12px">Shows .NET apps with a window. <span class="link">Show every .NET process</span></span>
+          </div>
+          <div style="display:grid;gap:8px">
+            <span class="m-sec">Launch</span>
+            <div class="launch">
+              <span class="dim2">Installed app</span><span class="field">Drawboard PDF · Drawboard.PDF_gqbn7fs4pywxm</span><span class="m-btn">Launch</span>
+              <span class="dim2">Program</span><span class="field mono">D:\Drawboard\Tools\bin\Debug\net10.0-windows\InkLab.exe  --sample strokes.json</span><span class="m-btn">Launch</span>
+            </div>
+          </div>
+          <div style="display:grid;gap:6px">
+            <span class="m-sec">Recent</span>
+            <div class="a-line"><span class="m-chip">Drawboard PDF · launched · yesterday</span><span class="m-chip">InkLab.exe · launched · 2 days ago</span></div>
+          </div>
+          <div class="callout">A session you start is yours. An agent sees it only after you share it with that agent's session, from the session's header. You can stop sharing whenever you like.</div>
+        </div>
+      </div></div>
+      <figcaption><b>Attach, launch, or open a session that already exists.</b> An app another session is debugging opens in that session rather than starting a second one: a process has only one debugger.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============================================================ DEBUG SESSION -->
+  <section id="debug-session" aria-labelledby="dbg-h">
+    <div class="shead"><h2 id="dbg-h">The debugger: one view of the app, the agent, and you</h2><p>The tabs are gone. Threads and stack sit on the left, source and values in the middle, and a single stream on the right holds the app's events, the agent's calls and your notes. XAML is the second view of the same session. It keeps the Inspector's name and icon.</p></div>
+    <figure>
+      <div class="shot"><div class="win" style="min-width: 1180px">
+        <div class="cap"><span class="t"><i class="appico insp"></i>Drawboard PDF · RoseMCP Inspector</span><span class="b">─ ▢ ✕</span></div>
+        <div class="dbg-head">
+          <div class="dbg-title">
+            <div class="a-line"><span class="m-h">Drawboard PDF</span><span class="dim2">pid 13968 · UWP · code from Drawboard.All.slnx in D:\Drawboard\PDF</span></div>
+            <div class="a-line"><span class="m-chip">In this session: you, and D:\Drawboard\PDF (started it)</span><span class="m-chip green"><i class="dot"></i>Live</span></div>
+          </div>
+          <div class="stopbar">
+            <div class="what"><b>Stopped at a breakpoint</b><span class="mono">InkToolbarViewModel.cs:88</span><span class="dim2">set by D:\Drawboard\PDF · stopped 14:02:31 · lets go in 22 s</span><span class="m-btn" title="Keep it stopped until you continue">Hold</span></div>
+            <div class="exec" role="toolbar" aria-label="Execution">
+              <span class="ib go" title="Continue (F5)" aria-label="Continue (F5)"><svg><use href="#i-continue"/></svg></span>
+              <span class="ib off" title="Pause (Ctrl+Alt+Break)" aria-label="Pause, unavailable while stopped"><svg><use href="#i-pause"/></svg></span>
+              <span class="sep"></span>
+              <span class="ib" title="Step into (F11)" aria-label="Step into (F11)"><svg><use href="#i-into"/></svg></span>
+              <span class="ib hover" title="Step over (F10)" aria-label="Step over (F10)"><svg><use href="#i-over"/></svg><span class="itip">Step over <span class="dim">F10</span></span></span>
+              <span class="ib" title="Step out (Shift+F11)" aria-label="Step out (Shift+F11)"><svg><use href="#i-out"/></svg></span>
+              <span class="sep"></span>
+              <span class="ib" title="Detach, leaving the app running" aria-label="Detach"><svg><use href="#i-detach"/></svg></span>
+            </div>
+          </div>
+        </div>
+        <div class="tabs"><span class="on">Code</span><span>XAML</span><span class="dim">Breakpoints (2)</span></div>
+        <div class="dbg">
+          <div class="col">
+            <div style="display:grid;gap:6px"><span class="m-sec">Threads</span>
+              <div class="list">
+                <div class="r on"><span class="warn">●</span><span>13968 · UI thread<div class="sub">InkToolbarViewModel.ApplyStrokeWidth</div></span></div>
+                <div class="r"><span class="dim">○</span><span>14020 · worker<div class="sub">Monitor.Wait</div></span></div>
+                <div class="r"><span class="dim">○</span><span>14104 · thread pool<div class="sub">idle</div></span></div>
+              </div>
+            </div>
+            <div style="display:grid;gap:6px"><span class="m-sec">Stack · thread 13968</span>
+              <div class="list">
+                <div class="r on"><span class="dim mono">0</span><span>ApplyStrokeWidth<div class="sub">InkToolbarViewModel.cs:88</div></span></div>
+                <div class="r"><span class="dim mono">1</span><span>OnWidthSliderChanged<div class="sub">InkToolbarViewModel.cs:61</div></span></div>
+                <div class="r"><span class="dim mono">2</span><span class="dim">[External code]</span></div>
+                <div class="r"><span class="dim mono">3</span><span>InkToolbar.Slider_ValueChanged<div class="sub">InkToolbar.xaml.cs:44</div></span></div>
+              </div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="src" aria-label="Source excerpt">
+              <div><span class="bp"></span><span class="ln">82</span><span><span class="kw">public void</span> ApplyStrokeWidth(<span class="kw">double</span> value)</span></div>
+              <div><span class="bp"></span><span class="ln">83</span><span>{</span></div>
+              <div><span class="bp"></span><span class="ln">84</span><span>    <span class="kw">if</span> (_isSyncing)</span></div>
+              <div><span class="bp"></span><span class="ln">85</span><span>        <span class="kw">return</span>;</span></div>
+              <div><span class="bp"></span><span class="ln">86</span><span></span></div>
+              <div><span class="bp"></span><span class="ln">87</span><span>    <span class="kw">var</span> strokeWidth = _pen.ClampWidth(value) * _zoomScale;</span></div>
+              <div class="cur"><span class="bp">●</span><span class="ln">88</span><span>    _pen.Width = strokeWidth;</span></div>
+              <div><span class="bp"></span><span class="ln">89</span><span>    StrokeWidthChanged?.Invoke(<span class="kw">this</span>, strokeWidth);</span></div>
+              <div><span class="bp"></span><span class="ln">90</span><span>}</span></div>
+            </div>
+            <div style="display:grid;gap:6px"><span class="m-sec">Locals · frame 0</span>
+              <div class="vars">
+                <div class="var"><span class="n">▾ this</span><span class="v dim2">InkToolbarViewModel</span><span class="ty"></span></div>
+                <div class="var ind"><span class="n">_zoomScale</span><span class="v">0</span><span class="ty">double</span></div>
+                <div class="var ind"><span class="n">_isSyncing</span><span class="v">false</span><span class="ty">bool</span></div>
+                <div class="var"><span class="n">value</span><span class="v">2.5</span><span class="ty">double</span></div>
+                <div class="var sel"><span class="n">strokeWidth</span><span class="v">0</span><span class="ty">double</span></div>
+                <div class="var"><span class="n">▸ _pen</span><span class="v dim2">InkPen</span><span class="ty"></span></div>
+                <div class="watch" style="margin-top:6px"><span class="dim" style="font-size:11.5px">Watch</span><span class="in">this.Slider.Value</span><span class="mono">2.5</span></div>
+                <div class="watch"><span class="dim" style="font-size:11.5px">Watch</span><span class="in dim">add an expression</span><span></span></div>
+
+                <div class="pop" role="dialog" aria-label="Ask an agent about strokeWidth">
+                  <span class="h">Ask an agent about <span class="mono">strokeWidth</span></span>
+                  <div class="subject"><span class="mono">strokeWidth = 0 (double)</span><span class="dim" style="font-size:11.5px">frame 0 · InkToolbarViewModel.ApplyStrokeWidth · line 88 · thread 13968 (UI)</span></div>
+                  <div class="ta">This should come out as 2.5 from the slider. Why is it 0?</div>
+                  <div class="foot"><span class="m-chip">To: D:\Drawboard\PDF ▾</span><span class="a-line"><span class="dim" style="font-size:11.5px">Arrives now: its session takes messages from Rose</span><span class="m-btn pri">Send</span></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="a-top"><span class="m-sec">Session</span><span class="dim" style="font-size:11px">All · Agent · Stops · Exceptions · Log · Notes</span></div>
+            <div class="stream">
+              <div class="ev"><span class="t">14:01:55</span><span class="b"><span class="who blue">D:\Drawboard\PDF</span><span class="mono">rose_debug_set_breakpoint InkToolbarViewModel.cs:88</span></span></div>
+              <div class="ev stop"><span class="t">14:02:31</span><span class="b"><span class="who warn">Stopped</span><span>Breakpoint at InkToolbarViewModel.cs:88, thread 13968</span></span></div>
+              <div class="ev"><span class="t">14:02:33</span><span class="b"><span class="who blue">D:\Drawboard\PDF</span><span class="mono">rose_debug_evaluate value → 2.5</span></span></div>
+              <div class="ev"><span class="t">14:02:35</span><span class="b"><span class="who dim2">Log</span><span class="mono">Ink: zoom not ready, deferring layout</span></span></div>
+              <div class="ev note"><span class="t">14:02:38</span><span class="b"><span class="who rose">You → D:\Drawboard\PDF</span><span>Is the pen getting the right width here?</span><span class="dim" style="font-size:11px">about _pen.Width · delivered 14:02:41</span></span></div>
+              <div class="ev"><span class="t">14:02:52</span><span class="b"><span class="who blue">D:\Drawboard\PDF</span><span class="mono">rose_debug_evaluate this._zoomScale → 0</span></span></div>
+              <div class="ev reply"><span class="t">14:03:04</span><span class="b"><span class="who blue">D:\Drawboard\PDF replied</span><span>No. _zoomScale is still 0 because OnZoomChanged hasn't run yet, so every width comes out 0. Looking at where the zoom is first set.</span></span></div>
+            </div>
+          </div>
+        </div>
+      </div></div>
+      <figcaption><b>Stopped at an agent's breakpoint, with a note to the agent being written.</b> The header answers who's in the session, why the app is stopped, who stopped it and when it lets go, and whether the data is live. The stream on the right puts the agent's calls beside the app's own events and your notes.</figcaption>
+    </figure>
+    <ul class="notes">
+      <li><b>Ask an agent</b> works on every row you can select: a local, an argument, a watch, a frame, a thread, an event or exception, a breakpoint, an element or property in the XAML view, and a call in Activity. It also has a keyboard shortcut. The note carries a structured reference (session, thread, frame, value path) and a readable line, so the agent can look the thing up instead of trusting a copied value.</li>
+      <li>"Arrives now" appears when the agent's session listens for Rose, through a Claude Code channel. Otherwise it reads "Arrives with its next Rose call", and the note is attached to whatever the agent calls next, live-app or not. Either way the stream shows when it arrived.</li>
+      <li>The reply in the stream comes from a small tool the agent can call to answer you. That matters most for headless sessions, where nobody reads the terminal. In an interactive session, the agent may just answer in the terminal.</li>
+      <li>The execution buttons use the standard debugger glyphs. Hovering one shows its name and the usual shortcut: Continue F5, Step into F11, Step over F10, Step out Shift+F11. Detach is the unplug icon. Pause is greyed out while the app is stopped.</li>
+      <li>Hold stays a word, next to the countdown it cancels. No standard glyph means "keep it stopped until I continue", and an icon would be read as Pause.</li>
+      <li>The data's age shows next to Live, for example "host last answered 14 s ago" when the host stops answering.</li>
+      <li>When the app exits, the header says so and names the session's log, and the window stays open until you close it.</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================ XAML + PANEL -->
+  <section id="xaml" aria-labelledby="xaml-h">
+    <div class="shead"><h2 id="xaml-h">XAML and the in-app panel: see what the agent changed, and answer it</h2><p>The debugger's XAML view and the panel show the same thing from both sides: the tree with properties, and the app itself. Both can mark the agent's recent live edits, each with its own switch.</p></div>
+    <div class="row2">
+      <figure>
+        <div class="shot"><div class="win" style="min-width: 560px">
+          <div class="cap"><span class="t"><i class="appico insp"></i>Drawboard PDF · RoseMCP Inspector</span><span class="b">─ ▢ ✕</span></div>
+          <div class="tabs"><span>Code</span><span class="on">XAML</span><span class="dim">Breakpoints (2)</span></div>
+          <div style="padding:10px 14px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;border-bottom:1px solid var(--m-line2)">
+            <span class="search" style="min-width:160px">Find an element</span><span class="ib on2" title="Just my XAML" aria-label="Just my XAML"><svg><use href="#p-jmx"/></svg></span><span class="m-chip rose" title="Show only what agents changed">Changed (2)</span><span class="ib on2" title="Mark changes in the app" aria-label="Mark changes in the app"><svg><use href="#p-changes"/></svg></span>
+          </div>
+          <div class="xaml">
+            <div class="col">
+              <div class="tree">
+                <div class="dim">▾ Frame</div>
+                <div class="dim">&nbsp;&nbsp;▾ DocumentPage</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;▾ InkToolbar <span class="dim">· 6</span></div>
+                <div class="on chg">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;StackPanel ToolStrip</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;▸ Slider WidthSlider</div>
+                <div class="chg">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;TextBlock WidthLabel</div>
+                <div class="dim">&nbsp;&nbsp;&nbsp;&nbsp;▸ InkCanvasHost <span class="dim">· 3</span></div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="a-top"><span class="m-sec">StackPanel ToolStrip</span><span class="link" style="font-size:12px">InkToolbar.xaml:23</span></div>
+              <div class="props">
+                <div class="prop chg"><span class="n">Margin</span><span><span class="was">12,0,12,0</span> → <b>8,0,8,0</b><div class="dim" style="font-size:11px">D:\Drawboard\PDF · rose_xaml_apply · 14:05</div></span></div>
+                <div class="prop"><span class="n">Orientation</span><span>Horizontal</span></div>
+                <div class="prop"><span class="n">Spacing</span><span>14 <span class="dim">· style</span></span></div>
+                <div class="prop"><span class="n">Background</span><span>#FFFFFFFF <span class="dim">· theme resource</span></span></div>
+              </div>
+              <span class="link rose" style="font-size:12.5px">Ask an agent about this element…</span>
+            </div>
+          </div>
+        </div></div>
+        <figcaption><b>The XAML view with the agent's edits marked.</b> "Changed" filters the tree to elements an agent edited in this session. Each changed property shows old and new values, who made the change, and when. The tree reads normally while the app is stopped, so you can see the stack and the tree together (D7).</figcaption>
+      </figure>
+      <figure>
+        <div class="app" aria-label="Mock of the debugged app with the Rose panel">
+          <div class="acap"><span>Drawboard PDF</span><span>─ ▢ ✕</span></div>
+          <div class="bar changed"><span class="tag">Margin 12 → 8 · agent · 1 min ago</span><span class="tool on">Pen</span><span class="tool">Highlighter</span><span class="tool">Eraser</span><span class="slider">Width <i></i> 2.5</span></div>
+          <div class="canvas">Document page</div>
+          <span class="measure">Pinned: gap 14 px, Eraser ↔ Width</span>
+          <div class="panel" role="toolbar" aria-label="Rose panel">
+            <span class="pb grip" aria-hidden="true"><svg><use href="#p-grip"/></svg></span>
+            <span class="pb" aria-hidden="true"><svg class="mark"><use href="#rose"/></svg></span>
+            <span class="pb" title="Select element" aria-label="Select element"><svg><use href="#p-select"/></svg></span>
+            <span class="pb on" title="Rulers" aria-label="Rulers"><svg><use href="#p-ruler"/></svg></span>
+            <span class="pb on" title="Just my XAML" aria-label="Just my XAML"><svg><use href="#p-jmx"/></svg></span>
+            <span class="pb" title="Deselect" aria-label="Deselect"><svg><use href="#p-x"/></svg></span>
+            <span class="pb" title="Magnify" aria-label="Magnify"><svg><use href="#p-mag"/></svg></span>
+            <span class="pb on new" title="Changes: mark what agents edited" aria-label="Changes"><svg><use href="#p-changes"/></svg></span>
+            <span class="pb new" title="Ask an agent about this" aria-label="Ask an agent about this"><svg><use href="#p-ask"/></svg><span class="ptip">Ask an agent about this</span></span>
+            <span class="pb" title="Hide" aria-label="Hide"><svg><use href="#p-hide"/></svg></span>
+          </div>
+        </div>
+        <figcaption><b>The panel stays icon-only, as it is today, with each name in a tooltip.</b> Two icons are new, outlined here. <b>Changes</b>, a box with a dot, outlines what agents edited and tags each element with its change. <b>Ask</b>, a speech bubble, sends the pick, a pinned measurement or the lens colour to an agent with a note. The panel takes no text, so the note opens in the debugger window, already filled in. I'd drop the Idle button: clicking the active mode again turns it off.</figcaption>
+      </figure>
+    </div>
+    <ul class="notes">
+      <li>Changes fade from the app after 10 minutes, or when you switch them off. The tree keeps its marks for the whole session.</li>
+      <li>A ruler measurement can be pinned with a click, so it stays still long enough to send: "the gap between the Eraser button and the Width slider is 14 px, should be 8".</li>
+      <li>The panel keeps its rules: it takes no input from the app, and only a person arms select mode.</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================ UNDERNEATH -->
+  <section id="underneath" aria-labelledby="und-h">
+    <div class="shead"><h2 id="und-h">What Rose needs underneath</h2><p>The windows are the visible part. Most of the work is in the broker, the relay and the operator API, and each item below is something one or more use cases can't do without.</p></div>
+
+    <figure>
+      <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  subgraph S["Each agent session"]
+    CC["Claude Code"] -- stdio --> RL["Relay: identity, build check, push"]
+  end
+  RL -- "MCP over HTTP" --> BR
+  subgraph T["Tray process, starts with Windows"]
+    BR["Broker, port 5077"]
+    IC["Tray icon, menu, notifications"]
+  end
+  BR -- stdio --> WK["Workers, one per solution"]
+  BR -- stdio --> LH["Live-app hosts, one per debugged app"]
+  LH -- pipe --> TAP["In-app panel"]
+  subgraph A["Rose app, opened on demand"]
+    RW["Rose window"]
+    DW["Debugger windows"]
+  end
+  A -- "/operator" --> BR
+</pre>
+      </div>
+      <figcaption><b>The process layout, as decided.</b> The broker stays in the tray process. The windows move into one Rose app that talks to it over the operator API, as the Inspector already does. The relay becomes the standard way to connect, because only it knows which session it serves, survives a deploy, and can push notes.</figcaption>
+    </figure>
+
+    <div class="found">
+      <div class="fd"><h3><span class="k">U1</span>Build identity</h3>
+        <ul><li>Stamp each assembly at build time with its full commit (the SDK already adds it), whether the tree was dirty, the build time, and, for a local build, the checkout it came from.</li>
+        <li>Show the commit to people. Handshakes compare the commit, not the version, because today two local builds with the same version can't be told apart.</li>
+        <li>A <code>hello</code> route on <code>/operator</code> returns all of it.</li>
+        <li>For a local build, Rose reads the checkout's <code>HEAD</code> and <code>origin/main</code> to say how far it has moved on.</li></ul>
+        <span class="serves">Serves A2, A8</span></div>
+      <div class="fd"><h3><span class="k">U2</span>A relay that outlives a deploy</h3>
+        <ul><li>Today a deploy kills every relay started from the install folder, so each session needs <code>/mcp</code>. Install the relay where the deploy doesn't replace it, and version its own protocol, so only a relay change stops relays.</li>
+        <li>On reconnect, the relay compares a hash of the tool definitions and server instructions. If they're the same, it carries on. If not, it sends <code>tools/list_changed</code>. Claude Code's <a href="https://code.claude.com/docs/en/mcp">MCP docs</a> say it fetches the new list without a reconnect; older versions needed one. The relay must advertise <code>listChanged</code> in its own initialize response, because Claude Code only talks to the relay.</li>
+        <li>The first result after a restart says what happened: "Rose restarted on d41a9e0; loaded solutions reload on first use; your debug session ended".</li></ul>
+        <span class="serves">Serves A9, A2</span></div>
+      <div class="fd"><h3><span class="k">U3</span>Who's connected</h3>
+        <ul><li>At connect, the relay tells the broker who it serves: the session's roots (Claude Code answers <code>roots/list</code> with its working folders), the branch, the Claude Code process, and an optional <code>ROSE_AGENT_LABEL</code>, which whatever starts a session can set, for example to the task it was given.</li>
+        <li>The broker keeps a table of clients. An HTTP client without the relay shows up as unnamed.</li></ul>
+        <span class="serves">Serves A3, B4</span></div>
+      <div class="fd"><h3><span class="k">U4</span>The activity record</h3>
+        <ul><li>Every call is recorded with its client, its workspace or debug session, the tool, the target, when it started and finished, the outcome and the error, and its arguments and response.</li>
+        <li>For an edit, the record keeps each changed file's diff, taken from the document before and after. A very large response is cut to a set size, with a note saying so.</li>
+        <li>It's written to disk and kept 7 days, so it survives reloads and restarts.</li>
+        <li>The windows' own reads aren't activity.</li>
+        <li>This replaces today's eight unattributed calls per workspace, forgotten on close.</li></ul>
+        <span class="serves">Serves B3, B4, C3</span></div>
+      <div class="fd"><h3><span class="k">U5</span>Notes to an agent</h3>
+        <ul><li>A route takes a note: to whom, about what (structured), and your text. The broker queues it per client.</li>
+        <li><b>Always:</b> it's attached to that client's next Rose call of any kind, using the notices mechanism results already have.</li>
+        <li><b>When the session listens (a stretch goal):</b> it's pushed at once as a Claude Code channel message through the relay. During the preview, that takes an interactive session started with the development-channels flag, or Rose installed as a plugin. Headless sessions get notes on the next call.</li>
+        <li>An optional <code>rose_reply</code> tool lets the agent answer into the window.</li></ul>
+        <span class="serves">Serves C8, D8, D1</span></div>
+      <div class="fd"><h3><span class="k">U6</span>Debug sessions you start</h3>
+        <ul><li>Operator routes to list running .NET apps with windows and installed packages, and to attach and launch.</li>
+        <li>The attach rules and the clean-up after a failed start move from the agent tool into the session manager, where both routes share them.</li>
+        <li>A session's owner becomes a set: you, plus any agent session you share it with. <code>rose_debug_list</code> shows a shared session to that agent.</li>
+        <li>Two decision records change: "the inspector is always a client of a session some agent started" no longer holds.</li></ul>
+        <span class="serves">Serves E5, E6</span></div>
+      <div class="fd"><h3><span class="k">U7</span>A record of live edits</h3>
+        <ul><li>Each <code>rose_xaml_apply</code> change is kept for the session: when, by which client, the element's handle, the property, old and new value.</li>
+        <li>The tap's existing outline-and-badge drawing marks the elements, and the XAML view reads the same list.</li>
+        <li>Today an edit's result goes once, to the caller, and nothing else remembers it.</li></ul>
+        <span class="serves">Serves D2</span></div>
+      <div class="fd"><h3><span class="k">U8</span>Workspace health with a shape</h3>
+        <ul><li>Today's reasons are plain strings. Give each a kind, an effect (blocks answers, may affect some projects, or a note), the projects it covers, and when it was first seen.</li>
+        <li>An accepted reason is remembered per solution, kind and project.</li>
+        <li>Each accepted reason stores what agents read about it: Rose's line, your note, or nothing.</li><li>A tool lets an agent acknowledge a reason for its own session, or propose accepting it for you to confirm.</li></ul>
+        <span class="serves">Serves B1</span></div>
+      <div class="fd"><h3><span class="k">U9</span>Spot a rebuilt analyzer</h3>
+        <ul><li>At load, record each analyzer reference's path, write time and length. Check them in the read barrier, which already checks files.</li>
+        <li>On a change, tell the agent and the window, and optionally reload when idle. A reload starts a new worker; an assembly can't be unloaded in place.</li>
+        <li>This doesn't depend on the windows and can ship first.</li></ul>
+        <span class="serves">Serves B5</span></div>
+      <div class="fd"><h3><span class="k">U10</span>Everything through the operator API</h3>
+        <ul><li>The tray window reads the broker's objects directly today. The Rose window reads only <code>/operator</code>: clients, workspaces, activity, notes, sessions.</li>
+        <li>That lets it run in its own process and start on demand. Tests can drive it, and so can the later Rose-driven UI automation.</li>
+        <li>The tray process keeps no window, which fixes the window opening at start-up for good.</li></ul>
+        <span class="serves">Serves A1, F1 later</span></div>
+    </div>
+
+    <div class="row2">
+      <figure>
+        <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+  participant C as Agent session
+  participant R as Relay
+  participant B as New broker
+  Note over B: the deploy stops the old broker and starts this one
+  R->>B: reconnect, retrying for up to 10 s
+  B-->>R: hello: commit d41a9e0, tool hash
+  alt same tool hash as before
+    R-->>C: next result notes the restart
+  else tools changed
+    R->>C: notifications/tools/list_changed
+    C->>R: tools/list
+    R-->>C: next result names the changed tools
+  end
+</pre>
+        </div>
+        <figcaption><b>A deploy, from an agent's side.</b> No <code>/mcp</code> either way.</figcaption>
+      </figure>
+      <figure>
+        <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+  participant Y as You, in the debugger
+  participant B as Broker
+  participant R as Relay
+  participant C as Agent session
+  Y->>B: note about strokeWidth
+  alt the session listens for Rose
+    B->>R: push the note
+    R->>C: channel message
+  else
+    C->>R: its next rose call, of any kind
+    R->>B: the call
+    B-->>R: the result, with the note attached
+    R-->>C: result, plus a note from the person at the debugger
+  end
+  B-->>Y: delivered, and how
+  opt the agent answers through Rose
+    C->>B: rose_reply
+    B-->>Y: the reply, under your note
+  end
+</pre>
+        </div>
+        <figcaption><b>A note, both ways of delivering it.</b> Claude Code doesn't acknowledge a channel message, so Rose records it as "pushed" and marks it delivered when the agent's next call or reply arrives.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============================================================ ORDER -->
+  <section id="order" aria-labelledby="order-h">
+    <div class="shead"><h2 id="order-h">Tier 5 of Fable Review 2: the cards</h2><p>This redesign is the review's next tier, in place of the old tier 5 cards. Here is how I'd cut it, in work order. Dependencies point down the list, the way the review's tiers do. Each card names the use cases it closes and the part of <a href="#underneath">Underneath</a> it builds.</p></div>
+    <p class="read">I'd ship the tier as three pull requests rather than one: 5a, 5b and 5c below. Earlier tiers were one PR each, but this one adds a process, a relay protocol and two windows, and a single PR that size can't be reviewed or reverted in pieces. Each sub-tier leaves Rose working.</p>
+
+    <div class="subtier"><h3>5a · Foundations <span>one PR · data and protocol, with today's windows still in place</span></h3>
+    <ol class="steps cards">
+      <li data-id="5.1"><div class="body"><b>Notice a rebuilt analyzer, generator or code fix.</b><span>At load, record each analyzer reference's path, write time and length. Check them in the read barrier. When one changes, tell the agent and the window. As a setting, reload once the workspace is idle.</span><span class="uses">B5 · U9 · S · fixes today's release</span></div></li>
+      <li data-id="5.2"><div class="body"><b>Build identity.</b><span>Every process carries its commit, a dirty flag, its build time and, for a local build, the checkout it came from. Handshakes compare commits. A <code>hello</code> route returns all of it. A local build says how far its checkout has moved on.</span><span class="uses">A2, A8 · U1 · S</span></div></li>
+      <li data-id="5.3"><div class="body"><b>A relay that outlives a deploy.</b><span>Starts with the dummy-tool test of <code>list_changed</code> on the installed Claude Code. Installs where a deploy doesn't replace it and versions its own protocol. On reconnect it compares the tool hash, and only a change sends <code>list_changed</code>. The first result after a restart says what happened.</span><span class="uses">A9, A2 · U2 · M</span></div></li>
+      <li data-id="5.4"><div class="body"><b>Who's connected.</b><span>The relay sends its session's roots, branch, process and optional label. The broker keeps a table of clients, and an HTTP client without the relay shows as unnamed.</span><span class="uses">A3, B4 · U3 · S</span></div></li>
+      <li data-id="5.5"><div class="body"><b>The activity record.</b><span>Every call, with its client, target, start and finish, outcome, arguments and response. Each edit also gets its diff. The record is written to disk, kept 7 days and survives reloads and restarts. The windows' own reads aren't recorded.</span><span class="uses">B3, B4, C3 · U4 · M · supersedes #390</span></div></li>
+      <li data-id="5.6"><div class="body"><b>Workspace health with a shape.</b><span>Each reason has a kind, an effect, the projects it covers and when it was first seen. Accepting one is remembered and says what agents read about it. A tool lets an agent acknowledge a reason for its own session, or propose accepting it.</span><span class="uses">B1 · U8 · M</span></div></li>
+      <li data-id="5.7"><div class="body"><b>The operator API the windows read.</b><span>Clients, workspaces, activity, notes, sessions and memory, tested through the end-to-end host. After this, nothing the new windows need comes from the broker's objects directly.</span><span class="uses">U10 · M</span></div></li>
+    </ol></div>
+
+    <div class="subtier"><h3>5b · The RoseMCP app <span>one PR · the tray loses its window, the new one arrives</span></h3>
+    <ol class="steps cards">
+      <li data-id="5.8"><div class="body"><b>The tray process keeps only its icon.</b><span>The broker, the icon's three states, one menu, and notifications for a release, a restart's effect on agents, Rose failing, and an answer to a note. It has no window, so none opens at start-up.</span><span class="uses">A1, A6, A8 · S · supersedes #392 in part</span></div></li>
+      <li data-id="5.9"><div class="body"><b>The RoseMCP window.</b><span>A separate app, opened from the icon, with four views. Agents shows operations with formatted arguments, responses and diffs. Then Activity, and Workspaces with configuration and platform, folder links and the health detail. Last, Debugging. A memory bar runs along the bottom.</span><span class="uses">A3–A7, B1–B4 · L · supersedes #388, #392</span></div></li>
+      <li data-id="5.10"><div class="body"><b>Notes to an agent.</b><span>A queue per client, delivered with the next Rose call, with the composer and <code>rose_reply</code>. A channel push stays a stretch goal, last in this PR or after it.</span><span class="uses">C8, D8 · U5 · M · supersedes #391</span></div></li>
+    </ol></div>
+
+    <div class="subtier"><h3>5c · The Inspector and the panel <span>one PR</span></h3>
+    <ol class="steps cards">
+      <li data-id="5.11"><div class="body"><b>Debug an app without an agent.</b><span>The start page, attach and launch routes, owners as a set, and sharing with an agent session. This revises the two decision records that say the Inspector never starts a session.</span><span class="uses">E5, E6 · U6 · M</span></div></li>
+      <li data-id="5.12"><div class="body"><b>The Inspector's new layout.</b><span>A header showing who's in the session, why the app stopped, Hold, and the data's age. Threads with any thread's stack, locals and Watch. The session stream with the agent's calls, and the standard stepping glyphs.</span><span class="uses">C1–C6, E1–E4 · L · supersedes #389, #392 in part</span></div></li>
+      <li data-id="5.13"><div class="body"><b>The XAML view and the panel.</b><span>The record of live edits, change marks with their switches, Ask from the panel, and pinned measurements. The panel stays icon-only.</span><span class="uses">D1–D8 · U7 · M · takes in #226 (card 27)</span></div></li>
+      <li data-id="5.14"><div class="body"><b>Write down why the magnifier exists.</b><span>#393 as it stands. The redesign keeps the magnifier, so this card isn't superseded.</span><span class="uses">#393 · S</span></div></li>
+    </ol></div>
+  </section>
+
+  <!-- ============================================================ DECISIONS -->
+  <section id="decisions" aria-labelledby="dec-h">
+    <div class="shead"><h2 id="dec-h">Decisions for you</h2><p>Each has the answer I'd pick and why. Everything else on this page follows from your answers to the catalogue.</p></div>
+    <ol class="qs">
+      <li><b>Move the windows out of the tray process into one Rose app, started on demand?</b> <span class="st keep" style="display:inline-block">Decided: yes, 11 Oct</span> <span class="rec">The reasoning that put the Inspector in its own process applies to the main window too: a window crash shouldn't take the broker and every agent's workspace with it. It also gives one codebase for both windows and fixes the start-up window for good. The cost is that the window reads everything through <code>/operator</code>, which it needs for testing and UI automation anyway. With the app closed, the tray icon and its notifications carry a note's delivery and any reply on their own.</span></li>
+      <li><b>Make the stdio relay the standard way to connect?</b> <span class="st keep" style="display:inline-block">Decided: yes, 11 Oct</span> <span class="rec">It's largely how sessions connect already. Only the relay can say which session it serves, reconnect by itself after a deploy, and carry a channel push. A direct HTTP connection keeps working, but shows up as unnamed and gets notes only on its next call.</span></li>
+      <li><b>Do you want notes pushed into interactive sessions?</b> <span class="st keep" style="display:inline-block">Decided: next call first, push as a stretch goal, 11 Oct</span> <span class="rec">During the preview, a push needs Claude Code started with <code>--dangerously-load-development-channels server:rose</code>, or Rose installed as a plugin. If Drawboard's Claude account is Team or Enterprise, an admin must also turn channels on. Without that, notes arrive with the agent's next Rose call, which works everywhere, including headless sessions. So next-call delivery is the baseline. Packaging Rose as a Claude Code plugin is the cleaner route to push, and it would also make setup a single install.</span></li>
+      <li><b>Should accepting a warning also stop the agent being told?</b> <span class="st keep" style="display:inline-block">Decided: your call per warning, 11 Oct</span> <span class="rec">When you accept one, you choose what agents read about it: Rose's line, your own note, or nothing. You can ask an agent why it happens. An agent can acknowledge a warning for its own session, or propose accepting it for you to confirm. The Workspaces section shows it.</span></li>
+      <li><b>Close tier 5's old cards as superseded?</b> <span class="st keep" style="display:inline-block">Decided: yes, 11 Oct</span> <span class="rec">This redesign becomes tier 5 of Fable Review 2, the next work in the milestone, not a milestone of its own. #388–#392 close as superseded by the cards above. #393, the magnifier's reason, stays: the magnifier isn't going anywhere. #226 (card 27) joins 5.13.</span></li>
+      <li><b>A2: is my reading right?</b> <span class="st keep" style="display:inline-block">Decided: yes, 11 Oct</span> <span class="rec">When the tool definitions match, the agent's connection carries on and Claude Code never hears about the deploy. When they differ, Rose refreshes the agent's tool list. The broker still restarts on every deploy, because the code behind the tools changes even when the list doesn't.</span></li>
+    </ol>
+    <h3>Still open, with the default the cards use</h3>
+    <ul class="notes">
+      <li><b>Keep workers and live-app hosts across a deploy when their build hasn't changed?</b> That would need named pipes in place of stdio, children that outlive the broker, and adoption by the new broker. It's not in tier 5 unless you add it.</li>
+      <li><b>Does an agent's acknowledgement of a warning carry across sessions?</b> Default: it lasts for the agent's own session; anything longer goes through you.</li>
+      <li><b>Should the build move from the left rail into the memory bar?</b> Default: it stays in the rail.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <span>Built from: your answers of 11 Oct; <a href="https://claude.ai/artifact/VZrHqHh2GQsxR123BVUQ9b">the use-case catalogue</a>; RoseMCP <span class="mono">main</span> at cc977f3 (process layout, versions and the deploy, client identity, the activity log, workspace notices, analyzer loading, the operator API, session ownership, the debugger's panes, the tap's overlay and pipe); and the Claude Code docs on <a href="https://code.claude.com/docs/en/channels">channels</a>, <a href="https://code.claude.com/docs/en/channels-reference">the channels reference</a> and <a href="https://code.claude.com/docs/en/mcp">MCP</a> (list_changed, roots, elicitation).</span>
+    <span>Mock-ups use example data. Drawboard PDF's code, the agents, the timings and the warnings' counts are made up to show the design.</span>
+  </footer>
+</div>
+<script type="module">
+  // The diagrams are Mermaid source; render them when the file is opened in a browser.
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default" });
+</script>
+</body>
+</html>

@@ -19,4 +19,18 @@ public sealed record WorkerInfo
 	/// logging could not start.
 	/// </summary>
 	public string? LogPath { get; init; }
+
+	/// <summary>
+	/// Analyzer, generator and code-fix assemblies this worker's reads have found rebuilt on disk since it
+	/// loaded them, by full path. Empty until a read finds one, and for as long as none is. A worker cannot
+	/// unload an assembly, so these stay until a new worker replaces this one.
+	/// </summary>
+	public IReadOnlyList<string> RebuiltAnalyzers { get; init; } = [];
+
+	/// <summary>
+	/// What every read from this worker says about <see cref="RebuiltAnalyzers"/>, for a broker to show
+	/// where a person looks, or null where nothing has been rebuilt. Composed here rather than by the broker,
+	/// so the agent and the person read the same sentence.
+	/// </summary>
+	public string? RebuiltAnalyzersNotice { get; init; }
 }

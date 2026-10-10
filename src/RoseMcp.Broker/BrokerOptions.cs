@@ -87,10 +87,29 @@ public sealed class BrokerOptions
 	public TimeSpan SolutionGoneGrace { get; set; } = TimeSpan.FromMinutes(2);
 
 	/// <summary>
-	/// How often the eviction sweep looks, when eviction is on. A minute is far finer than limits
+	/// How often the sweep looks: for workers to evict, when eviction is on, and for workers holding a
+	/// rebuilt analyzer to reload, which can be asked for in every host. A minute is far finer than limits
 	/// counted in minutes need, and costs a file-existence check per worker.
 	/// </summary>
 	public TimeSpan EvictionSweepInterval { get; set; } = TimeSpan.FromMinutes(1);
+
+	/// <summary>
+	/// How long a worker whose reads found a rebuilt analyzer goes unused before it is replaced, where
+	/// <see cref="ReloadsRebuiltAnalyzersWhenIdle"/> says to. A minute: long enough that an agent between two
+	/// calls of one task is not made to wait for a design-time build, short enough that the workspace has the
+	/// new build by the time somebody comes back to it.
+	/// </summary>
+	public TimeSpan RebuiltAnalyzerReloadAfter { get; set; } = TimeSpan.FromMinutes(1);
+
+	/// <summary>
+	/// Whether a worker holding a rebuilt analyzer is replaced once it has gone unused for
+	/// <see cref="RebuiltAnalyzerReloadAfter"/>. Asked at the moment of deciding rather than once, so a person
+	/// changing the setting is heeded by a broker already running; the machine's settings file by default,
+	/// read only when some worker holds a rebuilt analyzer, and replaced by a test that must not depend on
+	/// what the machine it runs on has chosen.
+	/// </summary>
+	public Func<bool> ReloadsRebuiltAnalyzersWhenIdle { get; set; } =
+		() => Settings.RoseSettingsFile.Read().ReloadRebuiltAnalyzersWhenIdle;
 
 	/// <summary>
 	/// How long a live-app session whose host has stopped answering stays listed, as ended, before the

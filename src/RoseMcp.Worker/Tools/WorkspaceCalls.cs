@@ -99,6 +99,13 @@ public sealed class WorkspaceCalls(WorkspaceHost host, SharedWorkProgress shared
 	}
 
 	/// <summary>
+	/// The analyzer assemblies this worker's reads have found rebuilt since it loaded them. Not a read: it waits
+	/// on nothing and runs no barrier, so it needs none of the shared work the calls above follow, and it is
+	/// here only so the worker's own info can say what the reads found without being given the host.
+	/// </summary>
+	public IReadOnlyList<string> RebuiltAnalyzerPaths => host.RebuiltAnalyzerPaths;
+
+	/// <summary>
 	/// Runs <paramref name="call"/> with <paramref name="waiting"/> following the shared work for as
 	/// long as it takes, including whatever is going on at the moment it starts, and lets go once
 	/// it ends however it ends.

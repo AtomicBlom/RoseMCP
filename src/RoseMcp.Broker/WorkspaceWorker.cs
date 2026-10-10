@@ -59,6 +59,12 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// <summary><see cref="LastUsedUtc"/> as ticks, so a call ending on one thread and the sweep reading on another cannot tear it.</summary>
 	private long _lastUsedTicks;
 
+	/// <summary><see cref="RebuiltAnalyzersSinceUtc"/> as ticks, zero for none, so the sweep reading it cannot tear it.</summary>
+	private long _rebuiltAnalyzersSinceTicks;
+
+	/// <summary>Set by a call that wants the worker asked about itself again, so one asked for during a refresh in flight is not lost.</summary>
+	private int _refreshWanted;
+
 	/// <summary>The clock the idle times are read from, the one the eviction sweep reads too.</summary>
 	private readonly TimeProvider _clock;
 
@@ -129,6 +135,23 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// worker that crashed is the one whose log somebody wants to open.
 	/// </summary>
 	public string? LogPath { get; private set; }
+
+	/// <summary>
+	/// The analyzer assemblies the worker's reads have found rebuilt since it loaded them, by full path, as of
+	/// the last time the broker asked it about itself -- which it does after every call. Empty while none is.
+	/// </summary>
+	public IReadOnlyList<string> RebuiltAnalyzers { get; private set; } = [];
+
+	/// <summary>What the worker's reads say about <see cref="RebuiltAnalyzers"/>, or null where nothing has been rebuilt.</summary>
+	public string? RebuiltAnalyzersNotice { get; private set; }
+
+	/// <summary>
+	/// When the broker first heard of a rebuilt analyzer in this worker, on the clock the idle times are read
+	/// from, or null while it has heard of none. The idle reload counts its quiet minute from here as well as
+	/// from the last use.
+	/// </summary>
+	internal DateTime? RebuiltAnalyzersSinceUtc =>
+		Volatile.Read(ref _rebuiltAnalyzersSinceTicks) is var ticks and not 0 ? new DateTime(ticks, DateTimeKind.Utc) : null;
 
 	/// <summary>
 	/// The last status report to pass through, whoever asked for it. The broker asks on connect, so
@@ -376,7 +399,8 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		Busy: Volatile.Read(ref _holds) > 0 || _activities.Running(SolutionPath).Count > 0,
 		LastUsedUtc: LastUsedUtc,
 		StoppedUtc: StoppedUtc,
-		SolutionMissingSinceUtc: SolutionMissingSinceUtc);
+		SolutionMissingSinceUtc: SolutionMissingSinceUtc,
+		RebuiltAnalyzersSinceUtc: RebuiltAnalyzersSinceUtc);
 
 	/// <summary>
 	/// This worker as <c>rose_workspace_list</c> reports it. Broker-side facts only, so listing never
@@ -469,6 +493,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			ProcessId = info.ProcessId;
 			ManagedHeapBytes = info.ManagedHeapBytes;
 			LogPath = info.LogPath ?? LogPath;
+			NoteRebuiltAnalyzers(info);
 
 			WatchForExit(info.ProcessId);
 		}
@@ -477,6 +502,24 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			// Memory reporting is a nicety. Losing it must not stop the workspace from opening.
 			_logger.LogDebug(exception, "Could not read worker info for {SolutionPath}.", SolutionPath);
 		}
+	}
+
+	/// <summary>
+	/// Takes what the worker says its reads found rebuilt, starting the idle reload's clock the first time it
+	/// hears of any and stopping it when there are none again.
+	/// </summary>
+	private void NoteRebuiltAnalyzers(WorkerInfo info)
+	{
+		RebuiltAnalyzers = info.RebuiltAnalyzers;
+		RebuiltAnalyzersNotice = info.RebuiltAnalyzersNotice;
+
+		if (info.RebuiltAnalyzers.Count == 0)
+		{
+			Volatile.Write(ref _rebuiltAnalyzersSinceTicks, 0);
+			return;
+		}
+
+		Interlocked.CompareExchange(ref _rebuiltAnalyzersSinceTicks, _clock.GetUtcNow().UtcDateTime.Ticks, 0);
 	}
 
 	/// <summary>
@@ -526,24 +569,39 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Re-reads the managed heap once the work that changes it has finished. It is first read on
-	/// connect, before anything has loaded, and without this the window would show that first
-	/// reading -- a few dozen megabytes -- for the life of the process. Coalesced, so a burst of
-	/// calls costs one round trip, and skipped for a worker on its way out.
+	/// Asks the worker about itself again once the work that changes it has finished: its managed heap, first
+	/// read on connect before anything has loaded, and what its reads found rebuilt, which the idle reload
+	/// decides on. Coalesced, so a burst of calls costs a round trip or two rather than one each, and skipped
+	/// for a worker on its way out.
+	/// <para>
+	/// A call ending while a refresh is in flight asks for one more after it rather than being dropped: the
+	/// refresh in flight may have been answered before that call's read found a rebuilt analyzer, and a broker
+	/// that never hears of it never reloads for it.
+	/// </para>
 	/// </summary>
 	private void RefreshHeapSoon()
 	{
-		if (!IsAlive || Interlocked.CompareExchange(ref _refreshingHeap, 1, 0) != 0) return;
+		if (!IsAlive) return;
+
+		Volatile.Write(ref _refreshWanted, 1);
+		if (Interlocked.CompareExchange(ref _refreshingHeap, 1, 0) != 0) return;
 
 		_ = Detached.Run(async () =>
 		{
 			try
 			{
-				await RefreshProcessInfoAsync(CancellationToken.None);
+				while (IsAlive && Interlocked.Exchange(ref _refreshWanted, 0) == 1)
+				{
+					await RefreshProcessInfoAsync(CancellationToken.None);
+				}
 			}
 			finally
 			{
 				Volatile.Write(ref _refreshingHeap, 0);
+
+				// Asked for between the loop's last look and letting go, by a call that found the refresh still
+				// running and left it to this one.
+				if (Volatile.Read(ref _refreshWanted) == 1) RefreshHeapSoon();
 			}
 		});
 	}
@@ -598,13 +656,27 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 				? []
 				: [.. status.Projects.Where(project => !project.LoadedSuccessfully).Select(project => project.Name)],
 			DegradedReasons = status?.DegradedReasons ?? (_loadFailure is null ? [] : [_loadFailure]),
-			Notices = VersionMismatch is null
-				? status?.Notices ?? []
-				: [.. status?.Notices ?? [], VersionMismatch],
+			Notices = Notices(status),
 			LoadSeconds = LoadDuration?.TotalSeconds,
 			Running = _activities.Running(SolutionPath),
 			Recent = _activities.Recent(SolutionPath),
 		};
+	}
+
+	/// <summary>
+	/// The notices a row shows: the last status's, then what that status cannot know -- this worker being a
+	/// different build from the broker, and an analyzer a read found rebuilt since the status was taken. The
+	/// rebuilt line is the one every read carries, so a status taken after the read already has it and it is
+	/// said once.
+	/// </summary>
+	private IReadOnlyList<string> Notices(WorkspaceStatusReport? status)
+	{
+		var notices = new List<string>(status?.Notices ?? []);
+
+		if (VersionMismatch is { } mismatch) notices.Add(mismatch);
+		if (IsAlive && RebuiltAnalyzersNotice is { } rebuilt && !notices.Contains(rebuilt)) notices.Add(rebuilt);
+
+		return notices;
 	}
 
 	/// <summary>

@@ -19,4 +19,15 @@ public sealed record RoseSettings
 	/// </para>
 	/// </summary>
 	public bool ShowInspectorOnAttach { get; init; }
+
+	/// <summary>
+	/// Whether a workspace whose analyzer, generator or code-fix assembly was rebuilt is reloaded once nobody
+	/// has used it for a minute, rather than only told that <c>rose_workspace_reload</c> would pick it up.
+	/// <para>
+	/// Off by default, because a reload is a design-time build of every project and starts a new worker:
+	/// somebody rebuilding an analyzer they are not working on would pay for that unasked. Somebody who is
+	/// working on one turns it on once.
+	/// </para>
+	/// </summary>
+	public bool ReloadRebuiltAnalyzersWhenIdle { get; init; }
 }

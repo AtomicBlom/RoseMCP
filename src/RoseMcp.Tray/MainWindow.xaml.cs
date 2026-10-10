@@ -175,6 +175,7 @@ public sealed partial class MainWindow : Window
 		Wire(TrayOpenInspector, OnOpenInspector);
 		Wire(TrayShowInspectorOnAttach, OnToggleShowInspectorOnAttach);
 		Wire(TrayCopyInspectorCommand, OnCopyInspectorCommand);
+		Wire(TrayReloadRebuiltAnalyzers, OnToggleReloadRebuiltAnalyzers);
 		Wire(TrayOpenLogs, OnOpenLogs);
 		Wire(TrayCloseAll, OnCloseAll);
 		Wire(TrayExit, OnExit);
@@ -626,6 +627,35 @@ public sealed partial class MainWindow : Window
 
 			item.IsChecked = onAttach;
 			item.IsEnabled = installed;
+		}
+
+		var reloadsRebuilt = RoseSettingsFile.Read().ReloadRebuiltAnalyzersWhenIdle;
+
+		foreach (var item in (ToggleMenuFlyoutItem?[])[TrayReloadRebuiltAnalyzers, WindowReloadRebuiltAnalyzers])
+		{
+			if (item is not null) item.IsChecked = reloadsRebuilt;
+		}
+	}
+
+	/// <summary>
+	/// Turns the "reload a workspace once it is idle after its analyzers are rebuilt" preference on or off,
+	/// for every host on this machine. Put back to what the file says, and flipped from the file rather than
+	/// the item, for the reasons <see cref="OnToggleShowInspectorOnAttach"/> gives.
+	/// </summary>
+	private void OnToggleReloadRebuiltAnalyzers(object sender, RoutedEventArgs e)
+	{
+		var wanted = !RoseSettingsFile.Read().ReloadRebuiltAnalyzersWhenIdle;
+
+		if (!RoseSettingsFile.Write(RoseSettingsFile.Read() with { ReloadRebuiltAnalyzersWhenIdle = wanted }))
+		{
+			ShowNotice($"Could not write {RoseSettingsFile.PathFor()}, so that preference is unchanged.");
+		}
+
+		var settled = RoseSettingsFile.Read().ReloadRebuiltAnalyzersWhenIdle;
+
+		foreach (var item in (ToggleMenuFlyoutItem?[])[TrayReloadRebuiltAnalyzers, WindowReloadRebuiltAnalyzers])
+		{
+			if (item is not null) item.IsChecked = settled;
 		}
 	}
 

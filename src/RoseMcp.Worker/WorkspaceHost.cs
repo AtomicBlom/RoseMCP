@@ -136,6 +136,13 @@ public sealed class WorkspaceHost(
 	public async Task<WorkspaceSession> SessionAsync() => await StartedAsync();
 
 	/// <summary>
+	/// The analyzer assemblies this worker's reads have found rebuilt since it loaded them, or none while the
+	/// solution is still loading or failed to. Never waits for the load or for the writer.
+	/// </summary>
+	public IReadOnlyList<string> RebuiltAnalyzerPaths =>
+		_start is { IsCompletedSuccessfully: true } started ? started.Result.RebuiltAnalyzerPaths : [];
+
+	/// <summary>
 	/// Remembers that a tool call failed to load an assembly, so every status from here on is
 	/// <see cref="WorkspaceState.Degraded"/> and says why rather than leaving it to whoever next calls the same
 	/// tool to find out. Kept here, for the life of the process, and never cleared by a reload: a reload replaces

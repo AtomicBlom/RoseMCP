@@ -845,21 +845,22 @@ public sealed class WorkspaceManager(
 	public const string EvictOperation = "evict worker";
 
 	/// <summary>
-	/// Starts the eviction sweep, when eviction is on and it is not already running. Only call while
-	/// holding <see cref="_gate"/>, which is what makes the check and the start one step.
+	/// Starts the sweep, when it is not already running. Only call while holding <see cref="_gate"/>, which is
+	/// what makes the check and the start one step.
 	/// <para>
 	/// Started by the first worker rather than by the constructor, so a broker that never opens a
 	/// solution -- every unit test that builds the registration, and a tray nobody has used yet -- runs
-	/// no timer at all.
+	/// no timer at all. Started whether or not eviction is on, because the idle reload of a rebuilt analyzer
+	/// is a person's setting, read when a worker needs it, and can be turned on in any host while it runs.
 	/// </para>
 	/// </summary>
 	private void EnsureSweeping()
 	{
-		if (_sweeping is not null || _options.IdleEvictionAfter is not { } idleAfter) return;
+		if (_sweeping is not null) return;
 
 		// Read here rather than inside the task, so the loop holds the token it was started with.
 		var stopping = _stopping.Token;
-		_sweeping = Detached.Run(() => SweepLoopAsync(idleAfter, stopping));
+		_sweeping = Detached.Run(() => SweepLoopAsync(stopping));
 	}
 
 	/// <summary>
@@ -870,7 +871,7 @@ public sealed class WorkspaceManager(
 	/// its life, which is the failure this exists to prevent.
 	/// </para>
 	/// </summary>
-	private async Task SweepLoopAsync(TimeSpan idleAfter, CancellationToken cancellationToken)
+	private async Task SweepLoopAsync(CancellationToken cancellationToken)
 	{
 		using var timer = new PeriodicTimer(_options.EvictionSweepInterval, _options.TimeProvider);
 
@@ -880,11 +881,11 @@ public sealed class WorkspaceManager(
 			{
 				try
 				{
-					await SweepAsync(idleAfter, cancellationToken);
+					await SweepAsync(cancellationToken);
 				}
 				catch (Exception exception) when (exception is not OperationCanceledException)
 				{
-					logger.LogWarning(exception, "The eviction sweep failed; the next one is in {Interval}.", _options.EvictionSweepInterval);
+					logger.LogWarning(exception, "The sweep failed; the next one is in {Interval}.", _options.EvictionSweepInterval);
 				}
 			}
 		}
@@ -898,19 +899,37 @@ public sealed class WorkspaceManager(
 	/// One pass over the registry. Deciding needs a file check per worker, so it is done outside the
 	/// gate, and only a worker the decision would act on waits for it -- where it is decided again,
 	/// because a call may have taken the worker in the meantime.
+	/// <para>
+	/// Eviction is decided first: an evicted worker is replaced by the next call, which loads the rebuilt
+	/// analyzer as surely as a reload would, and costs nothing until somebody wants it. The settings file is
+	/// read only for a worker the idle reload would act on, so a sweep with nothing rebuilt reads no file.
+	/// </para>
 	/// </summary>
-	private async Task SweepAsync(TimeSpan idleAfter, CancellationToken cancellationToken)
+	private async Task SweepAsync(CancellationToken cancellationToken)
 	{
 		var now = UtcNow;
+		bool? reloadsRebuilt = null;
 
 		foreach (var worker in Workers)
 		{
-			worker.ObserveSolution(File.Exists(worker.SolutionPath), now);
+			if (_options.IdleEvictionAfter is { } idleAfter)
+			{
+				worker.ObserveSolution(File.Exists(worker.SolutionPath), now);
 
-			var verdict = WorkerEviction.Decide(worker.EvictionFacts(), idleAfter, _options.SolutionGoneGrace, now);
-			if (verdict == EvictionVerdict.Keep) continue;
+				var verdict = WorkerEviction.Decide(worker.EvictionFacts(), idleAfter, _options.SolutionGoneGrace, now);
+				if (verdict != EvictionVerdict.Keep)
+				{
+					await EvictAsync(worker, idleAfter, cancellationToken);
+					continue;
+				}
+			}
 
-			await EvictAsync(worker, idleAfter, cancellationToken);
+			if (!RebuiltAnalyzerReload.Due(worker.EvictionFacts(), _options.RebuiltAnalyzerReloadAfter, now)) continue;
+
+			reloadsRebuilt ??= _options.ReloadsRebuiltAnalyzersWhenIdle();
+			if (reloadsRebuilt != true) continue;
+
+			await ReloadRebuiltAsync(worker, cancellationToken);
 		}
 	}
 
@@ -973,6 +992,69 @@ public sealed class WorkspaceManager(
 				worker.Key,
 				WorkerEviction.Duration(now - facts.LastUsedUtc),
 				reason);
+		}
+		finally
+		{
+			_gate.Release();
+		}
+	}
+
+	/// <summary>How an idle reload for a rebuilt analyzer is labelled in the activity log of the worker it starts.</summary>
+	public const string ReloadRebuiltOperation = "reload for rebuilt analyzer";
+
+	/// <summary>
+	/// Replaces a worker holding a rebuilt analyzer with a fresh one, under the gate every call takes its
+	/// worker under, as <c>rose_workspace_reload</c> would. A new process rather than a reload inside the old
+	/// one, because an assembly once loaded cannot be unloaded and the old process would load the same copy.
+	/// <para>
+	/// Everything is read again here, the way an eviction reads it: a worker somebody took since the sweep
+	/// looked is held and left alone, one already replaced is not the one registered and is left too, and one
+	/// whose solution file has gone is left to the eviction sweep rather than restarted onto nothing. The
+	/// replacement keeps the build properties the solution was asked to load under, and its activity history
+	/// begins with why it was started, so a person who finds the workspace loading with nobody having asked
+	/// can read the reason.
+	/// </para>
+	/// </summary>
+	private async Task ReloadRebuiltAsync(WorkspaceWorker worker, CancellationToken cancellationToken)
+	{
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			var stillRegistered = _workers.TryGetValue(worker.SolutionPath, out var current) && ReferenceEquals(current, worker);
+			if (!stillRegistered) return;
+
+			var now = UtcNow;
+			var facts = worker.EvictionFacts();
+
+			if (!RebuiltAnalyzerReload.Due(facts, _options.RebuiltAnalyzerReloadAfter, now)) return;
+			if (!File.Exists(worker.SolutionPath)) return;
+
+			var reason = RebuiltAnalyzerReload.Explain(worker.RebuiltAnalyzersNotice, facts, now);
+
+			_workers.TryRemove(new KeyValuePair<string, WorkspaceWorker>(worker.SolutionPath, worker));
+			await worker.DisposeAsync();
+			Activities.Forget(worker.SolutionPath);
+
+			logger.LogInformation(
+				"Reloading {SolutionPath} ({WorkspaceKey}) with a fresh worker: {Reason}",
+				worker.SolutionPath,
+				worker.Key,
+				reason);
+
+			try
+			{
+				await GetOrStartUnderGateAsync(worker.SolutionPath, cancellationToken);
+				Activities.Note(worker.SolutionPath, ReloadRebuiltOperation, reason);
+			}
+			catch (Exception exception) when (exception is not OperationCanceledException)
+			{
+				// The old worker is already gone, so the workspace is closed rather than stale, and the next call
+				// on it starts a worker the way it would after a close.
+				logger.LogWarning(
+					exception,
+					"Could not start a fresh worker for {SolutionPath} after its analyzer was rebuilt; the next call on it starts one.",
+					worker.SolutionPath);
+			}
 		}
 		finally
 		{

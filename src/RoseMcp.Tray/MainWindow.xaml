@@ -88,6 +88,7 @@
 					<MenuFlyoutItem x:Name="TrayOpenInspector" Text="Open inspector" />
 					<ToggleMenuFlyoutItem x:Name="TrayShowInspectorOnAttach" Text="Show inspector when the debugger attaches" />
 					<MenuFlyoutItem x:Name="TrayCopyInspectorCommand" Text="Copy inspector command" />
+					<ToggleMenuFlyoutItem x:Name="TrayReloadRebuiltAnalyzers" Text="Reload a workspace when its analyzers are rebuilt" />
 					<MenuFlyoutItem x:Name="TrayOpenLogs" Text="Open log folder" />
 					<MenuFlyoutItem x:Name="TrayCloseAll" Text="Close all workspaces" />
 					<MenuFlyoutSeparator />
@@ -157,6 +158,13 @@
 								</MenuFlyoutItem.Icon>
 							</MenuFlyoutItem>
 							<MenuFlyoutSeparator />
+							<ToggleMenuFlyoutItem x:Name="WindowReloadRebuiltAnalyzers"
+								Text="Reload a workspace when its analyzers are rebuilt"
+								Click="OnToggleReloadRebuiltAnalyzers">
+								<ToggleMenuFlyoutItem.Icon>
+									<FontIcon Glyph="&#xE72C;" />
+								</ToggleMenuFlyoutItem.Icon>
+							</ToggleMenuFlyoutItem>
 							<MenuFlyoutItem Text="Open log folder" Click="OnOpenLogs">
 								<MenuFlyoutItem.Icon>
 									<FontIcon Glyph="&#xE8B7;" />

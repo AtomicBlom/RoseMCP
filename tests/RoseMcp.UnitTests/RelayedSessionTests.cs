@@ -169,13 +169,21 @@ public sealed class RelayedSessionTests
 			return new Tray(app, new Uri(app.Urls.First() + "/"));
 		}
 
-		/// <summary>A relay in front of this broker, as a stdio session started while the tray runs is.</summary>
+		/// <summary>
+		/// A relay in front of this broker, as a stdio session started while the tray runs is. A relay gives a tray two
+		/// seconds to answer its probe and handshake before running on its own, which a full suite's load on a small
+		/// runner can overrun with nothing wrong, so a few attempts are made before the broker is called unreachable.
+		/// </summary>
 		public async Task<TrayRelay> RelayAsync(CancellationToken cancellationToken)
 		{
 			var options = new ServerOptions { Host = Endpoint.Host, Port = Endpoint.Port };
 
-			return await TrayRelay.TryConnectAsync(options, NullLoggerFactory.Instance, cancellationToken)
-				?? throw new InvalidOperationException($"No relay could reach the broker at {Endpoint}.");
+			for (var attempt = 0; attempt < 3; attempt++)
+			{
+				if (await TrayRelay.TryConnectAsync(options, NullLoggerFactory.Instance, cancellationToken) is { } relay) return relay;
+			}
+
+			throw new InvalidOperationException($"No relay could reach the broker at {Endpoint} in three attempts.");
 		}
 
 		public async ValueTask DisposeAsync()

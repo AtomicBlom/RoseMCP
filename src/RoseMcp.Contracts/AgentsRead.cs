@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace RoseMcp.Contracts;
 
 /// <summary>
@@ -9,7 +11,13 @@ namespace RoseMcp.Contracts;
 /// words, which can say when it matters; and some warnings are accepted only so they stop drawing the
 /// person's eye, while an agent should still hear them as Rose words them.
 /// </para>
+/// <para>
+/// Read and written by name whatever options a serialiser is given, since it travels in an operator
+/// request's body, and the framework binds those with its own options rather than with
+/// <see cref="ContractJson.Options"/>: by number, a person's choice would be refused as a malformed request.
+/// </para>
 /// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<AgentsRead>))]
 public enum AgentsRead
 {
 	/// <summary>Rose's own line, the opening sentence of the reason, as an agent would read it unaccepted.</summary>

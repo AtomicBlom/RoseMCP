@@ -372,20 +372,34 @@ Highest leverage on adoption. Cheap relative to impact.
 | ~~21~~ | **#386.** The stdout rule, whose violation reads as a protocol error far from its cause, and the tap's header tiers were each held by review alone. Both are checked over the source by the unit suite, on every runner; formatting and linting the C++ and the PowerShell is declined. | UIP-18, UIP-24 | — | — |
 | ~~21a~~ | **#387.** Five parties each wrote the published layout down for themselves, two of them packaged content a user runs, so a layout change passed every test and failed at install time. They all read one committed layout, or are tested against it. | UIP-22 | — | — |
 
-### Tier 5 — re-aim the UIs
+### Tier 5 — the windows, redesigned
 
-Commit to the supervising user, or decide not to. Everything here follows from that call.
+Decided 2026-10-11: the windows serve the person supervising agents, and the person debugging by hand.
+The design is [`09-windows-redesign.html`](09-windows-redesign.html); open it in a browser. It covers
+the use cases the windows answer, mock-ups of the tray, the RoseMCP window, the Inspector and the
+panel, and what Rose needs underneath. The tier lands as one native stack of three pull requests,
+worked back to back: 5a into `main`, 5b on 5a, 5c on 5b. It supersedes the first cut of this tier,
+cards 22 to 26 (#388 to #392).
 
-| # | Card | Findings | Issues | Effort |
+| # | Card | Use cases | Issues | Effort |
 |---|---|---|---|---|
-| 22 | **Render the facts already computed for a window.** Degraded reasons with their remedies, analyzer load failures, per-project health, restore state, information age, session notice. The cheapest wins in the repository. Done when its entries leave `ProducedFactTests`' exemption list. The window reads the broker's last status, which only a status call refreshes, so an assembly a tool could not load, or a reload the worker made on its own, shows there only once somebody asks; the reads already say it, from the worker. | USE-01, USE-03 | new | M |
-| 23 | **Show what the agent is doing, in the inspector.** The data is already on the object the window holds; the tray renders it and the inspector does not. | USE-02 | new | S |
-| 24 | **The activity log is the only record of what an agent did to your solution.** It is eight entries, collapsed, tertiary grey, dropped on close. Persist it, give it client attribution, promote it. | USE-04, USE-05 | new | M |
-| 25 | **Make facts copyable.** Nothing in a window whose job is feeding facts to an agent can be copied except one XAML address. | USE-09, USE-14 | new | S |
-| 26 | **Cut what earns less than it costs**: the threads pane (the only pane that freezes the user's app as a side effect of being visible), the duplicate tray menu, the empty title bar, the load time on the permanent facts line. | USE-07, USE-15, USE-17 | new | M |
-| 26b | **Write down why the magnifier exists.** The OS magnifier filters bilinearly and cannot be told not to, so it can neither read an exact colour nor show a one-pixel gap at a corner radius. That reason is in no comment, invariant or wiki page, and this review recommended deleting the feature before being corrected. A header sentence, a decision record, and a tooltip that states the benefit rather than the mechanism. | USE-08 | new | S |
-| 27 | **Connect the pick to the window that explains it.** Six manual steps today. | USE-10 | #226 | L |
-
+| **5a** | *Foundations: data and protocol, with today's windows still in place.* | | | |
+| 5.1 | **Notice a rebuilt analyzer, generator or code fix.** Every answer keeps using the old build after one is rebuilt, and nothing says so. | B5 | #455 | S |
+| 5.2 | **Build identity.** Every process carries its commit, a dirty flag, its build time and its checkout. Handshakes compare commits. | A2, A8 | #456 | S |
+| 5.3 | **A relay that outlives a deploy.** It reconnects by itself, and sends `tools/list_changed` only when the tool hash differs, so a deploy needs no `/mcp`. | A9, A2 | #457 | M |
+| 5.4 | **Who's connected.** The relay names the session it serves, so the broker knows its clients. | A3, B4 | #458 | S |
+| 5.5 | **The activity record.** Every call, attributed, with its arguments, response and an edit's diff, kept for 7 days. | B3, B4, C3 | #459 | M |
+| 5.6 | **Workspace health with a shape.** Reasons a person can accept, choosing what agents read about them. Agents can acknowledge them. | B1 | #460 | M |
+| 5.7 | **The operator API the new windows read.** | — | #461 | M |
+| **5b** | *The RoseMCP app: the tray loses its window, and the new one arrives.* | | | |
+| 5.8 | **The tray process keeps only its icon.** Three states, one menu, and notifications only for what a person can act on. | A1, A6, A8 | #462 | S |
+| 5.9 | **The RoseMCP window, organised by agent.** Agents, Activity, Workspaces and Debugging views, with a memory bar. | A3–A7, B1–B4 | #463 | L |
+| 5.10 | **Notes to an agent.** Delivered with its next call. `rose_reply` lets the agent answer. A channel push is a stretch goal. | C8, D8 | #464 | M |
+| **5c** | *The Inspector and the panel.* | | | |
+| 5.11 | **Debug an app without an agent.** Attach and launch by hand, and share the session with an agent. | E5, E6 | #465 | M |
+| 5.12 | **The Inspector's new layout.** The app, the agent's calls and the person's notes in one view. | C1–C6, E1–E4 | #466 | L |
+| 5.13 | **The XAML view and the panel.** The agent's edits are marked, and the panel can send a pick, a measurement or a colour to the agent. | D1–D8 | #467, #226 | M |
+| 5.14 | **Write down why the magnifier exists.** The OS magnifier filters bilinearly, so it can neither read an exact colour nor show a one-pixel gap. | USE-08 | #393 | S |
 ### Tier 6 — hot reload
 
 Run as its own epic, after cards 3 and (ideally) the write-pipeline work. Full milestone table with
@@ -468,7 +482,7 @@ Filed here so they reach the issue tracker. Several are not in any existing issu
 ## Suggested reading order for splitting cards
 
 1. This file.
-2. `08-ui-usability.md` sections 1 and 3, and the supervision thesis. It is the strategic decision;
+2. `09-windows-redesign.html`, which settled the strategic question `08-ui-usability.md` raised.
    Tier 5 depends on it and nothing else does.
 3. `07-hot-reload-readiness.md` "What exists today" and the milestone table.
 4. `02-worker-roslyn.md` finding WRK-02, which is what is left of Tier 2.

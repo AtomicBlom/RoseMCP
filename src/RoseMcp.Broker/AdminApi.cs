@@ -74,8 +74,7 @@ public static class AdminApi
 
 		try
 		{
-			context.Response.ContentType = "application/x-ndjson";
-			await context.Response.WriteAsJsonAsync(relays.Hello(Build), ContractJson.Options, ended.Token);
+			await context.Response.WriteAsJsonAsync(relays.Hello(Build), ContractJson.Options, "application/x-ndjson", ended.Token);
 			await context.Response.WriteAsync("\n", ended.Token);
 			await context.Response.Body.FlushAsync(ended.Token);
 

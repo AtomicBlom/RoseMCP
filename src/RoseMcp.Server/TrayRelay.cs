@@ -328,6 +328,11 @@ public sealed class TrayRelay : IAsyncDisposable
 	/// <summary>
 	/// Stops watching, then closes the connection and the upstream. A broker this relay started goes
 	/// with its connection, and its workers with it.
+	/// <para>
+	/// The reconnect gate and the lifetime source are left undisposed on purpose: a call still unwinding
+	/// as the host stops may release the one or read the other's token, and neither holds anything to
+	/// free while no wait handle has been asked of it and no timer set on it.
+	/// </para>
 	/// </summary>
 	public async ValueTask DisposeAsync()
 	{
@@ -344,9 +349,6 @@ public sealed class TrayRelay : IAsyncDisposable
 
 		await DisposeQuietlyAsync(_tray);
 		await _upstream.DisposeAsync();
-
-		_lifetime.Dispose();
-		_reconnecting.Dispose();
 	}
 
 	private static async Task<Tool[]> ListAsync(McpClient tray, CancellationToken cancellationToken) =>

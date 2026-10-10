@@ -135,7 +135,8 @@ internal static class Program
 				// caller most needs to be told the tray is gone.
 				.WithToolErrorMessages();
 
-			using var host = builder.Build();
+			// Not disposed here: RunAsync disposes the host when it finishes.
+			var host = builder.Build();
 			var running = host.RunAsync();
 
 			// A broker this relay started has exited, which a deploy does to it: the session cannot

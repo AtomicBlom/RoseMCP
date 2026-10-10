@@ -204,6 +204,21 @@ Read before adding a tool, adding a field to a result, or changing an error path
   plus the process's assembly faults, so no read pays for running every project's generators. Status and
   writes do not carry it: status lists the reasons itself, and a write's verdict is the compile it ran.
   A read that builds its notices without the snapshot's drops this with them.
+  <br>
+  The notice is written for whoever is asking. A reason the person accepted saying nothing, or one the
+  calling session acknowledged, is left out; one accepted with a note is said in the person's words. The
+  broker knows those and the worker does not, so it sends them with every call it forwards
+  (`ReasonHearing`, in `_meta`), and the worker leaves out only what that list covers **for the reason's
+  kind and every project the reason names** -- never a reason wholesale, never a kind wholesale. A reason
+  nobody accepted leads, and a kind or a project nobody accepted is said as it always was, because the
+  failure this way round is a clean answer from a workspace somebody quieted for a different reason. See
+  [the decision](../decisions/a-reason-is-accepted-by-the-person-per-solution-kind-and-project.md).
+- **A reason's kind is named in code, and its text says it.** Status gives every degraded reason and every
+  structured notice a `health` entry -- kind, effect, projects, first seen, acceptance -- beside the text in
+  full, and both are written from one list in `WorkspaceStatusReporter.WithReasons`, which is what lets a
+  read pair them back up. An acceptance is keyed on the kind and the project, so a reason given a kind
+  derived from its wording, or the wrong projects, is either silenced by an acceptance that was never about
+  it or never covered by the one that was. A note is health too, and never makes a workspace degraded.
 - **What says nothing is counted, not listed.** A status answer for a solution of two hundred
   projects that all loaded was two hundred entries saying so, about 25k tokens before the part that
   mattered; a solution-wide diagnostics pass over two unrestored projects was 44k errors saying only

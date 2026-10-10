@@ -161,6 +161,13 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   but a refusal naming the workspace a key belongs to calls it loaded only while its worker serves,
   and promises a reload only while its solution file exists -- a removed worktree's row outlives
   the file, and loading it again would only fail.
+- **What the broker holds for an agent session goes when the session does.** The broker outlives every
+  client, so anything it keeps per session -- `WorkspaceHealth`'s acknowledgements and the proposals waiting
+  for the person -- is a leak unless something ends it. Nothing tells an http broker a client has gone, so a
+  session is taken to have ended when it has made no call for the MCP transport's own idle limit, two
+  hours, and a host that does learn of an end calls `ForgetSession`. A call with no session id is the one
+  client of a stdio broker; on a broker serving several it is any of them, and session state taken from it
+  would be every client's, so it is refused rather than shared.
 - **A live-app session whose host has died is dropped by the session manager, and only that one.**
   A poll that finds the host's transport gone marks the session ended; nothing else would ever
   remove it -- no caller closes a session it can no longer reach -- so the registry would carry it

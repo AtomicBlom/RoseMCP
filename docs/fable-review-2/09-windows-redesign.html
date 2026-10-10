@@ -982,9 +982,7 @@ flowchart LR
         <li>Today an edit's result goes once, to the caller, and nothing else remembers it.</li></ul>
         <span class="serves">Serves D2</span></div>
       <div class="fd"><h3><span class="k">U8</span>Workspace health with a shape</h3>
-        <ul><li>Today's reasons are plain strings. Give each a kind, an effect (blocks answers, may affect some projects, or a note), the projects it covers, and when it was first seen.</li>
-        <li>An accepted reason is remembered per solution, kind and project.</li>
-        <li>Each accepted reason stores what agents read about it: Rose's line, your note, or nothing.</li><li>A tool lets an agent acknowledge a reason for its own session, or propose accepting it for you to confirm.</li></ul>
+        <ul><li>Done in #460: reasons have a shape, a person accepts them, and an agent acknowledges them for its session.</li></ul>
         <span class="serves">Serves B1</span></div>
       <div class="fd"><h3><span class="k">U10</span>Everything through the operator API</h3>
         <ul><li>The tray window reads the broker's objects directly today. The Rose window reads only <code>/operator</code>: clients, workspaces, activity, notes, sessions.</li>
@@ -1057,7 +1055,7 @@ sequenceDiagram
       <li data-id="5.3"><div class="body"><b>A relay that outlives a deploy.</b><span>Starts with the dummy-tool test of <code>list_changed</code> on the installed Claude Code. Installs where a deploy doesn't replace it and versions its own protocol. On reconnect it compares the tool hash, and only a change sends <code>list_changed</code>. The first result after a restart says what happened.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/457">#457</a> · A9, A2 · U2 · M</span></div></li>
       <li data-id="5.4"><div class="body"><b>Who's connected.</b><span>The relay sends its session's roots, branch, process and optional label. The broker keeps a table of clients, and an HTTP client without the relay shows as unnamed.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/458">#458</a> · A3, B4 · U3 · S</span></div></li>
       <li data-id="5.5"><div class="body"><b>The activity record.</b><span>Every call, with its client, target, start and finish, outcome, arguments and response. Each edit also gets its diff. The record is written to disk, kept 7 days and survives reloads and restarts. The windows' own reads aren't recorded.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/459">#459</a> · B3, B4, C3 · U4 · M · supersedes #390</span></div></li>
-      <li data-id="5.6"><div class="body"><b>Workspace health with a shape.</b><span>Each reason has a kind, an effect, the projects it covers and when it was first seen. Accepting one is remembered and says what agents read about it. A tool lets an agent acknowledge a reason for its own session, or propose accepting it.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/460">#460</a> · B1 · U8 · M</span></div></li>
+      <li data-id="5.6"><div class="body"><b><s>Workspace health with a shape.</s></b><span>Done. Reasons were plain strings; each now has a kind, an effect and its projects, a person accepts one, and an agent acknowledges one.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/460">#460</a> · B1 · U8 · M</span></div></li>
       <li data-id="5.7"><div class="body"><b>The operator API the windows read.</b><span>Clients, workspaces, activity, notes, sessions and memory, tested through the end-to-end host. After this, nothing the new windows need comes from the broker's objects directly.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/461">#461</a> · U10 · M</span></div></li>
     </ol></div>
 

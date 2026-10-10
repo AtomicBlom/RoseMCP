@@ -38,7 +38,7 @@ public sealed class GitCommandTests
 			for (var i = 0; i < 3; i++) await CommitAsync(git, checkout.FullName, $"after {i}", cancellationToken);
 
 			var build = new BuildIdentity { Version = "1.0.0", Commit = built, Dirty = false, Checkout = checkout.FullName };
-			using var reader = new CheckoutDistanceReader(build, git, TimeProvider.System);
+			await using var reader = new CheckoutDistanceReader(build, git, TimeProvider.System);
 
 			var distance = await reader.ReadAsync(cancellationToken);
 
@@ -56,38 +56,63 @@ public sealed class GitCommandTests
 
 	/// <summary>
 	/// A command that outlives its budget is killed, with whatever it started, and reported as a
-	/// sentence. A shell running a long wait stands in for a git hung on a lock or a network share:
-	/// the shell's child is the grandchild a plain kill would leave behind.
+	/// sentence. A shell running a long wait in a child of its own stands in for a git hung on a lock
+	/// or a network share, and the child is the grandchild a plain kill would leave behind: it is
+	/// asserted gone, not just the shell.
 	/// </summary>
 	[Test]
 	public async Task A_command_past_its_budget_is_stopped_and_said()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
-		var (shell, arguments) = LongWait();
+		var pidFile = Path.Combine(Path.GetTempPath(), $"rose-grandchild-{Guid.NewGuid():N}.pid");
+		var (shell, arguments) = LongWait(pidFile);
 		var clock = Stopwatch.StartNew();
 
-		var outcome = await new GitCommand(shell).RunAsync(
-			Path.GetTempPath(), arguments, TimeSpan.FromSeconds(1), cancellationToken);
+		try
+		{
+			// Long enough for a cold PowerShell to start its child and write the id.
+			var outcome = await new GitCommand(shell).RunAsync(
+				Path.GetTempPath(), arguments, TimeSpan.FromSeconds(8), cancellationToken);
 
-		clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20));
-		outcome.Succeeded.ShouldBeFalse();
-		outcome.ExitCode.ShouldBeNull();
-		outcome.Error.ShouldContain("took longer than 1 seconds", Case.Sensitive);
+			clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(30));
+			outcome.Succeeded.ShouldBeFalse();
+			outcome.ExitCode.ShouldBeNull();
+			outcome.Error.ShouldContain("took longer than 8 seconds", Case.Sensitive);
+
+			await ShouldBeGoneAsync(ReadPid(pidFile), cancellationToken);
+		}
+		finally
+		{
+			File.Delete(pidFile);
+		}
 	}
 
-	/// <summary>A caller giving up stops the command too, and hears its own cancellation rather than a timeout.</summary>
+	/// <summary>
+	/// A caller giving up stops the command too, grandchild included, and hears its own cancellation
+	/// rather than a timeout. It gives up only once the grandchild exists, so there is one to find.
+	/// </summary>
 	[Test]
 	public async Task A_caller_giving_up_stops_the_command()
 	{
-		var (shell, arguments) = LongWait();
-		using var giveUp = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current!.Execution.CancellationToken);
-		giveUp.CancelAfter(TimeSpan.FromMilliseconds(500));
-		var clock = Stopwatch.StartNew();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var pidFile = Path.Combine(Path.GetTempPath(), $"rose-grandchild-{Guid.NewGuid():N}.pid");
+		var (shell, arguments) = LongWait(pidFile);
+		using var giveUp = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
-		await Should.ThrowAsync<OperationCanceledException>(() => new GitCommand(shell).RunAsync(
-			Path.GetTempPath(), arguments, TimeSpan.FromMinutes(5), giveUp.Token));
+		try
+		{
+			var running = new GitCommand(shell).RunAsync(Path.GetTempPath(), arguments, TimeSpan.FromMinutes(5), giveUp.Token);
 
-		clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20));
+			var pid = await WaitForPidAsync(pidFile, cancellationToken);
+			await giveUp.CancelAsync();
+
+			await Should.ThrowAsync<OperationCanceledException>(() => running);
+			await ShouldBeGoneAsync(pid, cancellationToken);
+		}
+		finally
+		{
+			File.Delete(pidFile);
+		}
 	}
 
 	/// <summary>A git that is not there is an answer saying so, not an exception.</summary>
@@ -101,10 +126,81 @@ public sealed class GitCommandTests
 		outcome.Error.ShouldContain("rose-no-such-git could not be started", Case.Sensitive);
 	}
 
-	/// <summary>A wait long enough to outlive any budget here, through a shell so there is a grandchild.</summary>
-	private static (string Shell, string[] Arguments) LongWait() => OperatingSystem.IsWindows()
-		? ("cmd.exe", ["/c", "ping -n 60 127.0.0.1 >nul"])
-		: ("/bin/sh", ["-c", "sleep 60"]);
+	/// <summary>
+	/// A wait long enough to outlive any budget here, run as a child of a shell so there is a
+	/// grandchild, whose process id the shell writes to <paramref name="pidFile"/>.
+	/// </summary>
+	private static (string Shell, string[] Arguments) LongWait(string pidFile) => OperatingSystem.IsWindows()
+		? ("powershell.exe",
+		[
+			"-NoProfile",
+			"-NonInteractive",
+			"-Command",
+			"$p = Start-Process -FilePath ping.exe -ArgumentList '-n','120','127.0.0.1' -NoNewWindow -PassThru; "
+				+ $"Set-Content -LiteralPath '{pidFile}' -Value $p.Id; $p.WaitForExit()",
+		])
+		: ("/bin/sh", ["-c", $"sleep 120 & echo $! > '{pidFile}'; wait"]);
+
+	/// <summary>The grandchild's id, which the shell writes once it has started it.</summary>
+	private static async Task<int> WaitForPidAsync(string pidFile, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+
+		while (DateTime.UtcNow < deadline)
+		{
+			if (TryReadPid(pidFile) is { } pid) return pid;
+
+			await Task.Delay(100, cancellationToken);
+		}
+
+		throw new InvalidOperationException($"The shell never wrote its child's id to {pidFile}.");
+	}
+
+	private static int ReadPid(string pidFile) =>
+		TryReadPid(pidFile) ?? throw new InvalidOperationException(
+			$"The shell had not written its child's id to {pidFile} before it was stopped, so the test proves nothing.");
+
+	private static int? TryReadPid(string pidFile)
+	{
+		try
+		{
+			return int.TryParse(File.ReadAllText(pidFile).Trim(), out var pid) ? pid : null;
+		}
+		catch (IOException)
+		{
+			return null;
+		}
+	}
+
+	/// <summary>
+	/// That a process has exited, given a moment: a tree kill signals every process in it, and the
+	/// last of them can take a beat to go.
+	/// </summary>
+	private static async Task ShouldBeGoneAsync(int pid, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+
+		while (IsRunning(pid))
+		{
+			if (DateTime.UtcNow > deadline) throw new ShouldAssertException($"The grandchild, pid {pid}, outlived the kill.");
+
+			await Task.Delay(100, cancellationToken);
+		}
+	}
+
+	private static bool IsRunning(int pid)
+	{
+		try
+		{
+			using var process = Process.GetProcessById(pid);
+
+			return !process.HasExited;
+		}
+		catch (ArgumentException)
+		{
+			return false;
+		}
+	}
 
 	private static async Task RequireGitAsync(GitCommand git, CancellationToken cancellationToken)
 	{

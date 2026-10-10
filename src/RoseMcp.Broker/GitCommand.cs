@@ -24,7 +24,8 @@ public class GitCommand(string executable = "git")
 {
 	/// <summary>
 	/// How long one command gets by default. Counting commits takes milliseconds, so this is only the
-	/// ceiling on a hang, and short enough that two in a row still answer inside a window's read budget.
+	/// ceiling on a hang; a reader waiting on the count is bounded separately, by
+	/// <see cref="CheckoutDistanceReader.AnswerWithin"/>.
 	/// </summary>
 	public static readonly TimeSpan DefaultBudget = TimeSpan.FromSeconds(4);
 

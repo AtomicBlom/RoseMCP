@@ -129,16 +129,18 @@ public sealed class BuildIdentityTests
 	}
 
 	/// <summary>
-	/// A dirty build of a commit is not that commit. Where either side could not say whether it was
-	/// dirty, the commit is all there is to go on.
+	/// The dirty flag is said, not compared. It is stamped when an assembly compiles, so a worker
+	/// untouched since the last commit says clean beside a broker rebuilt from an edit, and comparing
+	/// them would warn on every edit a person builds.
 	/// </summary>
 	[Test]
-	public void A_dirty_build_is_not_the_clean_build_of_its_commit()
+	public void A_dirty_flag_is_said_and_not_compared()
 	{
 		var clean = new BuildIdentity { Version = "1.3.0", Commit = Commit, Dirty = false };
+		var dirty = clean with { Dirty = true };
 
-		clean.IsSameBuildAs(clean with { Dirty = true }).ShouldBeFalse();
-		clean.IsSameBuildAs(clean with { Dirty = null }).ShouldBeTrue();
+		clean.IsSameBuildAs(dirty).ShouldBeTrue();
+		dirty.Describe().ShouldBe("1.3.0 at c11d75a with uncommitted changes");
 	}
 
 	/// <summary>A mismatch names both builds, each by its short commit, and which is which.</summary>

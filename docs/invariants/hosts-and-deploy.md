@@ -115,7 +115,9 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   share a MinVer version, so a version compare passes a stale `bin` as the same build. A new host
   sends the handshake; a new hop that starts one compares it, and says a mismatch naming both
   commits rather than refusing. The stamps come from `Directory.Build.props`, and every one degrades
-  to absent rather than failing a build -- an archive with no `.git`, a machine with no git. The build
-  time is an embedded resource, not an attribute, and is written only when the compile runs: as an
-  attribute it would change every reference assembly on every compile and recompile everything above
-  it. See [the decision](../decisions/a-build-is-named-by-its-commit.md).
+  to absent rather than failing a build -- an archive with no `.git`, a machine with no git. Nothing
+  that changes without a commit is an attribute: the build time and the dirty flag are an embedded
+  resource written only when the project compiles, because as attributes they would recompile every
+  project whenever the time or the tree's state moved. So the dirty flag is the assembly's as of its
+  last compile, and is shown, never compared. See
+  [the decision](../decisions/a-build-is-named-by-its-commit.md).

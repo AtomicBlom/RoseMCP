@@ -34,7 +34,7 @@ public sealed class CheckoutDistanceReaderTests
 		var git = new ScriptedGit(arguments => arguments[^1].EndsWith("HEAD", StringComparison.Ordinal)
 			? new GitOutcome { ExitCode = 0, Output = "3\n" }
 			: new GitOutcome { ExitCode = 0, Output = "12\n" });
-		using var reader = new CheckoutDistanceReader(Local, git, new SteppedClock());
+		await using var reader = new CheckoutDistanceReader(Local, git, new SteppedClock());
 
 		var distance = await reader.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
@@ -56,7 +56,7 @@ public sealed class CheckoutDistanceReaderTests
 		var git = new ScriptedGit(arguments => arguments[^1].EndsWith("HEAD", StringComparison.Ordinal)
 			? new GitOutcome { ExitCode = 0, Output = "0" }
 			: new GitOutcome { ExitCode = 128, Error = "fatal: ambiguous argument 'origin/main': unknown revision\nUse '--' to separate" });
-		using var reader = new CheckoutDistanceReader(Local, git, new SteppedClock());
+		await using var reader = new CheckoutDistanceReader(Local, git, new SteppedClock());
 
 		var distance = await reader.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
@@ -71,7 +71,7 @@ public sealed class CheckoutDistanceReaderTests
 	public async Task A_build_with_no_checkout_has_no_distance()
 	{
 		var git = new ScriptedGit(_ => throw new InvalidOperationException("git should not run"));
-		using var reader = new CheckoutDistanceReader(Local with { Checkout = null }, git, new SteppedClock());
+		await using var reader = new CheckoutDistanceReader(Local with { Checkout = null }, git, new SteppedClock());
 
 		(await reader.ReadAsync(TestContext.Current!.Execution.CancellationToken)).ShouldBeNull();
 		git.Calls.ShouldBeEmpty();
@@ -83,7 +83,7 @@ public sealed class CheckoutDistanceReaderTests
 	{
 		var gone = Path.Combine(Path.GetTempPath(), $"rose-gone-{Guid.NewGuid():N}");
 		var git = new ScriptedGit(_ => throw new InvalidOperationException("git should not run"));
-		using var reader = new CheckoutDistanceReader(Local with { Checkout = gone }, git, new SteppedClock());
+		await using var reader = new CheckoutDistanceReader(Local with { Checkout = gone }, git, new SteppedClock());
 
 		var distance = await reader.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
@@ -102,7 +102,7 @@ public sealed class CheckoutDistanceReaderTests
 	{
 		var git = new ScriptedGit(_ => new GitOutcome { ExitCode = 0, Output = "1" });
 		var clock = new SteppedClock();
-		using var reader = new CheckoutDistanceReader(Local, git, clock);
+		await using var reader = new CheckoutDistanceReader(Local, git, clock);
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		await reader.ReadAsync(cancellationToken);
@@ -126,7 +126,7 @@ public sealed class CheckoutDistanceReaderTests
 	{
 		var release = new TaskCompletionSource<GitOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
 		var git = new ScriptedGit((_, _) => release.Task);
-		using var reader = new CheckoutDistanceReader(Local, git, new SteppedClock());
+		await using var reader = new CheckoutDistanceReader(Local, git, new SteppedClock());
 
 		using (var impatient = new CancellationTokenSource())
 		{
@@ -143,14 +143,40 @@ public sealed class CheckoutDistanceReaderTests
 	}
 
 	/// <summary>
-	/// Disposing the reader, which the host does as it stops, is what cancels a git still running,
-	/// so a broker shutting down does not leave one behind; reading after that is refused.
+	/// A git that hangs does not hold the answer past the reader's wait: it is answered as still being
+	/// counted, so hello still carries the build inside a window's read budget.
 	/// </summary>
 	[Test]
-	public async Task Disposing_the_reader_stops_a_count_in_flight()
+	public async Task A_count_that_hangs_is_answered_as_still_counting()
+	{
+		var git = new ScriptedGit(async (_, token) =>
+		{
+			await Task.Delay(Timeout.Infinite, token);
+
+			return new GitOutcome();
+		});
+		await using var reader = new CheckoutDistanceReader(Local, git, new SteppedClock(), answerWithin: TimeSpan.FromMilliseconds(200));
+		var clock = System.Diagnostics.Stopwatch.StartNew();
+
+		var distance = await reader.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
+		distance!.Head.Count.ShouldBeNull();
+		distance.Head.Unknown.ShouldBe("Still being counted; ask again in a moment.");
+		distance.OriginMain.Unknown.ShouldBe(distance.Head.Unknown);
+	}
+
+	/// <summary>
+	/// Disposing the reader, which the host does as it stops, cancels a git still running and waits
+	/// for it to be gone, so a host that exits straight after does not leave it behind. The git here
+	/// takes a while to stop once cancelled, as a kill and a drain do, and disposal waits it out.
+	/// Reading after that is refused.
+	/// </summary>
+	[Test]
+	public async Task Disposing_the_reader_waits_for_the_count_it_stops()
 	{
 		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-		var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var stopped = false;
 		var git = new ScriptedGit(async (_, token) =>
 		{
 			started.TrySetResult();
@@ -159,23 +185,24 @@ public sealed class CheckoutDistanceReaderTests
 			{
 				await Task.Delay(Timeout.Infinite, token);
 			}
-			finally
+			catch (OperationCanceledException)
 			{
-				stopped.TrySetResult();
+				await Task.Delay(TimeSpan.FromMilliseconds(300), CancellationToken.None);
+				stopped = true;
+				throw;
 			}
 
 			return new GitOutcome();
 		});
-		var reader = new CheckoutDistanceReader(Local, git, new SteppedClock());
+		var reader = new CheckoutDistanceReader(Local, git, new SteppedClock(), answerWithin: TimeSpan.FromMilliseconds(50));
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
-		var reading = reader.ReadAsync(cancellationToken);
+		await reader.ReadAsync(cancellationToken);
 		await started.Task.WaitAsync(cancellationToken);
 
-		reader.Dispose();
+		await reader.DisposeAsync();
 
-		await stopped.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
-		await Should.ThrowAsync<OperationCanceledException>(() => reading);
+		stopped.ShouldBeTrue("disposal returned before the git it cancelled had stopped");
 		await Should.ThrowAsync<ObjectDisposedException>(() => reader.ReadAsync(cancellationToken));
 	}
 

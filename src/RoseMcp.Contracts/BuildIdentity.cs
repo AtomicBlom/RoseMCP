@@ -31,9 +31,10 @@ public sealed record BuildIdentity
 	public string? Commit { get; init; }
 
 	/// <summary>
-	/// Whether the tree had uncommitted changes, untracked files included, or null where git could
-	/// not be asked. A dirty build of a commit is not that commit, and two dirty builds of one commit
-	/// cannot be told apart by anything here.
+	/// Whether the tree had uncommitted changes, untracked files included, when this assembly was
+	/// last compiled, or null where git could not be asked. It is the assembly's and not the tree's:
+	/// a project that did not recompile after the tree went dirty still says clean, which is true of
+	/// the code it was compiled from. Shown to people, never compared between builds.
 	/// </summary>
 	public bool? Dirty { get; init; }
 
@@ -64,14 +65,14 @@ public sealed record BuildIdentity
 			? stampedCommit
 			: fromVersion.Commit;
 
-		bool? dirty = bool.TryParse(stamped.GetValueOrDefault("RoseMcp.Dirty"), out var parsed) ? parsed : null;
+		var (built, dirty) = Stamp(assembly);
 
 		return new BuildIdentity
 		{
 			Version = fromVersion.Version,
 			Commit = commit,
 			Dirty = dirty,
-			BuiltUtc = BuildTime(assembly),
+			BuiltUtc = built,
 			Checkout = stamped.GetValueOrDefault("RoseMcp.Checkout") is { Length: > 0 } checkout
 				? Path.TrimEndingDirectorySeparator(checkout)
 				: null,
@@ -136,9 +137,14 @@ public sealed record BuildIdentity
 	/// <summary>
 	/// Whether <paramref name="other"/> is this build, as far as the two can say.
 	/// <para>
-	/// Commits decide where both have one, and a dirty flag both know decides between builds of one
-	/// commit. Where either lacks a commit the versions are all there is to compare, which is right
-	/// for an older host and for two archive builds alike.
+	/// Commits decide where both have one. Where either lacks a commit the versions are all there is
+	/// to compare, which is right for an older host and for two archive builds alike.
+	/// </para>
+	/// <para>
+	/// The dirty flag is not compared. It is stamped when an assembly compiles, so it says whether
+	/// the tree was dirty then: a worker untouched since the last commit says clean beside a broker
+	/// rebuilt from an edit, and comparing the two would warn on every edit a person builds. It is
+	/// said in <see cref="Describe"/> instead, which is where a reader can weigh it.
 	/// </para>
 	/// </summary>
 	public bool IsSameBuildAs(BuildIdentity other)
@@ -146,11 +152,7 @@ public sealed record BuildIdentity
 		var bothHaveCommits = Commit is not null && other.Commit is not null;
 		if (!bothHaveCommits) return string.Equals(Version, other.Version, StringComparison.Ordinal);
 
-		if (!string.Equals(Commit, other.Commit, StringComparison.OrdinalIgnoreCase)) return false;
-
-		var bothKnowDirty = Dirty is not null && other.Dirty is not null;
-
-		return !bothKnowDirty || Dirty == other.Dirty;
+		return string.Equals(Commit, other.Commit, StringComparison.OrdinalIgnoreCase);
 	}
 
 	/// <summary>
@@ -173,22 +175,36 @@ public sealed record BuildIdentity
 		identifier.Length is 40 or 64 && identifier.All(Uri.IsHexDigit);
 
 	/// <summary>
-	/// The time stamped as a resource rather than an attribute, so a compile does not change the
-	/// reference assembly and recompile everything above it. A dynamic assembly has no resources to
-	/// read, and asking one throws.
+	/// The build time and dirty flag, stamped as a resource rather than attributes so a compile does
+	/// not change the reference assembly or the inputs every project hashes. Lines of
+	/// <c>key=value</c>, so a part the build could not know is simply missing. A dynamic assembly
+	/// has no resources to read, and asking one throws.
 	/// </summary>
-	private static DateTimeOffset? BuildTime(Assembly assembly)
+	private static (DateTimeOffset? Built, bool? Dirty) Stamp(Assembly assembly)
 	{
-		if (assembly.IsDynamic) return null;
+		if (assembly.IsDynamic) return (null, null);
 
-		using var stream = assembly.GetManifestResourceStream("RoseMcp.BuildTime");
-		if (stream is null) return null;
+		using var stream = assembly.GetManifestResourceStream("RoseMcp.Build");
+		if (stream is null) return (null, null);
 
 		using var reader = new StreamReader(stream);
-		var text = reader.ReadToEnd().Trim();
+		var stamped = reader.ReadToEnd()
+			.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+			.Select(line => line.Split('=', 2))
+			.Where(pair => pair.Length == 2)
+			.GroupBy(pair => pair[0], StringComparer.Ordinal)
+			.ToDictionary(group => group.Key, group => group.Last()[1], StringComparer.Ordinal);
 
-		return DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var built)
-			? built
+		DateTimeOffset? built = DateTimeOffset.TryParse(
+			stamped.GetValueOrDefault("built"),
+			CultureInfo.InvariantCulture,
+			DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+			out var time)
+			? time
 			: null;
+
+		bool? dirty = bool.TryParse(stamped.GetValueOrDefault("dirty"), out var parsed) ? parsed : null;
+
+		return (built, dirty);
 	}
 }

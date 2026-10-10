@@ -182,6 +182,9 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   stdout carries nothing of it; closes its stdin and turns prompting off, so it cannot wait for
   credentials; and kills it with its process tree when its budget runs out or its caller gives up.
   The count belongs to the reader rather than to the request that started it: a request that gives
-  up stops waiting, and disposing the reader, which the host does as it stops, is what kills a git
-  still running. A failure is a sentence in the answer, never an exception. See
+  up stops waiting, and a read waits a couple of seconds at most before answering that the count is
+  still running, so hello always answers inside a window's read budget. Disposing the reader, which
+  the host does as it stops, cancels a git still running and waits, bounded, until it is gone, so a
+  host exiting straight after does not orphan it. A failure is a sentence in the answer, never an
+  exception. See
   [the decision](../decisions/a-build-is-named-by-its-commit.md).

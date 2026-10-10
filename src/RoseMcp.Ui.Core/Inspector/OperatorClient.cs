@@ -81,9 +81,9 @@ public sealed class OperatorClient : IDisposable
 	public bool HasToken { get; }
 
 	/// <summary>
-	/// Which build the broker is, and how far its checkout has moved on. Given the read budget,
-	/// although counting the checkout's commits runs git the first time: that is milliseconds, and
-	/// the broker bounds each command well inside this.
+	/// Which build the broker is, and how far its checkout has moved on. Given the read budget: the
+	/// broker waits a couple of seconds at most for its checkout's commits to be counted and otherwise
+	/// answers that they are still being counted, so the build always arrives inside it.
 	/// </summary>
 	public Task<OperatorHello> HelloAsync(CancellationToken cancellationToken) =>
 		GetAsync<OperatorHello>("/operator/hello", Quick, cancellationToken);

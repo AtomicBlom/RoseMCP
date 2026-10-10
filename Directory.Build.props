@@ -43,10 +43,10 @@
   </ItemGroup>
 
   <!--
-    Build identity: which commit an assembly was built from, whether the tree was dirty, when it was
-    compiled and, for a local build, the checkout it came from. RoseMcp.Contracts.BuildIdentity reads
-    it back, and docs/decisions/a-build-is-named-by-its-commit.md says why each part is carried the
-    way it is.
+    Build identity: which commit an assembly was built from, whether the tree was dirty when it was
+    compiled, when that was and, for a local build, the checkout it came from.
+    RoseMcp.Contracts.BuildIdentity reads it back, and docs/decisions/a-build-is-named-by-its-commit.md
+    says why each part is carried the way it is.
 
     Here rather than in a Directory.Build.targets because the probe apps under tests/apps and the
     fixtures under tests/fixtures shadow this file with their own, and a targets file at the root
@@ -70,19 +70,46 @@
          unconditionally, because the target that writes it is skipped on an up-to-date build, and a
          file missing from FileWrites is deleted by the incremental clean and then forces the next
          compile. -->
-    <EmbeddedResource Include="$(IntermediateOutputPath)RoseMcp.BuildTime.txt" LogicalName="RoseMcp.BuildTime" Visible="false" />
-    <FileWrites Include="$(IntermediateOutputPath)RoseMcp.BuildTime.txt" />
+    <EmbeddedResource Include="$(IntermediateOutputPath)RoseMcp.Build.txt" LogicalName="RoseMcp.Build" Visible="false" />
+    <FileWrites Include="$(IntermediateOutputPath)RoseMcp.Build.txt" />
   </ItemGroup>
 
-  <!-- The commit, the dirty flag and the checkout, as assembly metadata. They change only with a
-       commit or the tree going dirty or clean, both of which change what is compiled anyway. -->
+  <!-- The commit and the checkout, as assembly metadata. They change only with a commit, which
+       changes the informational version and so recompiles every project anyway. -->
   <Target Name="RoseMcpStampCheckout"
           BeforeTargets="GetAssemblyAttributes"
           DependsOnTargets="InitializeSourceControlInformation"
           Condition=" '$(DesignTimeBuild)' != 'true' ">
-    <!-- No optional locks, because every project in a parallel build runs this at once and a status
-         that refreshes the index takes index.lock to do it. Untracked files count as dirty: a new
-         source file is compiled whether or not anybody has added it. -->
+    <ItemGroup>
+      <_RoseMcpCheckout Include="@(SourceRoot)" Condition=" '%(SourceRoot.SourceControl)' == 'git' and '%(SourceRoot.NestedRoot)' == '' " />
+      <AssemblyMetadata Include="RoseMcp.Commit" Value="$(SourceRevisionId)" Condition=" '$(SourceRevisionId)' != '' " />
+      <AssemblyMetadata Include="RoseMcp.Checkout" Value="@(_RoseMcpCheckout)" Condition=" '$(RoseMcpLocalBuild)' == 'true' and '@(_RoseMcpCheckout->Count())' == '1' " />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    The build time and the dirty flag, as an embedded resource rather than attributes, and written
+    only when the compile is about to run.
+
+    An attribute is part of the reference assembly and of the assembly-info inputs every project
+    hashes. As attributes, a time would recompile every project on every build, and the dirty flag
+    would recompile every project, the WinUI ones included, whenever the tree went dirty or clean or
+    an untracked file came or went. A resource is in neither. And the stamp shares the compile's own
+    inputs, so an up-to-date build leaves the file alone and stays up to date.
+
+    The cost is that the dirty flag is this assembly's, as of its own last compile, not the tree's
+    now: a project that did not recompile after the tree went dirty still says clean, which is true
+    of the code it was compiled from. So the flag is shown, never compared between assemblies.
+  -->
+  <Target Name="RoseMcpStampBuild"
+          BeforeTargets="CoreCompile"
+          Condition=" '$(DesignTimeBuild)' != 'true' and '$(MSBuildProjectExtension)' == '.csproj' "
+          Inputs="$(MSBuildAllProjects);@(Compile);@(ReferencePathWithRefAssemblies);@(CustomAdditionalCompileInputs);@(AdditionalFiles);@(Analyzer);@(EditorConfigFiles)"
+          Outputs="@(IntermediateAssembly);$(IntermediateOutputPath)RoseMcp.Build.txt">
+    <!-- Only when the compile runs, so a build that changes nothing runs no git. No optional locks,
+         because every project in a parallel build can run this at once and a status that refreshes
+         the index takes index.lock to do it. Untracked files count as dirty: a new source file is
+         compiled whether or not anybody has added it. -->
     <Exec Command="git --no-optional-locks status --porcelain"
           WorkingDirectory="$(MSBuildProjectDirectory)"
           Condition=" '$(SourceRevisionId)' != '' "
@@ -99,34 +126,11 @@
     </Exec>
 
     <PropertyGroup>
-      <_RoseMcpDirty Condition=" '$(_RoseMcpGitStatusExit)' == '0' and '@(_RoseMcpGitStatus)' != '' ">true</_RoseMcpDirty>
-      <_RoseMcpDirty Condition=" '$(_RoseMcpGitStatusExit)' == '0' and '@(_RoseMcpGitStatus)' == '' ">false</_RoseMcpDirty>
+      <_RoseMcpDirtyLine Condition=" '$(_RoseMcpGitStatusExit)' == '0' and '@(_RoseMcpGitStatus)' != '' ">dirty=true</_RoseMcpDirtyLine>
+      <_RoseMcpDirtyLine Condition=" '$(_RoseMcpGitStatusExit)' == '0' and '@(_RoseMcpGitStatus)' == '' ">dirty=false</_RoseMcpDirtyLine>
     </PropertyGroup>
 
-    <ItemGroup>
-      <_RoseMcpCheckout Include="@(SourceRoot)" Condition=" '%(SourceRoot.SourceControl)' == 'git' and '%(SourceRoot.NestedRoot)' == '' " />
-      <AssemblyMetadata Include="RoseMcp.Commit" Value="$(SourceRevisionId)" Condition=" '$(SourceRevisionId)' != '' " />
-      <AssemblyMetadata Include="RoseMcp.Dirty" Value="$(_RoseMcpDirty)" Condition=" '$(_RoseMcpDirty)' != '' " />
-      <AssemblyMetadata Include="RoseMcp.Checkout" Value="@(_RoseMcpCheckout)" Condition=" '$(RoseMcpLocalBuild)' == 'true' and '@(_RoseMcpCheckout->Count())' == '1' " />
-    </ItemGroup>
-  </Target>
-
-  <!--
-    The build time, as an embedded resource rather than an attribute, and written only when the
-    compile is about to run.
-
-    An attribute is part of the reference assembly, so a time that changed on every compile would
-    change every reference assembly, and every project depending on one would recompile whenever
-    anything beneath it did. A resource is not in the reference assembly. And the stamp shares the
-    compile's own inputs, so an up-to-date build leaves the file alone and stays up to date, rather
-    than recompiling to record that it ran.
-  -->
-  <Target Name="RoseMcpStampBuildTime"
-          BeforeTargets="CoreCompile"
-          Condition=" '$(DesignTimeBuild)' != 'true' and '$(MSBuildProjectExtension)' == '.csproj' "
-          Inputs="$(MSBuildAllProjects);@(Compile);@(ReferencePathWithRefAssemblies);@(CustomAdditionalCompileInputs);@(AdditionalFiles);@(Analyzer);@(EditorConfigFiles)"
-          Outputs="@(IntermediateAssembly);$(IntermediateOutputPath)RoseMcp.BuildTime.txt">
-    <WriteLinesToFile File="$(IntermediateOutputPath)RoseMcp.BuildTime.txt" Lines="$([System.DateTime]::UtcNow.ToString('o'))" Overwrite="true" />
+    <WriteLinesToFile File="$(IntermediateOutputPath)RoseMcp.Build.txt" Lines="built=$([System.DateTime]::UtcNow.ToString('o'));$(_RoseMcpDirtyLine)" Overwrite="true" />
   </Target>
 
 </Project>

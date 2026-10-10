@@ -15,16 +15,35 @@ namespace RoseMcp.Broker;
 /// hello starts one pair of git processes a half-minute at most, and concurrent reads share one.
 /// </para>
 /// <para>
+/// A read waits <see cref="AnswerWithin"/> at most, and a count still running past that is answered
+/// as still being counted. Two commands in a row, each with its own budget and the kill and drain
+/// after it, can take longer than a window's read budget, and hello carries the build too: a window
+/// that gave up on the whole answer would lose the part it had to say a mismatch.
+/// </para>
+/// <para>
 /// The git work belongs to this reader rather than to the request that started it. A request that
 /// gives up stops waiting and leaves it to finish for the next one; disposing the reader, which the
-/// host does as it stops, is what kills a git still running. Each command has its own budget, so
-/// neither a hung git nor a reader nobody disposes holds a process for longer than that.
+/// host does as it stops, cancels it and waits, bounded, for the git it kills to be gone. Each
+/// command has its own budget, so neither a hung git nor a reader nobody disposes holds a process
+/// for longer than that.
 /// </para>
 /// </summary>
-public sealed class CheckoutDistanceReader : IDisposable
+public sealed class CheckoutDistanceReader : IAsyncDisposable, IDisposable
 {
 	/// <summary>How long one answer is served before git is asked again.</summary>
 	public static readonly TimeSpan Freshness = TimeSpan.FromSeconds(30);
+
+	/// <summary>
+	/// How long a read waits for a count before answering that it is still running: well inside the
+	/// inspector's read budget, with room for the round trip.
+	/// </summary>
+	public static readonly TimeSpan AnswerWithin = TimeSpan.FromSeconds(2);
+
+	/// <summary>
+	/// How long disposing waits for a count it cancelled. A cancelled count kills its git and drains
+	/// its pipes, each bounded, so this is a ceiling rather than a wait anybody sees.
+	/// </summary>
+	private static readonly TimeSpan StopWithin = TimeSpan.FromSeconds(5);
 
 	private const string Head = "HEAD";
 	private const string OriginMain = "origin/main";
@@ -32,6 +51,7 @@ public sealed class CheckoutDistanceReader : IDisposable
 	private readonly GitCommand _git;
 	private readonly TimeProvider _time;
 	private readonly TimeSpan _budget;
+	private readonly TimeSpan _answerWithin;
 	private readonly CancellationTokenSource _stopping = new();
 	private readonly Lock _gate = new();
 
@@ -43,12 +63,19 @@ public sealed class CheckoutDistanceReader : IDisposable
 	/// <param name="git">What runs git; a test passes one that answers without a process.</param>
 	/// <param name="time">The clock <see cref="Freshness"/> is measured on.</param>
 	/// <param name="budget">How long each git command gets; <see cref="GitCommand.DefaultBudget"/> where null.</param>
-	public CheckoutDistanceReader(BuildIdentity build, GitCommand git, TimeProvider time, TimeSpan? budget = null)
+	/// <param name="answerWithin">How long a read waits for a count; <see cref="AnswerWithin"/> where null.</param>
+	public CheckoutDistanceReader(
+		BuildIdentity build,
+		GitCommand git,
+		TimeProvider time,
+		TimeSpan? budget = null,
+		TimeSpan? answerWithin = null)
 	{
 		Build = build;
 		_git = git;
 		_time = time;
 		_budget = budget ?? GitCommand.DefaultBudget;
+		_answerWithin = answerWithin ?? AnswerWithin;
 	}
 
 	/// <summary>The build this reader counts from.</summary>
@@ -60,7 +87,8 @@ public sealed class CheckoutDistanceReader : IDisposable
 
 	/// <summary>
 	/// The distance, or null for a build that names no checkout or no commit -- a CI build, or one
-	/// made outside git -- which has nothing to count from.
+	/// made outside git -- which has nothing to count from. A count that takes longer than the
+	/// reader's wait is answered as still running, with both counts unknown and saying so.
 	/// </summary>
 	/// <param name="cancellationToken">Abandons this wait only; the count goes on for the next reader.</param>
 	public async Task<CheckoutDistance?> ReadAsync(CancellationToken cancellationToken)
@@ -91,22 +119,64 @@ public sealed class CheckoutDistanceReader : IDisposable
 			reading = _reading!;
 		}
 
-		return await reading.WaitAsync(cancellationToken);
+		try
+		{
+			return await reading.WaitAsync(_answerWithin, cancellationToken);
+		}
+		catch (TimeoutException)
+		{
+			const string Counting = "Still being counted; ask again in a moment.";
+
+			return new CheckoutDistance
+			{
+				Checkout = Build.Checkout!,
+				Head = new CommitsPast { Ref = Head, Unknown = Counting },
+				OriginMain = new CommitsPast { Ref = OriginMain, Unknown = Counting },
+				CheckedUtc = _time.GetUtcNow(),
+			};
+		}
 	}
 
-	/// <summary>Kills any git still running and refuses further reads.</summary>
-	public void Dispose()
+	/// <summary>
+	/// Cancels a count still running, which kills its git, and waits for it to finish, bounded: a
+	/// host that exits before the kill has run would leave the git behind. Further reads are refused.
+	/// </summary>
+	public async ValueTask DisposeAsync()
 	{
+		Task<CheckoutDistance>? reading;
+
 		lock (_gate)
 		{
 			if (_disposed) return;
 
 			_disposed = true;
+			reading = _reading;
 		}
 
-		_stopping.Cancel();
+		await _stopping.CancelAsync().ConfigureAwait(false);
+
+		if (reading is not null)
+		{
+			try
+			{
+				await reading.WaitAsync(StopWithin).ConfigureAwait(false);
+			}
+			catch (Exception)
+			{
+				// Cancelled, as asked, or past the bound; either way there is nothing left to wait for
+				// and nobody to tell.
+			}
+		}
+
 		_stopping.Dispose();
 	}
+
+	/// <summary>
+	/// <see cref="DisposeAsync"/>, waited for. Here for a container disposed synchronously, which
+	/// would otherwise refuse a singleton that can only be disposed asynchronously.
+	/// </summary>
+	public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+
 
 	private async Task<CheckoutDistance> CountAsync(string checkout, string commit, CancellationToken stopping)
 	{

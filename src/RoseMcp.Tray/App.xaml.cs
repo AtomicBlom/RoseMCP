@@ -6,7 +6,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 
 using RoseMcp.Broker;
-using RoseMcp.Contracts;
 using RoseMcp.Logging;
 using RoseMcp.Ui;
 
@@ -99,15 +98,11 @@ public partial class App : Application
 			});
 
 			_broker.MapMcp();
-			_broker.MapGet(
-				"/admin/workspaces",
-				(WorkspaceManager workspaces) => Results.Json(workspaces.Describe(), ContractJson.Options));
 
-			// The debug sessions beside the workspaces, from the same shared manager, exactly as the http
-			// server maps them. Two hosts serving the same broker should not answer different questions.
-			_broker.MapGet(
-				"/admin/sessions",
-				(LiveAppSessionManager sessions) => Results.Json(sessions.Describe(), ContractJson.Options));
+			// The workspaces, the debug sessions and the relay routes, mapped by the broker library exactly
+			// as the http server maps them. Two hosts serving the same broker should not answer different
+			// questions, and the relays a deploy counts reconnect here.
+			_broker.MapRoseAdminApi();
 
 			// The operator surface every RoseMCP window reads a session through, gated on this run's
 			// token. Mapped after the admin endpoints and before the broker starts, which is the only

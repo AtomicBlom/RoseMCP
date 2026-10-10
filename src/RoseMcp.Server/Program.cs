@@ -18,7 +18,7 @@ internal static class Program
 			await Console.Error.WriteLineAsync(exception.Message);
 			await Console.Error.WriteLineAsync(
 				"usage: RoseMcp.Server [--transport stdio|http] [--host <address>] [--port <n>] "
-					+ "[--worker <path>] [--no-restore]");
+					+ "[--worker <path>] [--no-restore] [--no-relay]");
 
 			return 2;
 		}
@@ -34,13 +34,23 @@ internal static class Program
 	/// own, so every session on the machine shares one warm worker per solution while each keeps the
 	/// one thing only a stdio process has: the directory its client started it in.
 	/// </para>
+	/// <para>
+	/// With no tray, an installed relay hands the session to the install's own broker, started as a
+	/// child, rather than hosting one from its own older assemblies; anything else hosts the broker
+	/// here, as a Linux install or a build output does. See <see cref="RelayInstall"/>.
+	/// </para>
 	/// </summary>
 	private static async Task<int> RunStdioAsync(ServerOptions options)
 	{
 		// Asked before anything is built, because the answer decides what to build.
-		if (await TrayRelay.IsListeningAsync(options, CancellationToken.None))
+		if (!options.NoRelay && await TrayRelay.IsListeningAsync(options, CancellationToken.None))
 		{
-			var relayed = await RunRelayAsync(options);
+			var relayed = await RunRelayAsync(logging => TrayRelay.TryConnectAsync(options, logging, CancellationToken.None));
+			if (relayed is { } code) return code;
+		}
+		else if (!options.NoRelay && RelayInstall.BrokerFor(AppContext.BaseDirectory) is { } broker)
+		{
+			var relayed = await RunRelayAsync(logging => ConnectToChildAsync(options, broker, logging));
 			if (relayed is { } code) return code;
 		}
 
@@ -65,20 +75,27 @@ internal static class Program
 	}
 
 	/// <summary>
-	/// Stdio in front, the tray's broker behind. Nothing is declared here: both listing and calling
-	/// are forwarded, so this cannot drift out of step with the tools the tray actually has.
+	/// Stdio in front, a broker behind. Nothing is declared here: both listing and calling are
+	/// forwarded, so this cannot drift out of step with the tools the broker actually has.
+	/// <para>
+	/// It advertises <c>tools.listChanged</c> and hands the SDK the relay's signal as its tool
+	/// collection, because the client talks only to this process: a broker advertising it is not
+	/// enough, and the relay is what tells the client after a restart that the tools changed. It gives
+	/// the broker's instructions as its own for the same reason.
+	/// </para>
 	/// </summary>
-	private static async Task<int?> RunRelayAsync(ServerOptions options)
+	/// <param name="connect">Opens the relay, or returns null so the caller can host the broker itself.</param>
+	private static async Task<int?> RunRelayAsync(Func<ILoggerFactory, Task<TrayRelay?>> connect)
 	{
 		// One factory, shared with the host below, so a relayed session writes one log rather than
 		// two. Registered as an instance, which the container does not dispose, so the using here
 		// stays the only owner.
 		using var logging = LoggerFactory.Create(ConfigureLogging);
 
-		var relay = await TrayRelay.TryConnectAsync(options, logging, CancellationToken.None);
+		var relay = await connect(logging);
 
-		// The tray answered the probe and then went away. Rare, and the honest response is to fall
-		// back to owning workers rather than to fail the session.
+		// The tray answered the probe and then went away, or the child broker would not start. Rare,
+		// and the honest response is to fall back to owning workers rather than to fail the session.
 		if (relay is null) return null;
 
 		await using (relay)
@@ -88,13 +105,20 @@ internal static class Program
 			builder.Services.AddSingleton<ILoggerFactory>(logging);
 
 			builder.Services
-				.AddMcpServer(server => server.ServerInfo = new()
+				.AddMcpServer(server =>
 				{
-					Name = "rose-mcp",
+					server.ServerInfo = new()
+					{
+						Name = "rose-mcp",
 
-					// This process's own, not the tray's. A relay declares none of the tools it forwards, so
-					// the number worth telling a client is the one for the binary its client started.
-					Version = BuildIdentity.Of(typeof(Program).Assembly).ToHandshake(),
+						// This process's own, not the tray's. A relay declares none of the tools it forwards, so
+						// the number worth telling a client is the one for the binary its client started.
+						Version = BuildIdentity.Of(typeof(Program).Assembly).ToHandshake(),
+					};
+
+					server.ServerInstructions = relay.Instructions;
+					server.Capabilities = new() { Tools = new() { ListChanged = true } };
+					server.ToolCollection = relay.ToolsChanged;
 				})
 				.WithStdioServerTransport()
 
@@ -111,10 +135,56 @@ internal static class Program
 				// caller most needs to be told the tray is gone.
 				.WithToolErrorMessages();
 
-			await builder.Build().RunAsync();
+			using var host = builder.Build();
+			var running = host.RunAsync();
+
+			// A broker this relay started has exited, which a deploy does to it: the session cannot
+			// continue, so it ends rather than answering every call with the same failure.
+			if (await Task.WhenAny(running, relay.Ended) != running)
+			{
+				logging.CreateLogger(typeof(Program)).LogWarning(
+					"The broker this session relayed to has stopped; ending the session so its client can start another.");
+
+				await host.StopAsync();
+			}
+
+			await running;
 		}
 
 		return 0;
+	}
+
+	/// <summary>
+	/// Starts the install's broker as a child and relays to it, or returns null where it will not
+	/// start, so the session falls back to hosting a broker of its own -- from older assemblies, which
+	/// is said in the log, but answering rather than dead.
+	/// </summary>
+	private static async Task<TrayRelay?> ConnectToChildAsync(ServerOptions options, string broker, ILoggerFactory logging)
+	{
+		var logger = logging.CreateLogger(typeof(Program));
+		var upstream = new ChildBrokerUpstream(broker, options.ChildBrokerArguments(), Environment.CurrentDirectory, logging);
+
+		try
+		{
+			var relay = await TrayRelay.ConnectAsync(
+				upstream, Environment.CurrentDirectory, logging, TimeSpan.FromSeconds(60), CancellationToken.None);
+
+			logger.LogInformation("No tray is running; relaying to a broker started from {Broker}.", broker);
+
+			return relay;
+		}
+		catch (Exception exception)
+		{
+			await upstream.DisposeAsync();
+
+			logger.LogWarning(
+				exception,
+				"Could not start the install's broker at {Broker}, so this session hosts one from the relay's own assemblies, "
+					+ "which are as old as the last relay protocol change.",
+				broker);
+
+			return null;
+		}
 	}
 
 	/// <summary>
@@ -168,15 +238,9 @@ internal static class Program
 
 		application.MapMcp();
 
-		// Exactly what the tray window renders, so the two cannot disagree.
-		application.MapGet(
-			"/admin/workspaces",
-			(WorkspaceManager workspaces) => Results.Json(workspaces.Describe(), ContractJson.Options));
-
-		// The live-app sessions alongside the workspaces, from the same shared manager.
-		application.MapGet(
-			"/admin/sessions",
-			(LiveAppSessionManager sessions) => Results.Json(sessions.Describe(), ContractJson.Options));
+		// What the broker has loaded, its debug sessions, and who it is to a relay -- the same routes
+		// the tray maps, from one place.
+		application.MapRoseAdminApi();
 
 		application.MapRoseOperatorApi(operatorToken);
 

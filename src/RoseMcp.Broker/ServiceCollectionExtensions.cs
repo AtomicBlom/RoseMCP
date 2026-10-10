@@ -149,6 +149,9 @@ public static class ServiceCollectionExtensions
 		// counting when the broker stops.
 		services.AddSingleton(_ => CheckoutDistanceReader.ForBroker());
 
+		// Which relays are connected, and which instance of the broker this is; read by the admin routes.
+		services.AddSingleton<RelayConnections>();
+
 		// No inspector unless a host that has an operator endpoint replaces this. A stdio broker
 		// genuinely cannot open one, and saying so beats a tool argument that silently does nothing.
 		services.TryAddSingleton<IInspectorPresenter>(NoInspector.WithoutAnEndpoint);

@@ -35,7 +35,8 @@ public static class CancellableToolCall
 		IReadOnlyDictionary<string, object?> arguments,
 		IProgress<ProgressNotificationValue>? progress,
 		CancellationToken cancellationToken,
-		string? originDirectory = null)
+		string? originDirectory = null,
+		IReadOnlyList<ReasonHearing>? heard = null)
 	{
 		var requestId = new RequestId(Guid.NewGuid().ToString("N"));
 		var progressToken = new ProgressToken(requestId.ToString());
@@ -46,7 +47,7 @@ public static class CancellableToolCall
 			Arguments = arguments.ToDictionary(
 				pair => pair.Key,
 				pair => JsonSerializer.SerializeToElement(pair.Value, ContractJson.Options)),
-			Meta = Meta(progressToken, progress, originDirectory),
+			Meta = Meta(progressToken, progress, originDirectory, heard),
 		};
 
 		await using var listening = progress is null
@@ -120,19 +121,22 @@ public static class CancellableToolCall
 	/// tool's schema -- see <see cref="CallOrigin"/>. The correlation id is read from the ambient
 	/// rather than passed, because this is the one place every internal hop is built: reading it here
 	/// puts it on every hop without any caller having to remember it -- see
-	/// <see cref="CallCorrelation"/>. Null when there is nothing to say, since an empty <c>_meta</c> is
+	/// <see cref="CallCorrelation"/>. How the call hears the workspace's reasons rides here too, for a worker:
+	/// see <see cref="ReasonHearing"/>. Null when there is nothing to say, since an empty <c>_meta</c> is
 	/// not the same as none and there is no reason to send one.
 	/// </para>
 	/// </summary>
 	private static JsonObject? Meta(
 		ProgressToken progressToken,
 		IProgress<ProgressNotificationValue>? progress,
-		string? originDirectory)
+		string? originDirectory,
+		IReadOnlyList<ReasonHearing>? heard)
 	{
 		var correlationId = CallCorrelation.Id;
 		var hasOrigin = !string.IsNullOrWhiteSpace(originDirectory);
+		var hasHearing = heard is { Count: > 0 };
 
-		if (progress is null && !hasOrigin && correlationId is null) return null;
+		if (progress is null && !hasOrigin && correlationId is null && !hasHearing) return null;
 
 		var meta = new JsonObject();
 
@@ -141,6 +145,8 @@ public static class CancellableToolCall
 		if (hasOrigin) meta[CallOrigin.MetaKey] = JsonValue.Create(originDirectory);
 
 		if (correlationId is not null) meta[CallCorrelation.MetaKey] = JsonValue.Create(correlationId);
+
+		if (hasHearing) meta[ReasonHearing.MetaKey] = JsonSerializer.SerializeToNode(heard, ContractJson.Options);
 
 		return meta;
 	}

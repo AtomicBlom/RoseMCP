@@ -137,6 +137,10 @@ public static class ServiceCollectionExtensions
 		// reconnecting client reattach to an already-loaded solution rather than reload it.
 		services.AddSingleton<WorkspaceManager>();
 
+		// What the person accepted about each workspace's health and what each session acknowledged, shared for
+		// the reason the workers are: an acceptance made in one session's workspace is the same workspace in the next.
+		services.AddSingleton<WorkspaceHealth>();
+
 		// Live-app sessions are per running target, separate from the per-solution workers, but shared
 		// across connections the same way and supervised the same way.
 		services.AddSingleton<LiveAppSessionManager>();

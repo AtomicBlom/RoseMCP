@@ -38,28 +38,30 @@ public static partial class WorkspaceStatusReporter
 		// for their generators, and that is the moment an assembly that will not load says so.
 		var analyzerFailures = analyzerLoader?.LoadFailures ?? [];
 
-		var degradedReasons = (IReadOnlyList<string>)
+		var reasons = (IReadOnlyList<WorkspaceReason>)
 			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore, build, analyzerFailures, evaluationFailures),
-			 .. XamlReasons(xamlReports)];
+			 .. XamlHealth(xamlReports),
+			 .. NoticesFor(build, solution, workspaceDiagnostics, evaluationFailures, cancellationToken)];
 
-		return new WorkspaceStatusReport
+		var report = new WorkspaceStatusReport
 		{
 			SolutionPath = solutionPath,
-			State = degradedReasons.Count == 0 ? WorkspaceState.Loaded : WorkspaceState.Degraded,
+			State = WorkspaceState.Loaded,
 			Revision = revision,
 			Projects = projects,
 			ProjectCount = projects.Count,
 			LoadDiagnostics = LoadDiagnosticSummary.Summarise(workspaceDiagnostics),
 			LoadDiagnosticCount = workspaceDiagnostics.Count,
-			DegradedReasons = degradedReasons,
+			DegradedReasons = [],
 			AnalyzerLoadFailures = analyzerFailures,
 			EvaluationFailures = evaluationFailures,
 			BuildConfiguration = build?.Describe(),
 			AvailableConfigurations = build?.Available.Configurations ?? [],
-			Notices = [.. NoticesFor(build, solution, workspaceDiagnostics, evaluationFailures, cancellationToken)],
 			Restore = restore,
 			LoadSeconds = loadSeconds,
 		};
+
+		return WithReasons(report, reasons, []);
 	}
 
 	private static async Task<(IReadOnlyList<ProjectStatus> Statuses, IReadOnlyList<XamlProjectReport> Xaml)> DescribeProjectsAsync(
@@ -140,23 +142,38 @@ public static partial class WorkspaceStatusReporter
 	/// already carries every one of them, per project, so naming the projects is enough to reach them.
 	/// </para>
 	/// </summary>
-	public static IEnumerable<string> XamlReasons(IReadOnlyList<XamlProjectReport> reports)
+	public static IEnumerable<string> XamlReasons(IReadOnlyList<XamlProjectReport> reports) =>
+		XamlHealth(reports).Select(reason => reason.Text);
+
+	/// <summary>
+	/// The reasons <see cref="XamlReasons"/> words, each with its kind and the projects it names. Each may
+	/// affect only the projects it names: elsewhere in the solution there is no markup to stub.
+	/// </summary>
+	public static IEnumerable<WorkspaceReason> XamlHealth(IReadOnlyList<XamlProjectReport> reports)
 	{
 		var undialected = reports.Where(report => report.Xaml.Dialect is null && report.Xaml.MarkupFileCount > 0).ToArray();
 
 		if (undialected.Length > 0)
 		{
-			yield return $"{Count(undialected.Length, "project has", "projects have")} XAML files that no dialect "
-				+ "could be chosen for, so nothing stood in for the markup compiler and their code-behind reports "
-				+ $"errors that are not real: {Name(undialected.Select(Describe))}.";
+			yield return WorkspaceReason.Of(
+				ReasonKinds.XamlNoDialect,
+				HealthEffect.MayAffectSomeProjects,
+				$"{Count(undialected.Length, "project has", "projects have")} XAML files that no dialect "
+					+ "could be chosen for, so nothing stood in for the markup compiler and their code-behind reports "
+					+ $"errors that are not real: {Name(undialected.Select(Describe))}.",
+				undialected.Select(report => report.Project));
 		}
 
 		var ambiguous = reports.Where(report => report.Xaml.DialectAmbiguous).ToArray();
 
 		if (ambiguous.Length > 0)
 		{
-			yield return $"{Count(ambiguous.Length, "project references", "projects reference")} more than one XAML "
-				+ $"framework, so the dialect their stubs were written as is a guess: {Name(ambiguous.Select(Describe))}.";
+			yield return WorkspaceReason.Of(
+				ReasonKinds.XamlDialectAmbiguous,
+				HealthEffect.MayAffectSomeProjects,
+				$"{Count(ambiguous.Length, "project references", "projects reference")} more than one XAML "
+					+ $"framework, so the dialect their stubs were written as is a guess: {Name(ambiguous.Select(Describe))}.",
+				ambiguous.Select(report => report.Project));
 		}
 
 		var unresolved = reports.Where(report => report.Xaml.UnresolvedTypes.Count > 0).ToArray();
@@ -165,12 +182,16 @@ public static partial class WorkspaceStatusReporter
 		{
 			var total = unresolved.Sum(report => report.Xaml.UnresolvedTypes.Count);
 
-			yield return $"{Count(total, "named XAML element", "named XAML elements")} across "
-				+ $"{Count(unresolved.Length, "project", "projects")} have a type the project cannot see, so they "
-				+ "have no field and will not bind: "
-				+ $"{Name(unresolved.Select(report => $"{report.Project} ({report.Xaml.UnresolvedTypes.Count})"))}. "
-				+ "Each project's unresolvedXamlTypes lists them. A project that resolves none of its package types "
-				+ "is usually one that was never restored, so check restore before reading these as missing usings.";
+			yield return WorkspaceReason.Of(
+				ReasonKinds.XamlUnresolvedTypes,
+				HealthEffect.MayAffectSomeProjects,
+				$"{Count(total, "named XAML element", "named XAML elements")} across "
+					+ $"{Count(unresolved.Length, "project", "projects")} have a type the project cannot see, so they "
+					+ "have no field and will not bind: "
+					+ $"{Name(unresolved.Select(report => $"{report.Project} ({report.Xaml.UnresolvedTypes.Count})"))}. "
+					+ "Each project's unresolvedXamlTypes lists them. A project that resolves none of its package types "
+					+ "is usually one that was never restored, so check restore before reading these as missing usings.",
+				unresolved.Select(report => report.Project));
 		}
 
 		static string Describe(XamlProjectReport report) => $"{report.Project} ({report.Xaml.DialectReason})";
@@ -233,11 +254,8 @@ public static partial class WorkspaceStatusReporter
 		if (sdk.Length == 0) return null;
 
 		var messages = Grouped(sdk);
-		var sdkProjects = projectCount - (failures.Count - sdk.Length);
-		var everySdkProjectFailed = sdk.Length >= sdkProjects;
-		var buildHostLoadedThem = sdk.All(failure => loadedProjects.Contains(failure.Project));
 
-		if (everySdkProjectFailed && buildHostLoadedThem)
+		if (BlamesTheWorker(failures, projectCount, loadedProjects))
 		{
 			return $"This worker's own MSBuild could not evaluate any of the solution's {Count(sdk.Length, "SDK project", "SDK projects")}, "
 				+ "though the design-time build, in a process of its own, loaded every one of them. That says this worker's "
@@ -252,6 +270,24 @@ public static partial class WorkspaceStatusReporter
 			+ "the whole solution. If the message names something in the project or a build file it imports, fix that; if the "
 			+ "design-time build loaded the project anyway, MSBuild in this process is going wrong, and rose_workspace_reload "
 			+ "starts a fresh worker. evaluationFailures has each project's message.";
+	}
+
+	/// <summary>
+	/// Whether the evidence says this worker's MSBuild is broken rather than the projects: every SDK project
+	/// failed here, and the design-time build loaded every one of them. Which of <see cref="EvaluationReason"/>'s
+	/// two readings applies, and so which kind the reason is.
+	/// </summary>
+	private static bool BlamesTheWorker(
+		IReadOnlyList<ProjectEvaluationFailure> failures,
+		int projectCount,
+		IReadOnlySet<string> loadedProjects)
+	{
+		var sdk = failures.Where(failure => failure.NamesSdk).ToArray();
+		var sdkProjects = projectCount - (failures.Count - sdk.Length);
+		var everySdkProjectFailed = sdk.Length >= sdkProjects;
+		var buildHostLoadedThem = sdk.All(failure => loadedProjects.Contains(failure.Project));
+
+		return sdk.Length > 0 && everySdkProjectFailed && buildHostLoadedThem;
 	}
 
 	/// <summary>
@@ -318,15 +354,163 @@ public static partial class WorkspaceStatusReporter
 	/// </para>
 	/// </summary>
 	/// <param name="reasons">Why the workspace is degraded, as status would list them; empty when it is not.</param>
-	public static string? DegradedNotice(IReadOnlyList<string> reasons)
-	{
-		if (reasons.Count == 0) return null;
+	public static string? DegradedNotice(IReadOnlyList<string> reasons) => Notice([.. reasons.Select(FirstSentence)]);
 
-		var others = reasons.Count == 1 ? string.Empty : $" {Count(reasons.Count - 1, "more reason", "more reasons")} besides.";
+	/// <summary>
+	/// The one notice a read carries from a degraded workspace, leaving out what the caller has been told
+	/// not to hear: a reason the person accepted saying nothing, or one the calling session acknowledged, is
+	/// not said; one the person accepted with a note is said in the person's words. Null when nothing is left
+	/// to say, which is the workspace reading as healthy to this caller and to nobody else.
+	/// <para>
+	/// A reason is left out or reworded only where <paramref name="heard"/> covers its kind for every project
+	/// it names, so a new kind of reason, or a project newly failing in an accepted kind, is said as it always
+	/// is. The ones nobody has accepted lead, since they are the ones the caller knows nothing about.
+	/// </para>
+	/// </summary>
+	/// <param name="reasons">Every reason in the workspace's health; notes are passed over, as they never degrade it.</param>
+	/// <param name="heard">What the broker sent about how this call hears each kind and project.</param>
+	public static string? DegradedNotice(IReadOnlyList<WorkspaceReason> reasons, IReadOnlyList<ReasonHearing> heard)
+	{
+		var unaccepted = new List<string>();
+		var accepted = new List<string>();
+
+		foreach (var reason in reasons.Where(reason => reason.Degrades))
+		{
+			if (HearingOf(reason, heard) is not { } hearing)
+			{
+				unaccepted.Add(FirstSentence(reason.Text));
+				continue;
+			}
+
+			switch (hearing.Read)
+			{
+				case AgentsRead.Nothing:
+					break;
+				case AgentsRead.Note when !string.IsNullOrWhiteSpace(hearing.Note):
+					accepted.Add($"A known reason, in the words of the person who accepted it: {hearing.Note.Trim()}");
+					break;
+				default:
+					accepted.Add(FirstSentence(reason.Text));
+					break;
+			}
+		}
+
+		return Notice([.. unaccepted, .. accepted]);
+	}
+
+	/// <summary>
+	/// How <paramref name="heard"/> says to hear <paramref name="reason"/>, or null where it does not cover the
+	/// reason's kind for every project the reason names. Where it covers them differently, the most a caller
+	/// is owed wins: Rose's line over a note, and a note over nothing.
+	/// </summary>
+	public static ReasonHearing? HearingOf(WorkspaceReason reason, IReadOnlyList<ReasonHearing> heard)
+	{
+		var covering = new List<ReasonHearing>();
+
+		foreach (var project in reason.Keys)
+		{
+			var match = heard.FirstOrDefault(hearing =>
+				string.Equals(hearing.Kind, reason.Kind, StringComparison.Ordinal)
+				&& string.Equals(hearing.Project, project, StringComparison.OrdinalIgnoreCase));
+
+			if (match is null) return null;
+
+			covering.Add(match);
+		}
+
+		return covering.FirstOrDefault(hearing => hearing.Read == AgentsRead.RoseLine)
+			?? covering.FirstOrDefault(hearing => hearing.Read == AgentsRead.Note)
+			?? covering[0];
+	}
+
+	/// <summary>The notice for the reasons' opening sentences, the first in full and the rest counted; null for none.</summary>
+	private static string? Notice(IReadOnlyList<string> whys)
+	{
+		if (whys.Count == 0) return null;
+
+		var others = whys.Count == 1 ? string.Empty : $" {Count(whys.Count - 1, "more reason", "more reasons")} besides.";
 
 		return "This workspace is degraded, so this answer can be missing what it could not see rather than reporting it: "
-			+ $"{Bounded(FirstSentence(reasons[0]), MaxDegradedWhy)}{others} Ask rose_workspace_status for every reason and its fix.";
+			+ $"{Bounded(whys[0], MaxDegradedWhy)}{others} Ask rose_workspace_status for every reason and its fix.";
 	}
+
+	/// <summary>Rose's line for a reason: its opening sentence, cut to the ceiling a read's notice holds it to.</summary>
+	public static string LineOf(string reason) => Bounded(FirstSentence(reason), MaxDegradedWhy);
+
+	/// <summary>
+	/// The shape each reason is reported with, in the order given, each with an id that is unique in the list:
+	/// the kind, then the project where there is one, then a count of the others, and a suffix where two
+	/// reasons would share an id.
+	/// </summary>
+	public static IReadOnlyList<HealthReason> HealthOf(IReadOnlyList<WorkspaceReason> reasons)
+	{
+		var used = new Dictionary<string, int>(StringComparer.Ordinal);
+		var health = new List<HealthReason>(reasons.Count);
+
+		foreach (var reason in reasons)
+		{
+			var id = reason.Projects.Count switch
+			{
+				0 => reason.Kind,
+				1 => $"{reason.Kind}:{reason.Projects[0]}",
+				_ => $"{reason.Kind}:{reason.Projects[0]}+{reason.Projects.Count - 1}",
+			};
+
+			var seen = used.GetValueOrDefault(id);
+			used[id] = seen + 1;
+
+			health.Add(new HealthReason
+			{
+				Id = seen == 0 ? id : $"{id}#{seen + 1}",
+				Kind = reason.Kind,
+				Effect = reason.Effect,
+				Projects = reason.Projects,
+				Line = LineOf(reason.Text),
+			});
+		}
+
+		return health;
+	}
+
+	/// <summary>
+	/// <paramref name="report"/> describing <paramref name="reasons"/>: the degrading ones as its degraded
+	/// reasons, the notes as its leading notices with <paramref name="otherNotices"/> after them, all of them in
+	/// its health in that order, and its state from whether any degrades. The one place a report's three views
+	/// of its reasons are written, which is what lets <see cref="ReasonsOf"/> read them back.
+	/// </summary>
+	public static WorkspaceStatusReport WithReasons(
+		WorkspaceStatusReport report,
+		IReadOnlyList<WorkspaceReason> reasons,
+		IReadOnlyList<string> otherNotices)
+	{
+		var degrading = reasons.Where(reason => reason.Degrades).ToArray();
+		var notes = reasons.Where(reason => !reason.Degrades).ToArray();
+
+		return report with
+		{
+			State = degrading.Length == 0 ? WorkspaceState.Loaded : WorkspaceState.Degraded,
+			DegradedReasons = [.. degrading.Select(reason => reason.Text)],
+			Notices = [.. notes.Select(reason => reason.Text), .. otherNotices],
+			Health = HealthOf([.. degrading, .. notes]),
+		};
+	}
+
+	/// <summary>
+	/// The reasons a report written by <see cref="WithReasons"/> describes, its health paired back with the
+	/// text each entry stands for: the degraded reasons, then the leading notices.
+	/// </summary>
+	public static IReadOnlyList<WorkspaceReason> ReasonsOf(WorkspaceStatusReport report)
+	{
+		var texts = report.DegradedReasons.Concat(report.Notices).ToArray();
+
+		return [.. report.Health
+			.Take(texts.Length)
+			.Select((health, index) => new WorkspaceReason(health.Kind, health.Effect, health.Projects, texts[index]))];
+	}
+
+	/// <summary>The reason <see cref="AssemblyLoadReason"/> words, as one blocking every tool that reaches the code; null for no faults.</summary>
+	public static WorkspaceReason? AssemblyLoadHealth(IReadOnlyList<AssemblyLoadFault> faults) =>
+		AssemblyLoadReason(faults) is { } text ? WorkspaceReason.Of(ReasonKinds.AssemblyLoadFault, HealthEffect.BlocksAnswers, text) : null;
 
 	/// <summary>
 	/// The most of a reason a read's degraded notice repeats. Enough for every reason's opening sentence that
@@ -561,35 +745,48 @@ public static partial class WorkspaceStatusReporter
 	/// reason: the projects still load, and the remedy is a build rather than anything about trust.
 	/// </para>
 	/// </summary>
-	private static IEnumerable<string> NoticesFor(
+	private static IEnumerable<WorkspaceReason> NoticesFor(
 		BuildProperties? build,
 		Solution solution,
 		IReadOnlyList<WorkspaceDiagnostic> workspaceDiagnostics,
 		IReadOnlyList<ProjectEvaluationFailure> evaluationFailures,
 		CancellationToken cancellationToken)
 	{
-		if (build?.Notice is { } notice) yield return notice;
+		if (build?.Notice is { } notice) yield return WorkspaceReason.Of(ReasonKinds.ConfigurationChosen, HealthEffect.Note, notice);
 
-		if (EvaluationNotice(evaluationFailures) is { } unevaluated) yield return unevaluated;
+		if (EvaluationNotice(evaluationFailures) is { } unevaluated)
+		{
+			yield return WorkspaceReason.Of(
+				ReasonKinds.LegacyProjectNotEvaluated,
+				HealthEffect.Note,
+				unevaluated,
+				evaluationFailures.Where(failure => !failure.NamesSdk).Select(ProjectName));
+		}
 
 		var messages = workspaceDiagnostics.Select(diagnostic => diagnostic.Message).ToArray();
 
 		// Only read the project files when there is an unresolved reference to attribute, since status is asked often
 		// and this is the only thing here that needs to know which projects name an SDK.
 		var anyUnresolved = messages.Any(message => message.Contains(UnresolvedMarker, StringComparison.Ordinal));
-		if (anyUnresolved && UnbuiltReferenceNotice(build, messages, Outputs(solution), File.Exists) is { } unbuilt)
+		if (anyUnresolved && UnbuiltReference(build, messages, Outputs(solution), File.Exists) is { } unbuilt)
 		{
 			yield return unbuilt;
 		}
 
 		var stale = BuildFreshness.Of(solution, project: null, cancellationToken)
-			.Count(project => project.Stale);
+			.Where(project => project.Stale)
+			.Select(project => project.Project)
+			.ToArray();
 
-		if (stale == 0) yield break;
+		if (stale.Length == 0) yield break;
 
-		yield return $"{stale} project(s) have sources newer than their last build output, so anything run out "
-			+ "of bin or obj is not this code. rose_build_freshness says which. This does not make the "
-			+ "workspace degraded: these answers come from source.";
+		yield return WorkspaceReason.Of(
+			ReasonKinds.StaleBuildOutput,
+			HealthEffect.Note,
+			$"{stale.Length} project(s) have sources newer than their last build output, so anything run out "
+				+ "of bin or obj is not this code. rose_build_freshness says which. This does not make the "
+				+ "workspace degraded: these answers come from source.",
+			stale);
 	}
 
 	/// <summary>
@@ -649,6 +846,17 @@ public static partial class WorkspaceStatusReporter
 		BuildProperties? build,
 		IReadOnlyList<string> diagnosticMessages,
 		IReadOnlyList<ProjectOutput> projects,
+		Func<string, bool> exists) =>
+		UnbuiltReference(build, diagnosticMessages, projects, exists)?.Text;
+
+	/// <summary>
+	/// The notice <see cref="UnbuiltReferenceNotice"/> words, as a note covering the projects that have not been
+	/// built, which are what a person accepting it would be accepting.
+	/// </summary>
+	private static WorkspaceReason? UnbuiltReference(
+		BuildProperties? build,
+		IReadOnlyList<string> diagnosticMessages,
+		IReadOnlyList<ProjectOutput> projects,
 		Func<string, bool> exists)
 	{
 		if (build?.SuspectWrongPlatform(diagnosticMessages, exists) is not null) return null;
@@ -682,12 +890,14 @@ public static partial class WorkspaceStatusReporter
 			? ProjectName(entry.Producer)
 			: $"{ProjectName(entry.Producer)} (wanted by {string.Join(", ", entry.Wanting)})"));
 
+		var producers = unbuilt.Values.Select(entry => ProjectName(entry.Producer)).ToArray();
 		var one = unbuilt.Count == 1;
 		var builtSince = unbuilt.Values.All(entry => entry.Paths.All(exists));
 		if (builtSince)
 		{
-			return $"The design-time build could not resolve the output of {named}, which had not been built when the "
-				+ $"solution loaded. {(one ? "It has" : "They have")} been built since, so rose_workspace_reload clears this.";
+			return Unbuilt(
+				$"The design-time build could not resolve the output of {named}, which had not been built when the "
+					+ $"solution loaded. {(one ? "It has" : "They have")} been built since, so rose_workspace_reload clears this.");
 		}
 
 		var builds = string.Join(" and ", unbuilt.Values.Select(entry => BuildCommand(entry.Producer, build)));
@@ -696,10 +906,14 @@ public static partial class WorkspaceStatusReporter
 			? " A project that names no SDK, which is every UWP one, is built with MSBuild, since dotnet build cannot build it."
 			: string.Empty;
 
-		return $"The design-time build could not resolve the output of {named}, because {(one ? "it has" : "they have")} "
-			+ "not been built: a WinUI or UWP project's design-time build looks for a referenced project's output on disk "
-			+ $"rather than in the solution. Build {(one ? "it" : "them")} first, under the properties this load used, with "
-			+ $"{builds}, then rose_workspace_reload.{msBuild}";
+		return Unbuilt(
+			$"The design-time build could not resolve the output of {named}, because {(one ? "it has" : "they have")} "
+				+ "not been built: a WinUI or UWP project's design-time build looks for a referenced project's output on disk "
+				+ $"rather than in the solution. Build {(one ? "it" : "them")} first, under the properties this load used, with "
+				+ $"{builds}, then rose_workspace_reload.{msBuild}");
+
+		WorkspaceReason Unbuilt(string text) =>
+			WorkspaceReason.Of(ReasonKinds.UnbuiltReference, HealthEffect.Note, text, producers);
 	}
 
 	/// <summary>
@@ -790,7 +1004,7 @@ public static partial class WorkspaceStatusReporter
 	[GeneratedRegex(@"processing the file '(?<project>[^']+)'", RegexOptions.CultureInvariant)]
 	private static partial Regex ProcessedProject();
 
-	private static IReadOnlyList<string> CollectDegradedReasons(
+	private static IReadOnlyList<WorkspaceReason> CollectDegradedReasons(
 		IReadOnlyList<WorkspaceDiagnostic> workspaceDiagnostics,
 		IReadOnlyList<ProjectStatus> projects,
 		RestoreReport? restore,
@@ -798,23 +1012,37 @@ public static partial class WorkspaceStatusReporter
 		IReadOnlyList<AnalyzerLoadFailure> analyzerLoadFailures,
 		IReadOnlyList<ProjectEvaluationFailure> evaluationFailures)
 	{
-		var reasons = new List<string>();
+		var reasons = new List<WorkspaceReason>();
 
 		if (restore is { Ran: true, Succeeded: false })
 		{
-			reasons.Add("Restore failed, so the design-time build could not resolve references or analyzers. "
-				+ "Run dotnet restore and inspect the output.");
+			reasons.Add(WorkspaceReason.Of(
+				ReasonKinds.RestoreFailed,
+				HealthEffect.BlocksAnswers,
+				"Restore failed, so the design-time build could not resolve references or analyzers. "
+					+ "Run dotnet restore and inspect the output."));
 		}
 		else if (UnrestoredReason(restore) is { } unrestored)
 		{
-			reasons.Add(unrestored);
+			reasons.Add(WorkspaceReason.Of(
+				ReasonKinds.Unrestored,
+				HealthEffect.MayAffectSomeProjects,
+				unrestored,
+				restore!.Unrestored.Select(Path.GetFileNameWithoutExtension).OfType<string>()));
 		}
 
-		if (WrongPlatformSuspicion(build, workspaceDiagnostics) is { } platform) reasons.Add(platform);
+		if (WrongPlatformSuspicion(build, workspaceDiagnostics) is { } platform)
+		{
+			reasons.Add(WorkspaceReason.Of(ReasonKinds.WrongPlatform, HealthEffect.BlocksAnswers, platform));
+		}
 
 		foreach (var project in projects.Where(project => !project.LoadedSuccessfully))
 		{
-			reasons.Add($"Project {project.Name} did not load successfully; its semantic results are unreliable.");
+			reasons.Add(WorkspaceReason.Of(
+				ReasonKinds.ProjectNotLoaded,
+				HealthEffect.MayAffectSomeProjects,
+				$"Project {project.Name} did not load successfully; its semantic results are unreliable.",
+				[project.Name]));
 		}
 
 		foreach (var project in projects.Where(project => project.MissingAnalyzerOutputs.Count > 0))
@@ -829,17 +1057,25 @@ public static partial class WorkspaceStatusReporter
 					? $"Build it with: dotnet build {owner}"
 					: "Restore or build the solution so the analyzer assembly exists, then reload.";
 
-				reasons.Add($"Project {project.Name} expects analyzer assembly {missing}, but the file is not on "
-					+ "disk. MSBuild still passes it to the compiler, so any source generators it contains are "
-					+ $"silently producing nothing. {remedy}");
+				reasons.Add(WorkspaceReason.Of(
+					ReasonKinds.AnalyzerOutputMissing,
+					HealthEffect.MayAffectSomeProjects,
+					$"Project {project.Name} expects analyzer assembly {missing}, but the file is not on "
+						+ "disk. MSBuild still passes it to the compiler, so any source generators it contains are "
+						+ $"silently producing nothing. {remedy}",
+					[project.Name]));
 			}
 		}
 
 		// The file being there and not loading, which the missing-output check above cannot see. The
 		// compiler is handed the reference either way, so the generators inside it produce nothing while
 		// the project reports a clean load and a generator count of zero -- a healthy-looking workspace
-		// that is not one, and the second of the three failures this server exists to prevent.
-		if (AnalyzerReason(analyzerLoadFailures) is { } analyzers) reasons.Add(analyzers);
+		// that is not one, and the second of the three failures this server exists to prevent. Which projects
+		// reference an assembly is not known once it has failed, so the reason covers the solution.
+		if (AnalyzerReason(analyzerLoadFailures) is { } analyzers)
+		{
+			reasons.Add(WorkspaceReason.Of(ReasonKinds.AnalyzerLoadFailed, HealthEffect.MayAffectSomeProjects, analyzers));
+		}
 
 		// The design-time build runs in Roslyn's build host, a process of its own, so it can load every project
 		// while this process's MSBuild evaluates none of them -- a workspace that reports Loaded from a worker
@@ -856,15 +1092,35 @@ public static partial class WorkspaceStatusReporter
 			.Select(project => Path.GetFullPath(project.FilePath))
 			.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-		if (EvaluationReason(evaluationFailures, projectFiles, loadedProjects) is { } evaluation) reasons.Add(evaluation);
+		if (EvaluationReason(evaluationFailures, projectFiles, loadedProjects) is { } evaluation)
+		{
+			// The worker being broken is a fact about every answer that resolves through MSBuild, so it covers the
+			// solution; projects failing in their own right are a fact about those projects.
+			reasons.Add(BlamesTheWorker(evaluationFailures, projectFiles, loadedProjects)
+				? WorkspaceReason.Of(ReasonKinds.WorkerMsBuildBroken, HealthEffect.BlocksAnswers, evaluation)
+				: WorkspaceReason.Of(
+					ReasonKinds.ProjectNotEvaluated,
+					HealthEffect.MayAffectSomeProjects,
+					evaluation,
+					evaluationFailures.Where(failure => failure.NamesSdk).Select(ProjectName)));
+		}
 
 		// Counted, but only degrading when something actually came back impaired. MSBuild's Failure
 		// kind covers complaints that have no bearing on whether a project compiled, and a status
 		// that reads Degraded on every solution on the machine tells a caller nothing it can act on.
+		// It covers the impaired projects, so a project newly impaired is not covered by an acceptance
+		// of the count as it stood.
 		var failures = workspaceDiagnostics.Count(diagnostic => diagnostic.Kind == WorkspaceDiagnosticKind.Failure);
-		var anyImpaired = projects.Any(project => !project.LoadedSuccessfully);
+		var impaired = projects.Where(project => !project.LoadedSuccessfully).Select(project => project.Name).ToArray();
 
-		if (failures > 0 && anyImpaired) reasons.Add($"MSBuild reported {failures} load failure(s); see loadDiagnostics.");
+		if (failures > 0 && impaired.Length > 0)
+		{
+			reasons.Add(WorkspaceReason.Of(
+				ReasonKinds.MsBuildLoadFailures,
+				HealthEffect.MayAffectSomeProjects,
+				$"MSBuild reported {failures} load failure(s); see loadDiagnostics.",
+				impaired));
+		}
 
 		return reasons;
 	}

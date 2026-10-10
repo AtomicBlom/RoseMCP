@@ -34,6 +34,7 @@ internal static class BrokerHarness
 		return new(
 			options,
 			new CallerPaths(options),
+			new WorkspaceHealth(options, NullLogger<WorkspaceHealth>.Instance),
 			loggerFactory ?? NullLoggerFactory.Instance,
 			NullLogger<WorkspaceManager>.Instance);
 	}
@@ -60,5 +61,11 @@ internal static class BrokerHarness
 			// Off unless a test turns it on: the machine's own settings file is the developer's choice, and a
 			// suite whose workers reload because of it would be testing that choice rather than the code.
 			ReloadsRebuiltAnalyzersWhenIdle = () => false,
+
+			// Its own record of accepted reasons, so a run dates the fixtures' reasons in a folder of its own
+			// rather than in the one the person running the suite relies on.
+			LocalAppData = HarnessAppData,
 		});
+
+	private static readonly string HarnessAppData = Path.Combine(Path.GetTempPath(), "RoseMcp.IntegrationTests", "LocalAppData");
 }

@@ -73,6 +73,19 @@ public sealed record WorkspaceStatusReport : WorkspaceScopedResult
 	public required IReadOnlyList<string> DegradedReasons { get; init; }
 
 	/// <summary>
+	/// Every reason in <see cref="DegradedReasons"/> and every structured notice in <see cref="Notices"/>,
+	/// with a shape: its kind, what it does to answers, the projects it covers, when it was first seen, and
+	/// whether the person has accepted it or this session has acknowledged it. In the order the two lists
+	/// give them, degraded reasons first. A notice about something that happened -- files absorbed, a project
+	/// reloaded -- is not health and has no entry.
+	/// <para>
+	/// An id here is what <c>rose_workspace_acknowledge</c> takes, so a session that has read why a workspace
+	/// is degraded can stop its reads repeating it, or propose that the person accept it.
+	/// </para>
+	/// </summary>
+	public IReadOnlyList<HealthReason> Health { get; init; } = [];
+
+	/// <summary>
 	/// Every analyzer or generator assembly that would not load, with the message the runtime gave.
 	/// <see cref="DegradedReasons"/> folds these to one line and names the assemblies; this is where
 	/// the version each load wanted, and the HRESULT it failed with, survive that fold.

@@ -101,3 +101,48 @@ public sealed record XamlSelectElementRequest
 	/// <summary>A handle, an <c>x:Name</c> as <c>#name</c>, or the address the tree reports.</summary>
 	public required string Element { get; init; }
 }
+
+/// <summary>A person accepting a kind of reason for a solution: for the projects named, or for the whole solution.</summary>
+public sealed record AcceptReasonRequest
+{
+	/// <summary>The solution, as the absolute path a workspace summary names it by.</summary>
+	public required string Workspace { get; init; }
+
+	/// <summary>The kind, one of <see cref="ReasonKinds"/>.</summary>
+	public required string Kind { get; init; }
+
+	/// <summary>The projects to accept it for; empty for a reason about the whole solution.</summary>
+	public IReadOnlyList<string> Projects { get; init; } = [];
+
+	/// <summary>What agents read about it once accepted.</summary>
+	public AgentsRead AgentsRead { get; init; } = AgentsRead.RoseLine;
+
+	/// <summary>The person's own words for agents; required where <see cref="AgentsRead"/> is <see cref="AgentsRead.Note"/>.</summary>
+	public string? Note { get; init; }
+}
+
+/// <summary>A person no longer accepting a kind of reason for the projects named, or for the whole solution.</summary>
+public sealed record StopAcceptingRequest
+{
+	/// <summary>The solution, as the absolute path a workspace summary names it by.</summary>
+	public required string Workspace { get; init; }
+
+	/// <summary>The kind, one of <see cref="ReasonKinds"/>.</summary>
+	public required string Kind { get; init; }
+
+	/// <summary>The projects to stop accepting it for; empty for a reason about the whole solution.</summary>
+	public IReadOnlyList<string> Projects { get; init; } = [];
+}
+
+/// <summary>
+/// A person confirming an agent's proposal, optionally changing what agents read: an agent proposes, and
+/// the person has the last word on what every other agent is told.
+/// </summary>
+public sealed record ConfirmProposalRequest
+{
+	/// <summary>What agents read, in place of what the agent proposed; null keeps the proposal's.</summary>
+	public AgentsRead? AgentsRead { get; init; }
+
+	/// <summary>The note, in place of the one the agent proposed; null keeps the proposal's.</summary>
+	public string? Note { get; init; }
+}

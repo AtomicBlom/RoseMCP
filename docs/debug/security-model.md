@@ -56,6 +56,11 @@ as building it, and nothing here makes that safer. Only open repositories you wo
   and gives it only to an inspector it launches, or on **Copy inspector command**. An http server takes
   `ROSEMCP_TOKEN` when it is set, and otherwise mints one and writes it to its own log once. A token that
   outlives its process has to be revoked, so none is persisted.
+- **Accepting a workspace's reasons is the person's, on the operator API.** `/operator/health/*` accepts a
+  kind of reason for a solution's projects, stops accepting it, and confirms or rejects what agents proposed.
+  An acceptance is written to `workspace-health.json` beside `settings.json` and changes what every agent
+  reads about that reason, which is why no MCP tool can make one: an agent can only propose. Anything able
+  to write that file can do the same, which is no more than the user's own authority.
 - **A stdio session relays to a running tray** on loopback, sending the directory its client started in
   and nothing else. Setting `ROSEMCP_TOKEN` currently stops that relay without saying so (#213).
 
@@ -89,6 +94,7 @@ One entry per tool a client is offered. Every tool runs as the user; the column 
 | `rose_workspace_reload` | Restarts the worker, optionally under a different configuration, platform or properties | As `rose_workspace_open`, with the global properties the caller supplies |
 | `rose_workspace_close` | Stops a worker | Only affects RoseMCP's own process |
 | `rose_workspace_list` | Lists the workspaces the broker holds a worker for, with each one's state and idle time | Reads only the broker's own registry; starts nothing. Names every solution path the broker holds, whichever session opened it |
+| `rose_workspace_acknowledge` | Stops the calling session's reads repeating a degraded reason, or proposes that the person accept it | Changes what that one session reads, in the broker's memory, until the session goes idle for two hours; refused on a shared broker for a call carrying no session id, since it would silence the reason for every client. A proposal changes nothing until the person confirms it on the operator API; no MCP tool can accept a reason or confirm a proposal |
 
 ### Reading and navigation
 

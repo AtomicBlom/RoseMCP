@@ -54,6 +54,9 @@ internal static class Program
 
 				// A stdio client launched this process where it stands, so the working directory is the caller's.
 				broker.DefaultRootIsTheCaller = true;
+
+				// And that client is the only one this broker will ever have, so a call without a session id is its.
+				broker.ServesOneClient = true;
 			})
 			.WithStdioServerTransport();
 

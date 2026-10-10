@@ -78,6 +78,7 @@ public static class OperatorApi
 		MapSessions(operators);
 		MapDebugging(operators);
 		MapXaml(operators);
+		MapHealth(operators);
 
 		return operators;
 	}
@@ -94,6 +95,44 @@ public static class OperatorApi
 				Build = distances.Build,
 				Checkout = await distances.ReadAsync(context.RequestAborted),
 			}));
+
+	/// <summary>
+	/// The person's side of a workspace's health: accepting a reason and choosing what agents read about it,
+	/// stopping, and deciding what agents proposed.
+	/// <para>
+	/// Here and not on the MCP surface, because an acceptance outlives the session that makes it and changes
+	/// what every agent reads: an agent able to make one, or to confirm its own proposal, could silence a
+	/// reason for every other agent on the machine. The token is what says the person is the one asking.
+	/// </para>
+	/// </summary>
+	private static void MapHealth(RouteGroupBuilder operators)
+	{
+		var routes = operators.MapGroup("/health");
+
+		routes.MapGet("/accepted", (string workspace, WorkspaceHealth health) => Json(health.Accepted(workspace)));
+
+		routes.MapPost(
+			"/accept",
+			(AcceptReasonRequest body, WorkspaceHealth health) =>
+				Json(health.Accept(body.Workspace, body.Kind, body.Projects, body.AgentsRead, body.Note)));
+
+		routes.MapPost(
+			"/stop-accepting",
+			(StopAcceptingRequest body, WorkspaceHealth health) =>
+				Json(health.StopAccepting(body.Workspace, body.Kind, body.Projects)));
+
+		routes.MapGet("/proposals", (WorkspaceHealth health) => Json(health.Proposals()));
+
+		// The body is optional: confirming as proposed is the common case and needs nothing said.
+		routes.MapPost(
+			"/proposals/{proposalId}/confirm",
+			(string proposalId, WorkspaceHealth health, ConfirmProposalRequest? body) =>
+				Json(health.Confirm(proposalId, body?.AgentsRead, body?.Note)));
+
+		routes.MapPost(
+			"/proposals/{proposalId}/reject",
+			(string proposalId, WorkspaceHealth health) => Json(health.Reject(proposalId)));
+	}
 
 	/// <summary>Which sessions there are, and ending one.</summary>
 	private static void MapSessions(RouteGroupBuilder operators)

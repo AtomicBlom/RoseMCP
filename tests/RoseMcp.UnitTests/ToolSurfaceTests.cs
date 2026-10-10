@@ -59,6 +59,7 @@ public sealed class ToolSurfaceTests
 		ToolNames.SearchSymbols,
 		ToolNames.SetAttribute,
 		ToolNames.SymbolInfo,
+		ToolNames.WorkspaceAcknowledge,
 		ToolNames.WorkspaceClose,
 		ToolNames.WorkspaceList,
 		ToolNames.WorkspaceOpen,
@@ -290,6 +291,8 @@ public sealed class ToolSurfaceTests
 	/// half of a pair whose first half is routed -- you list or remove what you have just set, you
 	/// deselect what you have selected -- so a session that reached the naming tool has the counterpart
 	/// in that tool's own description. rose_workspace_close is housekeeping nothing else depends on.
+	/// rose_workspace_acknowledge acts on the ids rose_workspace_status hands out, and status's description
+	/// names it: a session has no use for it before it has read a reason.
 	/// <para>
 	/// rose_xaml_select_element was here on the reasoning that a read hands out the handle it takes.
 	/// That held while arming select mode was routed beside it; with arming gone from the surface,
@@ -303,6 +306,7 @@ public sealed class ToolSurfaceTests
 		ToolNames.DebugListTracepoints,
 		ToolNames.DebugRemoveBreakpoint,
 		ToolNames.DebugRemoveTracepoint,
+		ToolNames.WorkspaceAcknowledge,
 		ToolNames.WorkspaceClose,
 		ToolNames.XamlDeselect,
 	];

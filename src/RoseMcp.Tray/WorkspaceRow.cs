@@ -306,6 +306,12 @@ public sealed class WorkspaceRow : Observable
 				"The solution did not load",
 				reasons.Length > 0 ? reasons : "No reason was reported. The worker's log, behind the log button on this row, has the details."),
 
+			WorkspaceState.Degraded when EveryReasonAccepted(summary) => (
+				true,
+				InfoBarSeverity.Informational,
+				"Accepted warnings",
+				string.Join(Environment.NewLine, summary.Health.Where(reason => reason.Effect != HealthEffect.Note).Select(reason => reason.Line))),
+
 			WorkspaceState.Degraded => (true, InfoBarSeverity.Warning, "Answers may be incomplete", reasons),
 
 			WorkspaceState.PendingUnload => (
@@ -316,6 +322,17 @@ public sealed class WorkspaceRow : Observable
 
 			_ => (false, InfoBarSeverity.Informational, string.Empty, string.Empty),
 		};
+	}
+
+	/// <summary>
+	/// Whether the person has accepted every reason the workspace is degraded by, which makes it something they
+	/// have already decided about: said quietly, one line each, rather than as a warning.
+	/// </summary>
+	private static bool EveryReasonAccepted(WorkspaceSummary summary)
+	{
+		var degrading = summary.Health.Where(reason => reason.Effect != HealthEffect.Note).ToArray();
+
+		return degrading.Length > 0 && degrading.All(reason => reason.Accepted is not null);
 	}
 
 	/// <summary>Failures get a count of their own, because they are the reason history is kept at all.</summary>

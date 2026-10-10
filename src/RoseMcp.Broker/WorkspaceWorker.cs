@@ -303,13 +303,18 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// activity log either way, so a long call shows up in the tray even when nobody else is
 	/// watching. An operation overrides the activity's label, which is otherwise the tool name.
 	/// </para>
+	/// <para>
+	/// <paramref name="heard"/> is what the calling session hears about the workspace's reasons, sent with the
+	/// call so a read's degraded notice leaves out what the person accepted and the session acknowledged.
+	/// </para>
 	/// </summary>
 	public async Task<T> CallAsync<T>(
 		string tool,
 		IReadOnlyDictionary<string, object?> arguments,
 		CancellationToken cancellationToken,
 		IProgress<ProgressNotificationValue>? progress = null,
-		string? operation = null)
+		string? operation = null,
+		IReadOnlyList<ReasonHearing>? heard = null)
 	{
 		// One line per forwarded call, so which rose_* tools a session actually reaches for is
 		// measurable from the files already being written rather than from anybody's recollection. The
@@ -327,7 +332,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 
 		try
 		{
-			var result = await SendAsync<T>(tool, arguments, activity, cancellationToken);
+			var result = await SendAsync<T>(tool, arguments, activity, cancellationToken, heard);
 
 			// Whoever asked, the answer describes this worker, and it is the freshest one there is.
 			if (result is WorkspaceStatusReport status) LastStatus = status;
@@ -441,11 +446,39 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		Projects = [],
 		LoadDiagnostics = [],
 		DegradedReasons = [StopDescription()],
+		Health = [BrokerReason(ReasonKinds.WorkerStopped, HealthEffect.BlocksAnswers, StopDescription())],
 		Notices =
 		[
 			"Nothing is loaded, and asking for status started nothing. The next call that needs this "
 				+ "workspace starts a fresh worker; rose_workspace_reload starts one now.",
 		],
+	};
+
+	/// <summary>
+	/// The health a summary shows: the last status report's, or the load failure the broker saw where no report
+	/// came, with the version mismatch as a note -- each in the order its list gives it.
+	/// </summary>
+	private IReadOnlyList<HealthReason> Health(WorkspaceStatusReport? status)
+	{
+		IReadOnlyList<HealthReason> reported = status?.Health
+			?? (_loadFailure is null ? [] : [BrokerReason(ReasonKinds.LoadFailed, HealthEffect.BlocksAnswers, _loadFailure)]);
+
+		return VersionMismatch is null
+			? reported
+			: [.. reported, BrokerReason(ReasonKinds.WorkerVersionMismatch, HealthEffect.Note, VersionMismatch)];
+	}
+
+	/// <summary>
+	/// A reason the broker words itself, about the worker rather than the solution, so it covers no project and
+	/// its kind is its id. Its line is its text: each is a sentence or two the broker wrote, with no MSBuild
+	/// message inside it to cut.
+	/// </summary>
+	private static HealthReason BrokerReason(string kind, HealthEffect effect, string text) => new()
+	{
+		Id = kind,
+		Kind = kind,
+		Effect = effect,
+		Line = text,
 	};
 
 	/// <summary>Why this worker stopped, as one sentence for a person.</summary>
@@ -626,6 +659,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 				: [.. status.Projects.Where(project => !project.LoadedSuccessfully).Select(project => project.Name)],
 			DegradedReasons = status?.DegradedReasons ?? (_loadFailure is null ? [] : [_loadFailure]),
 			Notices = Notices(status),
+			Health = Health(status),
 			LoadSeconds = LoadDuration?.TotalSeconds,
 			Running = _activities.Running(SolutionPath),
 			Recent = _activities.Recent(SolutionPath),
@@ -709,7 +743,8 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		string tool,
 		IReadOnlyDictionary<string, object?> arguments,
 		IProgress<ProgressNotificationValue>? progress,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IReadOnlyList<ReasonHearing>? heard = null)
 	{
 		ModelContextProtocol.Protocol.CallToolResult result;
 		try
@@ -717,7 +752,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			// Not CallToolAsync: it abandons the wait without telling the worker, which then finishes
 			// the whole operation. Reads on a workspace are ordered, so that abandoned work is the
 			// delay before the next call on it can start.
-			result = await CancellableToolCall.InvokeAsync(_client, tool, arguments, progress, cancellationToken);
+			result = await CancellableToolCall.InvokeAsync(_client, tool, arguments, progress, cancellationToken, heard: heard);
 		}
 		catch (Exception exception) when (IsTransportFailure(exception))
 		{

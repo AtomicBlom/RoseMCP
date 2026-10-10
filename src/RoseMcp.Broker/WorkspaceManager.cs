@@ -21,6 +21,7 @@ namespace RoseMcp.Broker;
 public sealed class WorkspaceManager(
 	IOptions<BrokerOptions> options,
 	CallerPaths paths,
+	WorkspaceHealth health,
 	ILoggerFactory loggerFactory,
 	ILogger<WorkspaceManager> logger) : IAsyncDisposable
 {
@@ -73,7 +74,18 @@ public sealed class WorkspaceManager(
 	/// the tray window and GET /admin/workspaces, so the UI can never show something the API disagrees
 	/// with. A stopped row says so in <see cref="Contracts.WorkspaceSummary.Alive"/>.
 	/// </summary>
-	public IReadOnlyList<Contracts.WorkspaceSummary> Describe() => [.. Workers.Select(worker => worker.Describe())];
+	public IReadOnlyList<Contracts.WorkspaceSummary> Describe() => [.. Workers.Select(Describe)];
+
+	/// <summary>
+	/// One worker's row, with what the broker remembers about its health stamped on: when each reason was first
+	/// seen, and which the person has accepted.
+	/// </summary>
+	public Contracts.WorkspaceSummary Describe(WorkspaceWorker worker)
+	{
+		var summary = worker.Describe();
+
+		return summary with { Health = health.Describe(worker.SolutionPath, summary.Health) };
+	}
 
 	/// <summary>
 	/// Every workspace this broker holds a worker for, as <c>rose_workspace_list</c> answers. Read
@@ -249,7 +261,9 @@ public sealed class WorkspaceManager(
 		{
 			try
 			{
-				return Attribute(await worker.CallAsync<T>(tool, arguments, cancellationToken, progress), worker);
+				return Attribute(
+					await worker.CallAsync<T>(tool, arguments, cancellationToken, progress, heard: health.HeardFor(worker.SolutionPath)),
+					worker);
 			}
 			catch (WorkerUnavailableException) when (retryIfWorkerDied)
 			{
@@ -267,7 +281,9 @@ public sealed class WorkspaceManager(
 				using (replacementHold)
 				{
 					return Attribute(
-						await replacement.CallAsync<T>(tool, arguments, cancellationToken, progress), replacement);
+						await replacement.CallAsync<T>(
+							tool, arguments, cancellationToken, progress, heard: health.HeardFor(replacement.SolutionPath)),
+						replacement);
 				}
 			}
 		}
@@ -304,6 +320,13 @@ public sealed class WorkspaceManager(
 		WorkspaceScopedResult scoped = result;
 
 		var attributed = scoped with { Workspace = worker.SolutionPath, WorkspaceKey = worker.Key };
+
+		// A status report's reasons are dated, and marked accepted or acknowledged, here for the reason the
+		// workspace is named here: whatever answers a status, it passes this step.
+		if (attributed is Contracts.WorkspaceStatusReport status)
+		{
+			attributed = status with { Health = health.Describe(worker.SolutionPath, status.Health) };
+		}
 
 		return (T)(object)(attributed is WorkspaceMutationResult mutation
 			? WritePaths.Relative(
@@ -400,10 +423,16 @@ public sealed class WorkspaceManager(
 		WorkspaceHints hints,
 		CancellationToken cancellationToken,
 		IProgress<ProgressNotificationValue>? progress = null,
+		bool includeProjects = false) =>
+		await StatusResolvedAsync(WorkspaceFor(hints), cancellationToken, progress, includeProjects);
+
+	/// <summary>Status for a solution path already decided on, as <see cref="StatusAsync"/> gives it.</summary>
+	private async Task<Contracts.WorkspaceStatusReport> StatusResolvedAsync(
+		string solutionPath,
+		CancellationToken cancellationToken,
+		IProgress<ProgressNotificationValue>? progress = null,
 		bool includeProjects = false)
 	{
-		var solutionPath = WorkspaceFor(hints);
-
 		WorkspaceWorker worker;
 		IDisposable hold;
 
@@ -425,6 +454,130 @@ public sealed class WorkspaceManager(
 		{
 			return await StatusOfAsync(worker, cancellationToken, progress, includeProjects);
 		}
+	}
+
+	/// <summary>
+	/// What <c>rose_workspace_acknowledge</c> does with each reason it is given, by the id status gave it: the
+	/// calling session stops hearing it on reads, or the person is asked to accept it.
+	/// <para>
+	/// The ids are looked up in the last status the broker holds, which is the one the caller most likely read
+	/// them from, and only where one is not there is a fresh status asked for -- a reload can have renamed the
+	/// set. A stopped workspace is answered from its stopped row, as status is, and nothing is started for it.
+	/// </para>
+	/// </summary>
+	/// <exception cref="ArgumentException">No reasons were named.</exception>
+	/// <exception cref="InvalidOperationException">
+	/// An acknowledgement on a call carrying no session this broker can tell apart from its other clients'.
+	/// </exception>
+	public async Task<Contracts.ReasonsAcknowledged> AcknowledgeAsync(
+		WorkspaceHints hints,
+		IReadOnlyList<string> reasons,
+		bool propose,
+		string? note,
+		CancellationToken cancellationToken)
+	{
+		// Routed first, so a call naming its workspace twice is refused for that whatever else is wrong with it.
+		var solutionPath = WorkspaceFor(hints);
+
+		var named = reasons.Where(reason => !string.IsNullOrWhiteSpace(reason)).Select(reason => reason.Trim()).ToArray();
+		if (named.Length == 0)
+		{
+			throw new ArgumentException(
+				"Name at least one reason, by the id rose_workspace_status gives it in health.", nameof(reasons));
+		}
+		var report = LastHealth(solutionPath) ?? await StatusResolvedAsync(solutionPath, cancellationToken);
+
+		if (named.Any(id => Find(report, id) is null) && LastHealth(solutionPath) is not null)
+		{
+			report = await StatusResolvedAsync(solutionPath, cancellationToken);
+		}
+
+		return new Contracts.ReasonsAcknowledged
+		{
+			Workspace = solutionPath,
+			WorkspaceKey = Solutions.WorkspaceKey.For(solutionPath),
+			Revision = report.Revision,
+			Reasons = [.. named.Select(id => Acknowledge(solutionPath, report, id, propose, note))],
+		};
+	}
+
+	/// <summary>The last status the broker holds for a solution without asking its worker, or a stopped row's; null where it holds none.</summary>
+	private Contracts.WorkspaceStatusReport? LastHealth(string solutionPath)
+	{
+		if (!_workers.TryGetValue(solutionPath, out var worker)) return null;
+
+		return worker.IsAlive ? worker.LastStatus : worker.StoppedStatus();
+	}
+
+	/// <summary>The reason in <paramref name="report"/>'s health with this id, matched exactly and then ignoring case.</summary>
+	private static Contracts.HealthReason? Find(Contracts.WorkspaceStatusReport report, string id) =>
+		report.Health.FirstOrDefault(reason => string.Equals(reason.Id, id, StringComparison.Ordinal))
+		?? report.Health.FirstOrDefault(reason => string.Equals(reason.Id, id, StringComparison.OrdinalIgnoreCase));
+
+	/// <summary>One reason's acknowledgement or proposal, or why there was neither.</summary>
+	private Contracts.ReasonAcknowledgement Acknowledge(
+		string solutionPath,
+		Contracts.WorkspaceStatusReport report,
+		string id,
+		bool propose,
+		string? note)
+	{
+		var reason = Find(report, id);
+
+		if (reason is null)
+		{
+			return new Contracts.ReasonAcknowledgement
+			{
+				Reason = id,
+				Status = Contracts.AcknowledgementOutcome.NotFound,
+				Detail = report.Health.Count == 0
+					? "The workspace reports no reasons at all."
+					: $"No reason in the workspace's health has that id. The ids there are: {string.Join(", ", report.Health.Select(candidate => candidate.Id))}.",
+			};
+		}
+
+		if (!propose)
+		{
+			health.Acknowledge(solutionPath, reason);
+
+			return new Contracts.ReasonAcknowledgement
+			{
+				Reason = id,
+				Status = Contracts.AcknowledgementOutcome.Acknowledged,
+				Kind = reason.Kind,
+				Projects = reason.Projects,
+			};
+		}
+
+		if (health.Describe(solutionPath, [reason])[0].Accepted is { } accepted)
+		{
+			return new Contracts.ReasonAcknowledgement
+			{
+				Reason = id,
+				Status = Contracts.AcknowledgementOutcome.AlreadyAccepted,
+				Kind = reason.Kind,
+				Projects = reason.Projects,
+				Detail = $"The person accepted it on {accepted.AcceptedUtc:yyyy-MM-dd}, and agents read {Describe(accepted.AgentsRead)} about it.",
+			};
+		}
+
+		var proposal = health.Propose(solutionPath, reason, note);
+
+		return new Contracts.ReasonAcknowledgement
+		{
+			Reason = id,
+			Status = Contracts.AcknowledgementOutcome.Proposed,
+			Kind = reason.Kind,
+			Projects = reason.Projects,
+			ProposalId = proposal.Id,
+		};
+
+		static string Describe(Contracts.AgentsRead read) => read switch
+		{
+			Contracts.AgentsRead.Note => "the person's note",
+			Contracts.AgentsRead.Nothing => "nothing",
+			_ => "Rose's line",
+		};
 	}
 
 	/// <summary>

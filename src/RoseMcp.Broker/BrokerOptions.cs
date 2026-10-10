@@ -36,6 +36,27 @@ public sealed class BrokerOptions
 	public bool DefaultRootIsTheCaller { get; set; }
 
 	/// <summary>
+	/// Whether this broker has exactly one client for its whole life: true for a stdio broker, false for the
+	/// tray and an http server, whichever sessions reach them.
+	/// <para>
+	/// It decides what a call carrying no session id means. Over stdio that is the one client, so whatever
+	/// it acknowledges is its own. Over http a call with no session id is any client at all -- the transport
+	/// serves each request without a session -- and an acknowledgement taken from one would silence a reason
+	/// for every agent on the machine, so it is refused rather than shared. False unless the host that knows
+	/// says otherwise, because refusing costs an agent a line it could not stop hearing, and sharing costs
+	/// every other agent a reason it never heard.
+	/// </para>
+	/// </summary>
+	public bool ServesOneClient { get; set; }
+
+	/// <summary>
+	/// Where local application data is, for the per-machine record of accepted reasons beside
+	/// <c>settings.json</c>; null for this user's own. A test sets it so it never writes the record a person
+	/// relies on.
+	/// </summary>
+	public string? LocalAppData { get; set; }
+
+	/// <summary>
 	/// How long a freshly started worker has to complete its MCP handshake.
 	/// <para>
 	/// Set explicitly because the SDK's own default is 60 seconds, and a worker begins loading its

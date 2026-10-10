@@ -61,7 +61,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 		// when its process does, and the broker asks it for status the moment it connects precisely so
 		// a load with no client waiting on it is still visible.
 		var worker = await workspaces.GetOrStartAsync(WorkspaceHints.From(paths.Of(workspace)), cancellationToken);
-		var summary = worker.Describe();
+		var summary = workspaces.Describe(worker);
 
 		// Only while it is still loading, so a solution that was already open says nothing and the
 		// caller has nothing to wait for -- which is the common case and should read as finished.
@@ -115,6 +115,43 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 			progress,
 			includeProjects);
 	}
+
+	/// <summary>
+	/// Acknowledges reasons for the calling session, or proposes that the person accept them.
+	/// <para>
+	/// One tool with a switch rather than two, because the two act on the same ids from the same status and
+	/// differ only in who decides: the session for itself, or the person for everybody. Two tools would be two
+	/// descriptions saying the same thing about ids, kinds and projects, on a surface held to a budget.
+	/// </para>
+	/// <para>
+	/// An agent cannot accept a reason itself and cannot confirm its own proposal: an acceptance outlives the
+	/// session and changes what every other agent reads, so only the operator routes, behind the person's token,
+	/// can make one. Not read-only, since it changes what this session's reads say; idempotent, since saying it
+	/// twice changes nothing more.
+	/// </para>
+	/// </summary>
+	[McpServerTool(
+		Name = ToolNames.WorkspaceAcknowledge,
+		Title = "Acknowledge a workspace's reasons",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.WorkspaceAcknowledge)]
+	public async Task<ReasonsAcknowledged> AcknowledgeAsync(
+		[Description(ToolDescriptions.AcknowledgeReasonsArgument)] string[] reasons,
+		[Description(ToolDescriptions.ProposeArgument)] bool propose = false,
+		[Description(ToolDescriptions.ProposedNoteArgument)] string? note = null,
+		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
+		CancellationToken cancellationToken = default) =>
+		await workspaces.AcknowledgeAsync(
+			WorkspaceHints.From(paths.Of(workspace), workspaceKey),
+			reasons,
+			propose,
+			note,
+			cancellationToken);
 
 	[McpServerTool(
 		Name = ToolNames.WorkspaceReload,

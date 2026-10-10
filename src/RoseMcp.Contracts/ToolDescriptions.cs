@@ -644,11 +644,32 @@ public static class ToolDescriptions
 	public const string WorkspaceStatus = """
 		What state a solution's workspace is in and whether its answers can be trusted: the MSBuild
 		configuration it chose, the restore, load diagnostics, projects with problems, and
-		degradedReasons -- each with its fix. Ask it when answers look wrong rather than assuming the
-		code is. Thousands of errors about System.Object undefined mean a configuration the solution
-		does not declare; rose_workspace_reload takes another. It waits for the load, unlike
-		rose_workspace_open; an evicted or crashed worker is reported, not restarted.
+		degradedReasons -- each with its fix. health gives each reason a kind, what it does to answers,
+		the projects it covers, whether the person accepted it, and the id rose_workspace_acknowledge
+		takes to stop your reads repeating it. Ask it when answers
+		look wrong rather than assuming the code is. Thousands of errors about System.Object undefined
+		mean a configuration the solution does not declare; rose_workspace_reload takes another. It
+		waits for the load, unlike rose_workspace_open; an evicted or crashed worker is reported, not
+		restarted.
 		""";
+
+	public const string WorkspaceAcknowledge = """
+		Stops this session's reads repeating a degraded reason it already knows about, by the id
+		rose_workspace_status gives it in health. It lasts until the session ends, and covers that
+		reason's kind for the projects it named: a new kind, or another project failing, is still said.
+		propose=true instead asks the person to accept it for every session, and changes nothing until
+		they confirm; note is what you suggest agents read about it then. Use it once you have read a
+		reason and it does not bear on your task, rather than reading past it on every answer.
+		""";
+
+	public const string AcknowledgeReasonsArgument =
+		"Ids from rose_workspace_status health, as project-not-loaded:Core.";
+
+	public const string ProposeArgument =
+		"Ask the person to accept them for every session, rather than acknowledging for this one.";
+
+	public const string ProposedNoteArgument =
+		"With propose, what you suggest agents read about it in place of Rose's line.";
 
 	public const string IncludeProjectsArgument =
 		"Also list the projects that loaded cleanly.";

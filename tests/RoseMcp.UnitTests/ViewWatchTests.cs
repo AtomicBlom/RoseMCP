@@ -122,6 +122,63 @@ public sealed class ViewWatchTests
 		watch.Stop();
 	}
 
+	/// <summary>
+	/// A filter that changes while a long poll is held on the old one: the kick cancels the wait in flight and asks
+	/// at once, and the old question's answer, even one that arrives regardless, is never shown as the new one's.
+	/// </summary>
+	[Test]
+	public void A_kick_cancels_the_wait_in_flight_and_drops_its_answer()
+	{
+		var asked = new BlockingCollection<(string? After, int Wait)>();
+		var shown = new BlockingCollection<string>();
+		var question = "old";
+		var staleAnswer = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+		var reads = 0;
+
+		var watch = new ViewWatch<string>(
+			async (after, wait, cancellationToken) =>
+			{
+				asked.Add((after, wait));
+				var read = Interlocked.Increment(ref reads);
+				var about = Volatile.Read(ref question);
+
+				switch (read)
+				{
+					case 1:
+						return $"{about}-page";
+					case 2:
+						// Held on the old question; it answers only once cancelled, as a reply already on the wire would.
+						using (cancellationToken.Register(() => staleAnswer.TrySetResult("old-late-page")))
+						{
+							return await staleAnswer.Task;
+						}
+
+					case 3:
+						return $"{about}-page";
+					default:
+						await Task.Delay(Timeout.Infinite, cancellationToken);
+						return "never";
+				}
+			},
+			view => view,
+			shown.Add,
+			_ => { });
+
+		watch.Start();
+
+		Take(asked);
+		Take(shown).ShouldBe("old-page");
+		Take(asked).ShouldBe(("old-page", ViewWatch<string>.WaitSeconds), "the watch is now holding a wait on the old question");
+
+		Volatile.Write(ref question, "new");
+		watch.Kick();
+
+		Take(asked).ShouldBe((null, 0), "the new question is asked at once, not after the old wait runs out");
+		Take(shown).ShouldBe("new-page", "the old question's late answer is dropped");
+
+		watch.Stop();
+	}
+
 	private static T Take<T>(BlockingCollection<T> collection)
 	{
 		collection.TryTake(out var item, Soon).ShouldBeTrue("the watch did not ask in time");

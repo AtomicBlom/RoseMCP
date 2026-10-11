@@ -36,8 +36,14 @@ public sealed class ViewWatch<T>
 	private readonly TimeSpan _retryAfter;
 	private readonly PollLoop _loop;
 
-	// Bumped by Kick, so a read that was in flight when the question changed does not keep the old answer's version.
+	// Bumped by Kick, so an answer to a question asked before it is dropped rather than shown as the new one's.
 	private int _asked;
+
+	// Guards Version and the read in flight, which Kick reaches from the window while a read is being made.
+	private readonly Lock _gate = new();
+
+	// The read in flight, which Kick cancels; null between reads.
+	private CancellationTokenSource? _reading;
 
 	// Completed by Kick, to end a retry's pause early; a fresh one is armed for each pause.
 	private TaskCompletionSource _retryNow = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -81,35 +87,58 @@ public sealed class ViewWatch<T>
 	public void Stop() => _loop.Stop();
 
 	/// <summary>
-	/// Reads again at once rather than waiting past the version held: for a filter that changed, so the wait in
-	/// flight is about the wrong question, or for a token that changed, so a pause after a refusal is over. A wait
-	/// in flight is answered when it is answered; the read after it waits for nothing.
+	/// Asks again at once rather than waiting past the version held: for a filter that changed, so the wait in flight
+	/// is about the wrong question, or for a token that changed, so a pause after a refusal is over. The read in flight
+	/// is cancelled, and an answer to the old question that arrives anyway is dropped rather than shown as an answer
+	/// to the new one.
 	/// </summary>
 	public void Kick()
 	{
-		Version = null;
-		_asked++;
+		Interlocked.Increment(ref _asked);
+
+		lock (_gate)
+		{
+			Version = null;
+			_reading?.Cancel();
+		}
+
 		_retryNow.TrySetResult();
 		_loop.Kick();
 	}
 
 	private async Task ReadAsync(CancellationToken cancellationToken)
 	{
-		var version = Version;
-		var asked = _asked;
+		var asked = Volatile.Read(ref _asked);
+		string? version;
+		using var reading = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+		lock (_gate)
+		{
+			version = Version;
+			_reading = reading;
+		}
+
 		T view;
 
 		try
 		{
-			view = await _read(version, version is null ? 0 : WaitSeconds, cancellationToken);
+			view = await _read(version, version is null ? 0 : WaitSeconds, reading.Token);
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{
 			throw;
 		}
+		catch (OperationCanceledException) when (reading.IsCancellationRequested)
+		{
+			// Kicked: the question changed under the read, and the loop asks the new one at once.
+			return;
+		}
 		catch (Exception exception)
 		{
-			Version = null;
+			// A read kicked while it failed was about the old question; the new one is asked at once.
+			if (asked != Volatile.Read(ref _asked)) return;
+
+			lock (_gate) Version = null;
 
 			// Armed before the failure is reported, so a Kick that reporting leads to -- a new token taken in
 			// answer to a refusal -- ends this pause rather than one already over.
@@ -121,9 +150,19 @@ public sealed class ViewWatch<T>
 			cancellationToken.ThrowIfCancellationRequested();
 			return;
 		}
+		finally
+		{
+			lock (_gate)
+			{
+				if (ReferenceEquals(_reading, reading)) _reading = null;
+			}
+		}
 
-		// A Kick while the wait was open asked for a fresh read; the answer to the old question is still news.
-		if (asked == _asked) Version = _versionOf(view);
+		// An answer to a question asked before a Kick is an answer to the wrong question: shown, it would put the
+		// old filter's page under the new filter. The loop asks the new question next.
+		if (asked != Volatile.Read(ref _asked)) return;
+
+		lock (_gate) Version = _versionOf(view);
 
 		Last = view;
 		_onView(view);

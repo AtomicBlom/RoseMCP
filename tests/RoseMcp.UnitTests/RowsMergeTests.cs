@@ -49,6 +49,32 @@ public sealed class RowsMergeTests
 	}
 
 	/// <summary>
+	/// Sources that change order reorder the rows, and the rows that move are the same objects: an agent that called
+	/// last moves to the top with its card's expanders as the reader left them.
+	/// </summary>
+	[Test]
+	public void Rows_end_in_source_order_when_the_sources_reorder()
+	{
+		ObservableCollection<Row> rows = [];
+		Merge(rows, (1, "a"), (2, "b"));
+		var a = rows[0];
+		var b = rows[1];
+		a.Expanded = true;
+
+		Merge(rows, (2, "b"), (1, "a"));
+
+		rows.Select(row => row.Id).ShouldBe([2, 1]);
+		rows[0].ShouldBeSameAs(b);
+		rows[1].ShouldBeSameAs(a);
+		a.Expanded.ShouldBeTrue();
+
+		// A new row arriving among moved ones lands where its source is, too.
+		Merge(rows, (1, "a"), (3, "c"), (2, "b"));
+		rows.Select(row => row.Id).ShouldBe([1, 3, 2]);
+		rows[0].ShouldBeSameAs(a);
+	}
+
+	/// <summary>
 	/// The whole point. The row object is the same instance afterwards, so whatever a window put on
 	/// it is still there.
 	/// </summary>

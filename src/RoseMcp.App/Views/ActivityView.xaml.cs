@@ -137,7 +137,7 @@ public sealed partial class ActivityView : UserControl
 		Footer.Text = _list.Footer;
 		Older.Visibility = _list.HasOlder ? Visibility.Visible : Visibility.Collapsed;
 		OpenRecord.Visibility = _list.Directory is { Length: > 0 } ? Visibility.Visible : Visibility.Collapsed;
-		Empty.Text = _list.Header.Length == 0 ? "Reading the activity record…" : "Nothing the record holds matches.";
+		Empty.Text = _list.IsAnswered ? "Nothing the record holds matches." : "Reading the activity record…";
 		Empty.Visibility = _list.IsEmpty ? Visibility.Visible : Visibility.Collapsed;
 
 		OperationView.LoadBodies(_list.Rows);

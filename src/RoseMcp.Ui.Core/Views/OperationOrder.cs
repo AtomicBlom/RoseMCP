@@ -40,23 +40,5 @@ public static class OperationOrder
 			entry => entry.Id,
 			entry => new OperationRow(entry, now),
 			(row, entry) => row.Update(entry, now));
-
-		// Merge keeps a surviving row where it was; an order that moved -- a call that finished jumps from the
-		// running ones to the top of the finished ones -- has to be put right afterwards.
-		for (var index = 0; index < sorted.Count; index++)
-		{
-			var at = IndexOf(rows, sorted[index].Id, index);
-			if (at != index) rows.Move(at, index);
-		}
-	}
-
-	private static int IndexOf(ObservableCollection<OperationRow> rows, string id, int from)
-	{
-		for (var index = from; index < rows.Count; index++)
-		{
-			if (string.Equals(rows[index].Id, id, StringComparison.Ordinal)) return index;
-		}
-
-		return from;
 	}
 }

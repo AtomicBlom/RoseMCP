@@ -91,7 +91,9 @@ public sealed class RoseWindowModelTests
 		var older = OperationRowTests.Call("old", Noon.AddHours(-3), Noon.AddHours(-3));
 		var newest = OperationRowTests.Call("new", Noon.AddMinutes(-1), Noon);
 
+		list.IsAnswered.ShouldBeFalse("nothing has been read, which is not the same as nothing matching");
 		list.ShowNewest(Page([newest], next: "cursor-1", matched: 2), Noon);
+		list.IsAnswered.ShouldBeTrue();
 		list.HasOlder.ShouldBeTrue();
 		list.Header.ShouldBe("2 entries match  ·  kept for 7 days");
 
@@ -106,6 +108,7 @@ public sealed class RoseWindowModelTests
 
 		list.Ask(new ActivityFilter { Failures = true });
 		list.Rows.ShouldBeEmpty();
+		list.IsAnswered.ShouldBeFalse("the new question has no answer yet");
 		list.Filter.Failures.ShouldBeTrue();
 		list.Filter.Limit.ShouldBe(ActivityList.PageSize);
 	}

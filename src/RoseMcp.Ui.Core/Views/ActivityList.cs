@@ -24,6 +24,7 @@ public sealed class ActivityList : Observable
 	private string? _next;
 	private bool _newestHasNext;
 	private string? _directory;
+	private bool _isAnswered;
 
 	/// <summary>What the view asks the record for.</summary>
 	public ActivityFilter Filter { get; private set; } = new() { Limit = PageSize };
@@ -70,6 +71,16 @@ public sealed class ActivityList : Observable
 		private set => Set(ref _directory, value);
 	}
 
+	/// <summary>
+	/// Whether the record has answered the question asked: false from <see cref="Ask"/> until the newest page for it
+	/// arrives, while an empty list means only that nothing has been read yet, not that nothing matches.
+	/// </summary>
+	public bool IsAnswered
+	{
+		get => _isAnswered;
+		private set => Set(ref _isAnswered, value);
+	}
+
 	/// <summary>Asks a different question: forgets the older pages, which answered the old one.</summary>
 	public void Ask(ActivityFilter filter)
 	{
@@ -77,6 +88,7 @@ public sealed class ActivityList : Observable
 		_older.Clear();
 		_newest = [];
 		Next = null;
+		IsAnswered = false;
 		Rows.Clear();
 		OnPropertyChanged(nameof(IsEmpty));
 	}
@@ -85,6 +97,7 @@ public sealed class ActivityList : Observable
 	public void ShowNewest(ActivityPage page, DateTimeOffset now)
 	{
 		_newest = page.Entries;
+		IsAnswered = true;
 		_newestHasNext = page.Next is not null;
 
 		// An older page already read reaches past the newest page's own cursor, so it keeps its own.

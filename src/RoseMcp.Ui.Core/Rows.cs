@@ -67,5 +67,22 @@ public static class Rows
 
 			update(existing, source);
 		}
+
+		// The inserts above put new rows where they belong, but a row that survived stays where it was; a source that
+		// moved -- a call that finished, an agent that called last -- is put right here. Moved rather than removed and
+		// added, so the row keeps what a reader did to it: an open expander, a selection.
+		for (var index = 0; index < sources.Count && index < rows.Count; index++)
+		{
+			var key = sourceKey(sources[index]);
+			if (same.Equals(rowKey(rows[index]), key)) continue;
+
+			for (var at = index + 1; at < rows.Count; at++)
+			{
+				if (!same.Equals(rowKey(rows[at]), key)) continue;
+
+				rows.Move(at, index);
+				break;
+			}
+		}
 	}
 }

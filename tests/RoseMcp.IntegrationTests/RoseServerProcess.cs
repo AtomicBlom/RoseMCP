@@ -23,9 +23,14 @@ public sealed class RoseServerProcess : IDisposable
 	private int _nextId = 1;
 	private readonly ConcurrentQueue<string> _notifications = new();
 
-	private RoseServerProcess(Process process)
+	// Whether the local application data folder is this process's own to delete, rather than one a caller named.
+	private readonly bool _ownsLocalAppData;
+
+	private RoseServerProcess(Process process, string localAppData, bool ownsLocalAppData)
 	{
 		_process = process;
+		LocalAppData = localAppData;
+		_ownsLocalAppData = ownsLocalAppData;
 
 		// Drained rather than ignored: the server logs to stderr, and a full pipe buffer stops the
 		// process the test is waiting on.
@@ -33,6 +38,13 @@ public sealed class RoseServerProcess : IDisposable
 	}
 
 	public int Id => _process.Id;
+
+	/// <summary>
+	/// Where the server keeps its per-machine records (<c>ROSEMCP_LOCAL_APP_DATA</c>): a folder of its own under the
+	/// temp directory, gone when this is disposed, unless the caller named one. Never the user's own, which the
+	/// installed tray reads, and which a suite run would otherwise fill with a test's accepted reasons and recent targets.
+	/// </summary>
+	public string LocalAppData { get; }
 
 	public bool HasExited => _process.HasExited;
 
@@ -118,9 +130,7 @@ public sealed class RoseServerProcess : IDisposable
 
 		foreach (var argument in WithAPortOfItsOwn(arguments)) start.ArgumentList.Add(argument);
 
-		var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start RoseMcp.Server.");
-
-		return new RoseServerProcess(process);
+		return Launch(start, environment: null);
 	}
 
 	/// <summary>
@@ -144,11 +154,27 @@ public sealed class RoseServerProcess : IDisposable
 		};
 
 		foreach (var argument in WithAPortOfItsOwn(arguments)) start.ArgumentList.Add(argument);
-		foreach (var (name, value) in environment) start.Environment[name] = value;
+		return Launch(start, environment);
+	}
 
+	/// <summary>The variable the server reads its local application data folder from.</summary>
+	private const string LocalAppDataVariable = "ROSEMCP_LOCAL_APP_DATA";
+
+	/// <summary>
+	/// Starts the server <paramref name="start"/> describes, with <paramref name="environment"/> on top of a local
+	/// application data folder of its own, which an entry of the caller's for the same variable replaces.
+	/// </summary>
+	private static RoseServerProcess Launch(ProcessStartInfo start, IReadOnlyDictionary<string, string>? environment)
+	{
+		var own = Path.Combine(Path.GetTempPath(), "RoseMcp.IntegrationTests", "Server", Guid.NewGuid().ToString("N"));
+		start.Environment[LocalAppDataVariable] = own;
+
+		foreach (var (name, value) in environment ?? new Dictionary<string, string>()) start.Environment[name] = value;
+
+		var localAppData = start.Environment[LocalAppDataVariable] ?? own;
 		var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start RoseMcp.Server.");
 
-		return new RoseServerProcess(process);
+		return new RoseServerProcess(process, localAppData, ownsLocalAppData: localAppData == own);
 	}
 
 	/// <summary>
@@ -295,5 +321,14 @@ public sealed class RoseServerProcess : IDisposable
 
 		_process.Dispose();
 		_ = _draining;
+
+		try
+		{
+			if (_ownsLocalAppData && Directory.Exists(LocalAppData)) Directory.Delete(LocalAppData, recursive: true);
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			// A child the kill has not yet let go of the folder; one left under the temp directory is litter, not a failure.
+		}
 	}
 }

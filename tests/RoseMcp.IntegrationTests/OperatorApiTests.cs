@@ -753,17 +753,9 @@ public sealed class OperatorApiTests
 	{
 		private readonly RoseServerProcess _process;
 
-		/// <summary>
-		/// The server's local application data, a folder of this test's own: the broker keeps per-machine records
-		/// there -- what a person debugged lately among them -- and the ones in the user's own folder belong to the
-		/// person using the machine and to the tray serving them.
-		/// </summary>
-		private readonly string _home;
-
-		private OperatorBroker(RoseServerProcess process, int port, string home)
+		private OperatorBroker(RoseServerProcess process, int port)
 		{
 			_process = process;
-			_home = home;
 			Port = port;
 
 			Client = new HttpClient { Timeout = Ceiling };
@@ -774,8 +766,8 @@ public sealed class OperatorApiTests
 
 		public int Port { get; }
 
-		/// <summary>The local application data this server was given, which no other server shares.</summary>
-		public string Home => _home;
+		/// <summary>The local application data this server was given by the suite, which no other server shares.</summary>
+		public string Home => _process.LocalAppData;
 
 		/// <summary>Carries the token, so every request is one an operator's tools would make.</summary>
 		public HttpClient Client { get; }
@@ -793,15 +785,14 @@ public sealed class OperatorApiTests
 		public static async Task<OperatorBroker> StartAsync(CancellationToken cancellationToken)
 		{
 			var port = RoseServerProcess.FreePort();
-			var home = Path.Combine(Path.GetTempPath(), "RoseMcp.IntegrationTests", "OperatorBroker", Guid.NewGuid().ToString("N"));
 			var process = RoseServerProcess.StartWith(
-				new Dictionary<string, string> { ["ROSEMCP_TOKEN"] = Token, ["ROSEMCP_LOCAL_APP_DATA"] = home },
+				new Dictionary<string, string> { ["ROSEMCP_TOKEN"] = Token },
 				"--transport",
 				"http",
 				"--port",
 				port.ToString());
 
-			var broker = new OperatorBroker(process, port, home);
+			var broker = new OperatorBroker(process, port);
 
 			try
 			{
@@ -848,15 +839,6 @@ public sealed class OperatorApiTests
 			Client.Dispose();
 			Anonymous.Dispose();
 			_process.Dispose();
-
-			try
-			{
-				if (Directory.Exists(_home)) Directory.Delete(_home, recursive: true);
-			}
-			catch (IOException)
-			{
-				// The server's last write can outlast its process by a moment; a temp folder left behind is litter.
-			}
 
 			return ValueTask.CompletedTask;
 		}

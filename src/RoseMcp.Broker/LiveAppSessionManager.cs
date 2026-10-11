@@ -674,7 +674,7 @@ public sealed class LiveAppSessionManager(
 	/// <para>
 	/// Never a session the person started, which no MCP call ends: an agent it was shared with reaches it to look,
 	/// and its own tidying up would otherwise take the person's debugger away. Such an agent leaves it with
-	/// <see cref="UnshareAsync"/>.
+	/// <see cref="LeaveAsync"/>, which gives up only a share that is still its own.
 	/// </para>
 	/// </summary>
 	public async Task<bool> CloseAsync(string sessionId, CancellationToken cancellationToken)

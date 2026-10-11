@@ -126,6 +126,13 @@ The broker finds the worker binary next to itself, then via `ROSEMCP_WORKER`, th
 project output, so running from source works without publishing first. Non-loopback http binds are
 refused unless `ROSEMCP_TOKEN` is set.
 
+Anything you start from a checkout -- a tray, a server, a window -- runs from its `bin` and holds it
+open until it exits. Give a tray or server a port other than 5077, which an installed tray holds, and
+stop what you started before you finish: start it with `Start-Process -PassThru` and end it with
+`.Kill($true)` on what that returns, so a `dotnet run` takes its child with it, or run it under a
+timeout. One left running fails the next build in that checkout and keeps the checkout from being
+removed.
+
 Deploy over the running instance, or build release zips:
 
 ```

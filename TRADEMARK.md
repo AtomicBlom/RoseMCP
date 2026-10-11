@@ -5,7 +5,7 @@ things: a copyright licence says what you may do with the source, and it has
 nothing to say about what you may call the result.
 
 **"RoseMCP" and "BinaryVibrance", the rose mark, and the icon and image files
-under `src/RoseMcp.Tray/Assets/` and `src/RoseMcp.Inspector/Assets/` are
+under `src/RoseMcp.Tray/Assets/` and `src/RoseMcp.App/Assets/` are
 trademarks and brand assets of Steven Blom, trading as BinaryVibrance.** Section
 6 of the Apache License grants no rights in them, and that exclusion is
 deliberate rather than an oversight.

@@ -262,8 +262,17 @@ public static class OperatorApi
 	/// <c>waitSeconds</c>, to be answered when a row changes. Read from the broker alone, so it never waits on a
 	/// load and never counts as using a workspace. The wait reads the rows without their memory, which the version
 	/// leaves out, and the answer samples it once.
+	/// <para>
+	/// And what a person does to one row: reading its full status when its detail is opened, reloading it and
+	/// closing it. Each names a workspace the broker holds a row for and is refused for any other, so nothing here
+	/// starts a worker for a solution nobody had open; none is a tool call, so none is in the activity record, and
+	/// the status read is held without counting as use. They are here rather than reached through the MCP tools
+	/// because a window holds the operator token and no MCP session, and because closing a workspace every agent
+	/// shares is the person's call.
+	/// </para>
 	/// </summary>
-	private static void MapWorkspaces(RouteGroupBuilder operators) =>
+	private static void MapWorkspaces(RouteGroupBuilder operators)
+	{
 		operators.MapGet(
 			"/workspaces",
 			async (OperatorViews views, LongPoll poll, HttpContext context, string? after = null, int waitSeconds = 0) =>
@@ -280,6 +289,25 @@ public static class OperatorApi
 
 				return Json(views.Workspaces());
 			});
+
+		// The path is a query argument for the reason a value path is: it carries backslashes and a colon.
+		operators.MapGet(
+			"/workspaces/status",
+			async (string workspace, WorkspaceManager workspaces, HttpContext context, bool projects = true) =>
+				Json(await workspaces.StatusOfHeldAsync(workspace, projects, context.RequestAborted)));
+
+		// Not cancelled by the window going away: a reload is a close and a start, and one abandoned between the two
+		// leaves the workspace closed when the person asked for it reloaded.
+		operators.MapPost(
+			"/workspaces/reload",
+			async (OperatorWorkspaceRequest body, WorkspaceManager workspaces, OperatorViews views) =>
+				Json(views.Workspace(await workspaces.ReloadHeldAsync(body.Workspace, CancellationToken.None))));
+
+		operators.MapPost(
+			"/workspaces/close",
+			async (OperatorWorkspaceRequest body, WorkspaceManager workspaces) =>
+				Json(await workspaces.CloseHeldAsync(body.Workspace, CancellationToken.None)));
+	}
 
 	/// <summary>
 	/// What Rose holds in memory -- the broker, each worker and each live-app host -- what each debugged app holds

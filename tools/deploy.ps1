@@ -415,9 +415,9 @@ function Assert-WindowsPackage
         nothing downstream looked. release.yml asserts only that an archive exists, which is true of a
         zip with no xaml-provider directory in it at all, so the release went green, the checksums
         were computed over it, and rose_xaml_tree failed on every target of that architecture for a
-        reason that was in a log nobody reads on a green run. A package missing the inspector is no
-        more visible: the tray comes up, and Inspect reports that it cannot find the exe -- which reads
-        like a lookup bug rather than a package that never carried one.
+        reason that was in a log nobody reads on a green run. A package missing the RoseMCP app is no
+        more visible: the tray comes up, and Open RoseMCP reports that it cannot find the exe -- which
+        reads like a lookup bug rather than a package that never carried one.
 
         Asserted here rather than at the upload step, which is as close to the cause as it can be put.
     #>

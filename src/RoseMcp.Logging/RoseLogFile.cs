@@ -50,7 +50,7 @@ public static partial class RoseLogFile
 	/// the temp directory keeps them somewhere findable and keeps the shape identical.
 	/// </para>
 	/// </summary>
-	/// <param name="component">Server, Worker, LiveApp, Tray or Inspector -- the process, not the assembly.</param>
+	/// <param name="component">Server, Worker, LiveApp, Tray or App -- the process, not the assembly.</param>
 	/// <param name="localAppData">Overrides the profile root.</param>
 	/// <param name="logRoot">A directory to log under instead, as <see cref="RootVariable"/> names one.</param>
 	public static string DirectoryFor(string component, string? localAppData = null, string? logRoot = null)

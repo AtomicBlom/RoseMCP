@@ -679,7 +679,7 @@ internal sealed class TrayIconHost : IDisposable
 	{
 		if (_disposed) return;
 
-		var canOpen = _broker.IsServing && InspectorLauncher.ResolvePath(_app.Options.InspectorPath) is not null;
+		var canOpen = _broker.IsServing && RoseAppLauncher.ResolvePath(_app.Options.AppPath) is not null;
 		if (canOpen)
 		{
 			Do(TrayAction.OpenRose);
@@ -760,7 +760,7 @@ internal sealed class TrayIconHost : IDisposable
 		var startup = new StartupState(StartupRegistration.IsEnabled, StartupRegistration.PointsElsewhere, _startupRefused);
 		_startupRefused = false;
 
-		var installed = InspectorLauncher.ResolvePath(_app.Options.InspectorPath) is not null;
+		var installed = RoseAppLauncher.ResolvePath(_app.Options.AppPath) is not null;
 		var entries = TrayStatus.Menu(Facts(), startup, installed);
 
 		_menu.Items.Clear();
@@ -794,8 +794,11 @@ internal sealed class TrayIconHost : IDisposable
 		switch (action)
 		{
 			case TrayAction.OpenRose:
-			case TrayAction.DebugAnApp:
 				OpenRose();
+				break;
+
+			case TrayAction.DebugAnApp:
+				OpenRose(inspect: true);
 				break;
 
 			case TrayAction.OpenNoteAnswers:
@@ -834,15 +837,16 @@ internal sealed class TrayIconHost : IDisposable
 	}
 
 	/// <summary>
-	/// Starts the RoseMCP app against this broker, on whatever it finds. That app is the Inspector, which with
-	/// no session named adopts the one debug session there is, or says there are none or several. "Debug an
-	/// app" opens the same, because the app has no start page of its own to open on.
+	/// Starts the RoseMCP app against this broker: the RoseMCP window, or with <paramref name="inspect"/> an
+	/// Inspector window, which with no session named adopts the one debug session there is, or says there are
+	/// none or several. An app already open against this broker is handed the launch instead, and takes this
+	/// run's token with it, which is how a window left open across a restart reconnects.
 	/// <para>
 	/// A launch that fails is a failure like any other, said with the log, rather than a tray that dies over an
 	/// optional app and takes every warm worker with it.
 	/// </para>
 	/// </summary>
-	private void OpenRose()
+	private void OpenRose(bool inspect = false)
 	{
 		var now = DateTimeOffset.UtcNow;
 		if (now - _lastOpened < ClickSettle) return;
@@ -851,12 +855,13 @@ internal sealed class TrayIconHost : IDisposable
 
 		try
 		{
-			using var started = InspectorLauncher.Launch(
+			using var started = RoseAppLauncher.Launch(
 				_app.Options.Host,
 				_app.Options.Port,
 				_app.OperatorToken,
 				sessionId: null,
-				_app.Options.InspectorPath);
+				_app.Options.AppPath,
+				inspect: inspect);
 		}
 		catch (Exception exception) when (exception is FileNotFoundException or Win32Exception or InvalidOperationException)
 		{
@@ -899,7 +904,7 @@ internal sealed class TrayIconHost : IDisposable
 	}
 
 	/// <summary>
-	/// The folder above this component's: Server, Worker, Tray and Inspector sit side by side under it, and
+	/// The folder above this component's: Server, Worker, Tray and App sit side by side under it, and
 	/// the question that brings someone here is usually which of them has the answer.
 	/// </summary>
 	private static void OpenLogFolder()

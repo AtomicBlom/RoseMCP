@@ -464,20 +464,28 @@ function Stop-TrackedProcess
     }
 }
 
-function Stop-Inspector
+function Stop-App
 {
     <#
-        Called before the tray: the inspector holds no workers and nothing waits on it, but its exe is
+        Called before the tray: the RoseMCP app holds no workers and nothing waits on it, but its exe is
         in the tree about to be overwritten and a running one fails the copy. It is not restarted
         afterwards -- it is opened from the tray, and reopening a window somebody closed is the
         installer deciding what they were doing.
+
+        Both names, because an install laid down from a package that carried the Inspector as an app of
+        its own still has that executable in its 'inspector' folder, and a running one holds the folder
+        an uninstall removes. Named here rather than read from the published layout, since the
+        uninstaller runs this script with no layout beside it.
     #>
     param([Parameter(Mandatory)][string] $Root)
 
-    $running = Get-InstalledProcess -Name 'RoseMcp.Inspector' -Root $Root
+    $running = @(
+        Get-InstalledProcess -Name 'RoseMcp.App' -Root $Root
+        Get-InstalledProcess -Name 'RoseMcp.Inspector' -Root $Root
+    )
     if ($running.Count -eq 0) { return }
 
-    Write-Host "  stopping inspector (pid $($running.Id -join ', '))"
+    Write-Host "  stopping the RoseMCP app (pid $($running.Id -join ', '))"
     Stop-TrackedProcess -Process $running
 }
 
@@ -557,7 +565,7 @@ function Stop-Install
 {
     <#
         Everything running out of an install root, in the order that lets the copy succeed: the
-        inspector first because nothing waits on it, then the tray, then the workers it owned, then
+        RoseMCP app first because nothing waits on it, then the tray, then the workers it owned, then
         any stdio server holding the same assemblies.
 
         -KeepCurrentRelay is for installing over an install: the relays are left running if the relay
@@ -591,7 +599,7 @@ function Stop-Install
         if ($relayIsCurrent) { $relaysKept = (Get-RelayProcess -Root $Root).Count }
     }
 
-    Stop-Inspector -Root $Root
+    Stop-App -Root $Root
     $trayWasRunning = Stop-Tray -Root $Root -DrainSeconds $DrainSeconds
 
     # A relay of another protocol goes before the servers, counted on its own: its session needs /mcp

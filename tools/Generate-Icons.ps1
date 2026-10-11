@@ -20,10 +20,11 @@
 #>
 [CmdletBinding()]
 param(
-    # Which app's mark to draw. The composition is the same either way, and the bowl is what differs:
-    # the tray gets the rose, the inspector a lens whose handle is the leg of the R.
+    # Which mark to draw. The composition is the same either way, and the bowl is what differs: the
+    # tray and the RoseMCP window get the rose, an Inspector window a lens whose handle is the leg of the R.
     [ValidateSet('Rose', 'Lens')] [string] $Mark = 'Rose',
-    # Each app owns the icon it shows, so each mark goes to that app's own Assets folder.
+    # Each app owns the icons it shows, so each mark goes to the Assets folder of every app that shows
+    # it: the rose to the tray's and the RoseMCP app's, the lens to the RoseMCP app's alone.
     [string] $AssetDirectory,
     [string] $BaseName
 )
@@ -41,12 +42,18 @@ $MarkSize = 128
 
 if (-not $BaseName) { $BaseName = if ($Mark -eq 'Lens') { 'rose-inspector' } else { 'rose-mcp' } }
 
-if (-not $AssetDirectory)
+$AssetDirectories = if ($AssetDirectory)
 {
-    $app = if ($Mark -eq 'Lens') { 'RoseMcp.Inspector' } else { 'RoseMcp.Tray' }
-    $AssetDirectory = "$PSScriptRoot/../src/$app/Assets"
+    @($AssetDirectory)
+}
+else
+{
+    $apps = if ($Mark -eq 'Lens') { @('RoseMcp.App') } else { @('RoseMcp.Tray', 'RoseMcp.App') }
+    $apps | ForEach-Object { "$PSScriptRoot/../src/$_/Assets" }
 }
 
+# Drawn into the first folder and copied to the rest, so two apps showing one mark show the same bytes.
+$AssetDirectory = $AssetDirectories[0]
 $IcoPath = Join-Path $AssetDirectory "$BaseName.ico"
 $PngPath = Join-Path $AssetDirectory "$BaseName.png"
 
@@ -155,3 +162,10 @@ $markBitmap.Dispose()
 
 "wrote $IcoPath ($([Math]::Round((Get-Item $IcoPath).Length / 1KB)) KB, $($frames.Count) frames: $($Sizes -join ', '))"
 "wrote $PngPath ($([Math]::Round((Get-Item $PngPath).Length / 1KB)) KB, $MarkSize)"
+
+foreach ($other in ($AssetDirectories | Select-Object -Skip 1))
+{
+    if (-not (Test-Path $other)) { New-Item -ItemType Directory -Force -Path $other | Out-Null }
+    Copy-Item -LiteralPath $IcoPath, $PngPath -Destination $other -Force
+    "copied both to $other"
+}

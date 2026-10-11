@@ -1,9 +1,10 @@
 # The debugging and XAML inspection UI is a separate process that reads the broker over http
 
-**Decision.** A person inspecting a debug session gets `RoseMcp.Inspector`, a WinUI 3 app of its own,
+**Decision.** A person inspecting a debug session gets an Inspector window of `RoseMcp.App`, a WinUI 3 app of its own,
 launched from the tray and talking to the tray's in-process broker over a loopback http surface
 mounted at `/operator`. The tray has no window of its own (see
-[the decision](the-tray-process-owns-only-its-icon.md)); the inspector holds everything -- the event
+[the decision](the-tray-process-owns-only-its-icon.md)), and the app holds the RoseMCP window beside it
+([the decision](one-rosemcp-app-per-broker-holds-every-window.md)); the Inspector holds everything -- the event
 tail, breakpoints, the call stack, locals, threads, and the live visual tree.
 
 **Why a second process rather than another tray window.** The tray *is* the broker. Restarting it

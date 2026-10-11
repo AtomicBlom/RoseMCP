@@ -366,6 +366,64 @@ public sealed class OperatorApiTests
 		clients.Clients.ShouldContain(client => client.Calls >= 2);
 	}
 
+	/// <summary>
+	/// What a person does to a workspace through the real broker: its full status read on request, its projects
+	/// included, without counting as use; a reload that answers with the new worker's row; and a close that takes the
+	/// row away. None of it is a call an agent made, so the record holds only the agent's own.
+	/// </summary>
+	[Test]
+	public async Task A_person_reads_reloads_and_closes_a_workspace()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		await using var agent = await McpClient.CreateAsync(
+			new HttpClientTransport(new HttpClientTransportOptions
+			{
+				Endpoint = new Uri(broker.Url("/")),
+				AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {Token}" },
+			}),
+			new McpClientOptions { DiscoverProbeTimeout = Timeout.InfiniteTimeSpan },
+			cancellationToken: cancellationToken);
+
+		(await agent.CallToolAsync(
+			ToolNames.WorkspaceStatus,
+			new Dictionary<string, object?> { ["workspace"] = fixture.SolutionPath },
+			cancellationToken: cancellationToken)).IsError.ShouldNotBe(true);
+
+		var before = (await broker.GetAsync<OperatorWorkspaceList>("/operator/workspaces", cancellationToken)).Workspaces.ShouldHaveSingleItem();
+		var workspace = Uri.EscapeDataString(fixture.SolutionPath);
+
+		var status = await broker.GetAsync<WorkspaceStatusReport>($"/operator/workspaces/status?workspace={workspace}", cancellationToken);
+		status.Workspace.ShouldBe(fixture.SolutionPath);
+		status.Projects.ShouldNotBeEmpty("a person reading why a load went as it did reads every project");
+		status.Revision.ShouldBeGreaterThan(0);
+
+		var after = (await broker.GetAsync<OperatorWorkspaceList>("/operator/workspaces", cancellationToken)).Workspaces.ShouldHaveSingleItem();
+		after.LastUsedUtc.ShouldBe(before.LastUsedUtc, "reading a status is looking, not using");
+
+		var body = new OperatorWorkspaceRequest { Workspace = fixture.SolutionPath };
+		using (var reloaded = await broker.Client.PostAsJsonAsync(broker.Url("/operator/workspaces/reload"), body, ContractJson.Options, cancellationToken))
+		{
+			reloaded.StatusCode.ShouldBe(System.Net.HttpStatusCode.OK);
+			var row = (await reloaded.Content.ReadFromJsonAsync<OperatorWorkspace>(ContractJson.Options, cancellationToken))!;
+			row.Summary.Workspace.ShouldBe(fixture.SolutionPath);
+			row.Summary.ProcessId.ShouldNotBe(before.Summary.ProcessId, "a reload is a fresh worker");
+		}
+
+		using (var closed = await broker.Client.PostAsJsonAsync(broker.Url("/operator/workspaces/close"), body, ContractJson.Options, cancellationToken))
+		{
+			closed.StatusCode.ShouldBe(System.Net.HttpStatusCode.OK);
+			(await closed.Content.ReadFromJsonAsync<WorkspaceClosed>(ContractJson.Options, cancellationToken))!.Closed.ShouldBeTrue();
+		}
+
+		(await broker.GetAsync<OperatorWorkspaceList>("/operator/workspaces", cancellationToken)).Workspaces.ShouldBeEmpty();
+
+		var activity = await broker.GetAsync<ActivityPage>("/operator/activity", cancellationToken);
+		activity.Entries.Where(entry => entry.Kind == ActivityEntryKind.Call).Select(entry => entry.Tool).ShouldBe([ToolNames.WorkspaceStatus]);
+	}
+
 	/// <summary>The session's row of the memory report, once its host says it is serving the app.</summary>
 	private static async Task<LiveAppMemory> SessionMemoryAsync(OperatorBroker broker, string sessionId, CancellationToken cancellationToken)
 	{

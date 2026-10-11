@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The RoseMCP app: the RoseMCP window, organised by agent, and one Inspector window per debugged
+       process. A separate process from the tray on purpose: the tray is the broker, so restarting it
+       drops every loaded solution and detaches every debug session, and a window is the largest crash
+       surface there is. Everything it shows is read over the broker's operator API; an Inspector window
+       is always a client of a session somebody else started, because a process has one debugger. -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- What Task Manager and the taskbar call the process: the product, not the assembly. -->
+    <AssemblyTitle>RoseMCP</AssemblyTitle>
+    <Product>RoseMCP</Product>
+    <!-- Overrides the repo-wide net10.0. WinUI needs a Windows target framework. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <RuntimeIdentifier Condition=" '$(RuntimeIdentifier)' == '' ">win-x64</RuntimeIdentifier>
+    <Platforms>x64;ARM64</Platforms>
+    <UseWinUI>true</UseWinUI>
+    <!-- Unpackaged, so it is xcopy-runnable beside the tray with no MSIX in the way. -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- XAML code generation produces warnings we do not control. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- The generated entry point cannot claim the single-instance key before the app starts, and
+         claiming it afterwards is too late: a second launch would already have built a window.
+         Program.cs is the entry point instead. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" />
+    <!-- Excluded, not omitted: the WindowsAppSDK metapackage depends on it through
+         Microsoft.WindowsAppSDK.ML, so it arrives whether or not it is named here. Its assets are the
+         ONNX and DirectML runtimes, some 39 MB per architecture per app, and nothing in RoseMCP calls
+         a machine learning API. A direct reference is what makes ExcludeAssets reach a transitive
+         dependency at all. -->
+    <PackageReference Include="Microsoft.Windows.AI.MachineLearning" ExcludeAssets="all" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RoseMcp.Settings\RoseMcp.Settings.csproj" />
+    <ProjectReference Include="..\RoseMcp.Logging\RoseMcp.Logging.csproj" />
+    <ProjectReference Include="..\RoseMcp.Ui\RoseMcp.Ui.csproj" />
+    <ProjectReference Include="..\RoseMcp.Ui.Core\RoseMcp.Ui.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="Assets\**" />
+    <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

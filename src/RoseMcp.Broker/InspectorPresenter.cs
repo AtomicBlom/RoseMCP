@@ -8,7 +8,7 @@ namespace RoseMcp.Broker;
 /// <summary>
 /// Opens the inspector on a session that has just started, when something asked for it.
 /// <para>
-/// A seam rather than a call to <see cref="InspectorLauncher"/> because only the host knows whether
+/// A seam rather than a call to <see cref="RoseAppLauncher"/> because only the host knows whether
 /// there is anything to open an inspector <em>against</em>. The operator API is what the inspector
 /// talks to, and a bare stdio broker has neither a port nor a token -- so in that host this cannot
 /// be honoured at all, and the honest thing is to say so rather than quietly do nothing.
@@ -65,18 +65,15 @@ public sealed class OperatorInspector(
 	ILogger<OperatorInspector> logger,
 	string? inspectorPath = null) : IInspectorPresenter
 {
-	public bool CanShow => InspectorLauncher.ResolvePath(inspectorPath) is not null;
+	public bool CanShow => RoseAppLauncher.ResolvePath(inspectorPath) is not null;
 
-	public string? Obstacle => CanShow
-		? null
-		: "No inspector is installed. A published install has it in 'inspector' beside the tray's own "
-			+ "folder; from source, build RoseMcp.Inspector, or set ROSEMCP_INSPECTOR to its executable.";
+	public string? Obstacle => CanShow ? null : RoseAppLauncher.NotInstalled;
 
 	public string? Show(string sessionId, int? targetProcessId)
 	{
 		try
 		{
-			InspectorLauncher.Launch(host, port, token, sessionId, inspectorPath, targetProcessId);
+			RoseAppLauncher.Launch(host, port, token, sessionId, inspectorPath, targetProcessId);
 			return null;
 		}
 		catch (Exception exception)

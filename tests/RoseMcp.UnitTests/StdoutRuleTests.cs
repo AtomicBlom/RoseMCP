@@ -91,7 +91,7 @@ public sealed partial class StdoutRuleTests
 		loaded.ShouldContain("RoseMcp.Broker");
 		loaded.ShouldContain("RoseMcp.XamlStubs");
 		loaded.ShouldNotContain("RoseMcp.Tray");
-		loaded.ShouldNotContain("RoseMcp.Inspector");
+		loaded.ShouldNotContain("RoseMcp.App");
 	}
 
 	[Test]

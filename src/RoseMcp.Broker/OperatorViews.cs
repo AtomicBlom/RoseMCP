@@ -73,6 +73,10 @@ public sealed class OperatorViews(
 		};
 	}
 
+	/// <summary>One worker's row, as <see cref="Workspaces"/> lists it, memory sampled: what a reload answers with.</summary>
+	public OperatorWorkspace Workspace(WorkspaceWorker worker) =>
+		Row(worker, _options.TimeProvider.GetUtcNow().UtcDateTime, sampleMemory: true);
+
 	/// <summary>Every debug session, whoever started it, as <see cref="LiveAppSessionManager.Describe"/> lists them.</summary>
 	public OperatorSessionList Sessions()
 	{

@@ -82,7 +82,7 @@ variable first, then from the published layout, then from a build in the reposit
 | `ROSEMCP_WORKER` | The worker executable started for every solution |
 | `ROSEMCP_LIVEAPP_HOST` | The live-app host started for every debug session |
 | `ROSEMCP_XAML_PROVIDER` | The native DLL injected into every inspected app |
-| `ROSEMCP_INSPECTOR` | The inspector executable the tray starts, and hands its token to |
+| `ROSEMCP_APP` | The RoseMCP app the tray and the broker start, and hand their token to |
 
 Whoever controls the broker's environment chooses what runs as the user and what is loaded into the
 user's applications. That is the user's authority again, but it means these variables are code

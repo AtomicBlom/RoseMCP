@@ -628,6 +628,87 @@ public sealed class WorkspaceManager(
 	}
 
 	/// <summary>
+	/// The solution this broker holds a row for under <paramref name="solutionPath"/>, as the row names it.
+	/// <para>
+	/// What a person's window acts on: a workspace it was shown, by the path it was shown, rather than a path
+	/// routed the way an agent's call is. A path the broker holds no row for is refused rather than resolved,
+	/// because the window offered only rows, and a reload or a status that started a worker for a solution
+	/// nobody had open would load it on a person's click without their having asked for that.
+	/// </para>
+	/// </summary>
+	/// <exception cref="KeyNotFoundException">The broker holds no row for that path.</exception>
+	private string Held(string solutionPath)
+	{
+		if (!string.IsNullOrWhiteSpace(solutionPath) && _workers.TryGetValue(solutionPath, out var worker)) return worker.SolutionPath;
+
+		throw new KeyNotFoundException(
+			$"No workspace '{solutionPath}' is open in this broker. GET /operator/workspaces lists the ones there are; "
+				+ "one that closed after the list was read has gone since.");
+	}
+
+	/// <summary>
+	/// Reloads a workspace a person's window was shown: stops its worker, running or stopped, and starts a fresh
+	/// one under the build properties it was last asked for, as <c>rose_workspace_reload</c> does. Answers once the
+	/// new worker is registered, without waiting for its load, which the window follows on its own list.
+	/// </summary>
+	/// <exception cref="KeyNotFoundException">The broker holds no row for that path.</exception>
+	public Task<WorkspaceWorker> ReloadHeldAsync(string solutionPath, CancellationToken cancellationToken) =>
+		RestartResolvedAsync(Held(solutionPath), cancellationToken);
+
+	/// <summary>Closes a workspace a person's window was shown, as <c>rose_workspace_close</c> does.</summary>
+	/// <exception cref="KeyNotFoundException">The broker holds no row for that path.</exception>
+	public async Task<Contracts.WorkspaceClosed> CloseHeldAsync(string solutionPath, CancellationToken cancellationToken)
+	{
+		var held = Held(solutionPath);
+
+		return new Contracts.WorkspaceClosed
+		{
+			Workspace = held,
+			WorkspaceKey = Solutions.WorkspaceKey.For(held),
+			Closed = await CloseResolvedAsync(held, cancellationToken),
+		};
+	}
+
+	/// <summary>
+	/// The full status of a workspace a person's window was shown, its projects included where asked: what a
+	/// degraded row's detail reads when somebody opens it, rather than something polled.
+	/// <para>
+	/// Never starts a worker. A row that has stopped answers from what the broker knows of why, as
+	/// <see cref="StatusAsync"/> does; one that has gone since the window read its list is refused. A running one
+	/// is held for the call so the sweep cannot stop it mid-answer, and not counted as use: a person reading why a
+	/// workspace is degraded is looking at it, not working in it, and looking must not keep it warm.
+	/// </para>
+	/// </summary>
+	/// <exception cref="KeyNotFoundException">The broker holds no row for that path.</exception>
+	public async Task<Contracts.WorkspaceStatusReport> StatusOfHeldAsync(
+		string solutionPath,
+		bool includeProjects,
+		CancellationToken cancellationToken)
+	{
+		WorkspaceWorker worker;
+		IDisposable hold;
+
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			var held = Held(solutionPath);
+			worker = _workers[held];
+			if (!worker.IsAlive) return Attribute(worker.StoppedStatus(), worker);
+
+			hold = worker.Hold(use: false);
+		}
+		finally
+		{
+			_gate.Release();
+		}
+
+		using (hold)
+		{
+			return await StatusOfAsync(worker, cancellationToken, progress: null, includeProjects);
+		}
+	}
+
+	/// <summary>
 	/// Kills and restarts a worker. This is the only reliable way to pick up a rebuilt analyzer or
 	/// generator: assembly loading is one-way, so a process that has loaded the old one can never
 	/// see the new one.

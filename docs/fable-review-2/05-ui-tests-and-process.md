@@ -160,12 +160,12 @@ needed instead of `Wait()` because redirection completes through a COM call back
   index into it. Same work as the correctness fix in UIP-01, so do them together.
 
 ### ~~UIP-04 The tray hand-rolls its own merge because `Rows.Merge` cannot take a comparer~~
-**#462.** The tray's window merged its workspace rows with a copy of `Rows.Merge`, because the shared
-one takes no comparer for a path. The copy was deleted with the tray's window.
+**#462, #463.** A window's workspace rows were merged by a copy of the shared merge, which took no
+comparer for a path. The shared merge takes one, and workspace rows are keyed by path as the broker compares paths.
 
 ### ~~UIP-05 `WorkspaceRow` is stranded in the WinUI project by a single enum, so five pure functions cannot be tested~~
-**#462.** The workspace row lived in the WinUI project over one enum, so its wording could not be tested.
-It was deleted with the tray's window.
+**#462, #463.** The workspace row lived in the WinUI project over one enum, so its wording could not be tested.
+It is a `Ui.Core` type, and its tone is tested.
 
 ### ~~UIP-06 Four pure `public static` functions sit on a WinUI `Window` where nothing can reach them~~
 **#462.** The tray's lines sat on its `Window`, where no test could reach them. The window is gone, and
@@ -206,8 +206,8 @@ what the icon says is in `Ui.Core` with tests.
   `A_stop_that_ends_gives_the_hold_back` -- beside the nine that are already there.
 
 ### ~~UIP-09 `WorkspaceRow` and `SessionRow` are the same class twice~~
-**#462.** The workspace row and the session row each carried their own activity list. The workspace row
-was deleted with the tray's window.
+**#462, #463.** The workspace row and the session row each carried their own activity list. The workspace
+row carries none: a workspace's calls are read from the activity record.
 
 ### UIP-10 Two windows, two copies of three platform interactions
 - **Severity:** Low

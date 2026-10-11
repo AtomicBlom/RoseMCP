@@ -61,12 +61,12 @@ earlier: each change reads the file under a lock file and changes only its own f
 announced by whichever tray claims it first, and the last build is keyed by the executable's path, so
 each restart names the build that install moved from.
 
-## What waits for the RoseMCP window
+## Where the window's other duties went
 
-The preferences that had items on the tray's window -- show the inspector on attach, reload a
-workspace when its analyzers are rebuilt -- keep working from the settings file; the first has its
-toggle in the inspector, the second has none until the RoseMCP window gives it one. So do closing
-every workspace and copying the command that starts an inspector by hand. Open RoseMCP and Debug an
-app both start the inspector with no session named, which adopts the one debug session there is or
-says there are none or several, until the RoseMCP window (#463) and its debug start page (#465)
-exist.
+The preferences with no item on the icon's menu -- show the Inspector on attach, reload a workspace
+when its analyzers are rebuilt -- are toggled in the RoseMCP window's settings, as are closing every
+workspace and copying the command that opens the window by hand
+([the app](one-rosemcp-app-per-broker-holds-every-window.md)). Open RoseMCP starts the RoseMCP window;
+Debug an app starts an Inspector window with no session named, which adopts the one debug session
+there is or says there are none or several, until the debug start page (#465) gives it something to
+open on.

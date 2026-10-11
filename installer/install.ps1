@@ -12,7 +12,7 @@
     live-app hosts are shared rather than duplicated: an ARM64 machine can execute ARM64, x64 and x86
     and an x64 machine the last two, so the ARM64 set is a superset and one copy serves both.
 
-    It installs over a running instance the way deploy.ps1 promotes over one -- the inspector, then
+    It installs over a running instance the way deploy.ps1 promotes over one -- the RoseMCP app, then
     the tray, then the workers it owned, then any stdio server holding the same assemblies -- because
     a running exe cannot be overwritten and the failure otherwise arrives halfway through the copy,
     with the install already unusable. The relay a client registers is the exception: its folder is

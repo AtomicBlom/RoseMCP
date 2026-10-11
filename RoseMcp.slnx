@@ -3,7 +3,7 @@
     <Project Path="src/RoseMcp.Broker/RoseMcp.Broker.csproj" />
     <Project Path="src/RoseMcp.Contracts/RoseMcp.Contracts.csproj" />
     <Project Path="src/RoseMcp.LiveApp/RoseMcp.LiveApp.csproj" />
-    <Project Path="src/RoseMcp.Inspector/RoseMcp.Inspector.csproj">
+    <Project Path="src/RoseMcp.App/RoseMcp.App.csproj">
       <Platform Project="x64" />
     </Project>
     <Project Path="src/RoseMcp.Logging/RoseMcp.Logging.csproj" />

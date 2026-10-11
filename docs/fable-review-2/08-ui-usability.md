@@ -414,8 +414,8 @@ at all.
 ## Findings
 
 ### ~~USE-01 The tray can say a workspace is degraded but never why, because `WorkspaceSummary` throws away the report that says why~~
-**#462.** The tray's window could say a workspace was degraded but not why. It was deleted with the tray's
-window; showing why, on demand, is in card 5.9's row.
+**#462, #463.** A window could say a workspace was degraded but not why. A workspace's detail reads its
+full status on request: its failed projects, its analyzers that would not load, its restore.
 
 ### USE-02 The inspector -- the window for watching an agent debug -- shows nothing about what the agent is doing, and holds the data
 
@@ -664,8 +664,8 @@ running or finished, names its client and the directory it came from.
   stay unavailable during the stop, scoped to the property pane rather than the whole tab.
 
 ### ~~USE-13 "Open log folder" is the escape hatch from every unanswered question in the product, and it opens a folder~~
-**#462.** The tray's window sent every unanswered question to a folder of logs. It was deleted with the
-tray's window; opening a workspace's or a session's own log file is in card 5.9's row.
+**#462, #463.** A window sent every unanswered question to a folder of logs. Each workspace and each
+debug session opens its own log file.
 
 ### USE-14 Rulers produces the numbers a layout conversation is about, and they cannot leave the app
 
@@ -727,7 +727,7 @@ less than it costs, in maintenance, in screen space, or in risk to somebody's ru
 | **The Breakpoints compose form's position** (not the form) | `BreakpointsPane.xaml:17-150` | reorder only | Keep the flow -- it is good -- but it is a driving feature sitting where the supervision view should be. Demote to a disclosure. |
 | ~~The tray's 44px title bar~~ **#462.** | -- | -- | The tray has no window. |
 | ~~The second copy of the tray menu~~ **#462.** | -- | -- | The tray has one menu, on its icon. |
-| ~~`loaded in 24.3s` in the permanent facts line~~ **#462.** | -- | -- | Deleted with the tray's window; where the load time goes is in card 5.9's row. |
+| ~~`loaded in 24.3s` in the permanent facts line~~ **#462.** | -- | -- | Deleted with the tray's window; the load time is in a workspace's detail (#463). |
 
 Two things I considered cutting and would keep:
 
@@ -745,8 +745,8 @@ Two things I considered cutting and would keep:
 
 ### ~~The tray -- three changes, none of them structural~~
 
-**#462.** The tray has no window to change. What these asked of it -- a degraded workspace's details on
-demand, and a session report's age -- is in card 5.9's row.
+**#462, #463.** The tray has no window to change. A degraded workspace's details on demand and a session
+report's age are in the RoseMCP window.
 
 ### The in-app panel -- explain one feature, add one button
 

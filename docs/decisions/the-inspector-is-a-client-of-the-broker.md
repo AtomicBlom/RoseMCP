@@ -1,6 +1,7 @@
 # The inspector is a client of the broker, not a window in the tray
 
-**Decision.** `RoseMcp.Inspector` is its own executable. It owns no debug session, no worker and no
+**Decision.** An Inspector window is a window of the RoseMCP app, `RoseMcp.App`, its own executable (see
+[the decision](one-rosemcp-app-per-broker-holds-every-window.md)). It owns no debug session, no worker and no
 Roslyn workspace; it reads and drives everything over an http operator API the broker serves, and it
 requires a tray or an http server to be running. One window is about one debugged process.
 
@@ -25,10 +26,11 @@ own docstring, and the bearer token is what authenticates it.
 **Why a token and not loopback-only.** Loopback is not a boundary on a developer machine: every
 process on it, including the target being debugged, can reach a loopback port. The operator surface
 reads memory out of an attached process and can move it, so "anything local" is the wrong audience.
-The tray mints one per run and hands it to the window it launches; a window started by hand has no
-way to it until the RoseMCP window offers one (#463). Per run rather than persisted, because a token that outlives the process
-is one that has to be revoked; the cost is that an inspector left open across a tray restart is
-refused, which it says in as many words.
+The tray mints one per run and hands it to the app it launches; a person who wants to start the app by
+hand copies the command, token included, from the RoseMCP window's settings. Per run rather than
+persisted, because a token that outlives the process is one that has to be revoked; the cost is that a
+window left open across a tray restart is refused, which it says in as many words, until the tray's
+next launch hands the running app the new run's token.
 
 **Why the panes are toggled rather than navigated.** A `Frame` recreates a page on every visit, and
 what that loses is the reader's place: the event tail, an open expander, the scroll position, a
@@ -54,7 +56,7 @@ the mechanism rather than a choice, and a reader is told which.
 
 ## What is deliberately absent
 
-**A session list.** The tray lists sessions; this window is about one process and says which in its
+**A session list.** The RoseMCP window's Debugging view lists sessions; this window is about one process and says which in its
 own title. A window that could be re-pointed at another process would make that title a lie.
 
 **Any Roslyn.** It references `RoseMcp.Ui`, `RoseMcp.Ui.Core`, `RoseMcp.Contracts` and the logging

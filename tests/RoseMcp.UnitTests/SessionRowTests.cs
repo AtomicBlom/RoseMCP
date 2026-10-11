@@ -15,7 +15,7 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class SessionRowTests
 {
-	private static LiveAppSessionSummary Session(
+	internal static LiveAppSessionSummary Session(
 		LiveAppSessionState state = LiveAppSessionState.Ready,
 		LiveStop? stop = null,
 		XamlStack stack = XamlStack.Unknown,
@@ -64,6 +64,28 @@ public sealed class SessionRowTests
 		row.IsStopped.ShouldBeFalse();
 		row.ExecutionLabel.ShouldBe(string.Empty);
 		row.ResumeLabel.ShouldBe(string.Empty);
+	}
+
+	/// <summary>
+	/// A session says how old the host's report of it is, counted on between polls, so a host that has stopped
+	/// reporting does not look like one with nothing new to say; and when it attached, and where a packaged target
+	/// was installed from.
+	/// </summary>
+	[Test]
+	public void A_session_says_how_old_its_report_is()
+	{
+		var summary = Session() with { InfoAge = TimeSpan.FromSeconds(2), InstallLocation = @"C:\Program Files\WindowsApps\Probe_1.0" };
+		var row = new SessionRow(summary);
+
+		row.ReportAge.ShouldStartWith("reported 2");
+		row.HasInstallLocation.ShouldBeTrue();
+		row.InstallLocation.ShouldBe(summary.InstallLocation);
+		row.Attached.ShouldNotBeEmpty();
+
+		row.Tick(DateTime.UtcNow.AddSeconds(30));
+		row.ReportAge.ShouldBe("reported 32s ago");
+
+		new SessionRow(Session()).ReportAge.ShouldBe("no report from the host yet");
 	}
 
 	/// <summary>

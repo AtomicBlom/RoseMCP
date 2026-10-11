@@ -71,36 +71,36 @@ public sealed class PublishedLayoutTests : IDisposable
 	}
 
 	/// <summary>
-	/// The inspector is a sibling of the tray's folder, not of the tray's exe, and the tray is what
+	/// The RoseMCP app is a sibling of the tray's folder, not of the tray's exe, and the tray is what
 	/// launches it; a server asks from the install root. Both are resolutions that have to work on an
 	/// install and cannot be seen from inside the repository.
 	/// </summary>
 	[Test]
-	public void Finds_the_inspector_from_every_folder_a_broker_runs_in()
+	public void Finds_the_app_from_every_folder_a_broker_runs_in()
 	{
-		var inspector = ExecutableOf(Layout.ComponentFor("RoseMcp.Inspector"));
+		var app = ExecutableOf(Layout.ComponentFor("RoseMcp.App"));
 
 		foreach (var broker in BrokerFolders())
 		{
-			var resolved = InspectorLauncher.ResolvePath(baseDirectory: broker, searchRepository: false);
+			var resolved = RoseAppLauncher.ResolvePath(baseDirectory: broker, searchRepository: false);
 
 			resolved.ShouldNotBeNull($"resolving from {broker}");
-			Path.GetFullPath(resolved!).ShouldBe(Path.GetFullPath(inspector), $"resolving from {broker}");
+			Path.GetFullPath(resolved!).ShouldBe(Path.GetFullPath(app), $"resolving from {broker}");
 		}
 	}
 
 	/// <summary>
-	/// Null rather than a throw, because an inspector that is not installed is an ordinary state:
+	/// Null rather than a throw, because an app that is not installed is an ordinary state:
 	/// the tray labels the menu item instead of offering something that cannot work.
 	/// </summary>
 	[Test]
-	public void Says_nothing_rather_than_failing_when_no_inspector_is_published()
+	public void Says_nothing_rather_than_failing_when_no_app_is_published()
 	{
-		File.Delete(ExecutableOf(Layout.ComponentFor("RoseMcp.Inspector")));
+		File.Delete(ExecutableOf(Layout.ComponentFor("RoseMcp.App")));
 
 		foreach (var broker in BrokerFolders())
 		{
-			InspectorLauncher.ResolvePath(baseDirectory: broker, searchRepository: false).ShouldBeNull($"resolving from {broker}");
+			RoseAppLauncher.ResolvePath(baseDirectory: broker, searchRepository: false).ShouldBeNull($"resolving from {broker}");
 		}
 	}
 
@@ -113,16 +113,16 @@ public sealed class PublishedLayoutTests : IDisposable
 	{
 		var token = new OperatorToken("a-token");
 
-		var withSession = InspectorLauncher.CommandLine(
-			@"C:\Program Files\Rose\inspector\RoseMcp.Inspector.exe", "127.0.0.1", 5077, token, "session-abcd1234");
+		var withSession = RoseAppLauncher.CommandLine(
+			@"C:\Program Files\Rose\app\RoseMcp.App.exe", "127.0.0.1", 5077, token, "session-abcd1234");
 
-		withSession.ShouldStartWith("\"C:\\Program Files\\Rose\\inspector\\RoseMcp.Inspector.exe\"", Case.Sensitive);
+		withSession.ShouldStartWith("\"C:\\Program Files\\Rose\\app\\RoseMcp.App.exe\"", Case.Sensitive);
 		withSession.ShouldContain("--port 5077", Case.Sensitive);
 		withSession.ShouldContain("--token a-token", Case.Sensitive);
 		withSession.ShouldContain("--session session-abcd1234", Case.Sensitive);
 
-		var withoutSession = InspectorLauncher.CommandLine(
-			@"C:\Rose\RoseMcp.Inspector.exe", "127.0.0.1", 5077, token, sessionId: null);
+		var withoutSession = RoseAppLauncher.CommandLine(
+			@"C:\Rose\RoseMcp.App.exe", "127.0.0.1", 5077, token, sessionId: null);
 
 		withoutSession.ShouldNotContain("--session", Case.Sensitive);
 	}
@@ -135,15 +135,19 @@ public sealed class PublishedLayoutTests : IDisposable
 	[Test]
 	public void Passes_arguments_as_a_list()
 	{
-		var arguments = InspectorLauncher.Arguments("127.0.0.1", 5077, new OperatorToken("a-token"), "session-1");
+		var arguments = RoseAppLauncher.Arguments("127.0.0.1", 5077, new OperatorToken("a-token"), "session-1");
 
 		arguments.ShouldBe(
 			["--host", "127.0.0.1", "--port", "5077", "--token", "a-token", "--session", "session-1"]);
 
-		// The target's pid rides along when the launcher knows it, because the inspector keys its
-		// single instance on the process and cannot ask anybody what that is in time.
-		InspectorLauncher.Arguments("127.0.0.1", 5077, new OperatorToken("a-token"), "session-1", 4242).ShouldBe(
+		// The target's pid rides along when the launcher knows it, because the app finds the Inspector window
+		// already open on a process by it, before it has asked the broker anything.
+		RoseAppLauncher.Arguments("127.0.0.1", 5077, new OperatorToken("a-token"), "session-1", 4242).ShouldBe(
 			["--host", "127.0.0.1", "--port", "5077", "--token", "a-token", "--session", "session-1", "--target-pid", "4242"]);
+
+		// "Debug an app" names no session, and asks for an Inspector window rather than the RoseMCP window.
+		RoseAppLauncher.Arguments("127.0.0.1", 5077, new OperatorToken("a-token"), sessionId: null, inspect: true).ShouldBe(
+			["--host", "127.0.0.1", "--port", "5077", "--token", "a-token", "--inspect"]);
 	}
 
 	/// <summary>

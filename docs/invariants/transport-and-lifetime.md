@@ -20,7 +20,7 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   that is what the logging test below is for. `RoseMcp.Logging` adds the file sink -- Serilog behind the existing
   `Microsoft.Extensions.Logging` call sites, never a console sink, and there is a regression test
   asserting the pipeline writes nothing to stdout at all. Logs land in
-  `%LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{Server,Worker,Tray,Inspector}/[{solution}-]{yyyyMMdd-HHmmss}.log`
+  `%LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{Server,Worker,LiveApp,Tray,App}/[{solution}-]{yyyyMMdd-HHmmss}.log`
   -- under their own `Logs` folder, separate from the install that shares the same vendor/product
   parent, so promoting a build never touches a session's log files. UTC in the name and UTC in
   every line so the two cannot disagree. A worker's file names the
@@ -246,6 +246,16 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   second for as long as a window is open. Every view goes inside the `/operator` group, where the token
   and the call id apply, and none on `/admin`, which nothing gates: memory and process ids included.
   See [the decision](../decisions/a-window-reads-the-broker-over-the-operator-api-and-waits-on-what-a-view-holds.md).
+- **The RoseMCP app holds a poll only while a window can show what it reads, and never spins on a broker
+  that is not there.** The RoseMCP window's `RoseFeed` is started when the window is on screen and stopped,
+  cancelling every request it holds, when it is minimised or closed; a view not on screen does no work on
+  what arrives, and the Activity view's own poll runs only while it is the view shown. Every long poll is a
+  `ViewWatch`: a read that fails is reported, forgets its version and pauses before the next -- a refused
+  connection answers at once, and without the pause a closed port is a core spinning for as long as the
+  window stays open -- and `Kick` ends the pause, which is what a new token from the tray's next launch
+  does through `OperatorClient.Reauthorise`. The client is the app's, shared by every window and disposed
+  with none of them. An Inspector window still releases its hold before it closes.
+  See [the decision](../decisions/one-rosemcp-app-per-broker-holds-every-window.md).
 - **A live-app session whose host has died is dropped by the session manager, and only that one.**
   A poll that finds the host's transport gone marks the session ended; nothing else would ever
   remove it -- no caller closes a session it can no longer reach -- so the registry would carry it

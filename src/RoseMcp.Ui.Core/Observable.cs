@@ -23,4 +23,11 @@ public abstract class Observable : INotifyPropertyChanged
 		field = value;
 		PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
 	}
+
+	/// <summary>
+	/// Says a property moved that has no field of its own -- one computed from another, such as whether a text is
+	/// empty -- so a binding to it follows the property it is computed from.
+	/// </summary>
+	protected void OnPropertyChanged(string property) =>
+		PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
 }

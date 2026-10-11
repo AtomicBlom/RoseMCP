@@ -47,12 +47,12 @@
       "why": "A folder of its own: WinUI drags in a lot, and mixing it with the server risks one overwriting shared assemblies with windows-targeted variants of a different version. Every resolver the tray runs therefore looks one level up as well as beside itself."
     },
     {
-      "project": "RoseMcp.Inspector",
-      "executable": "RoseMcp.Inspector",
-      "folder": "inspector",
+      "project": "RoseMcp.App",
+      "executable": "RoseMcp.App",
+      "folder": "app",
       "windowsOnly": true,
       "hostsBroker": false,
-      "why": "A folder of its own for the tray's reason, and one more: two WinUI publishes into one directory overwrite each other's WindowsAppSDK payload, and publish -o never removes what it does not write."
+      "why": "The RoseMCP app: the RoseMCP window and the Inspector windows, one process the tray starts. A folder of its own for the tray's reason, and one more: two WinUI publishes into one directory overwrite each other's WindowsAppSDK payload, and publish -o never removes what it does not write."
     }
   ],
   "relay": {

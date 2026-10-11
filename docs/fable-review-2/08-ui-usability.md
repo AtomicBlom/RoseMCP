@@ -29,7 +29,7 @@ All three surfaces are built for a human **doing** the work, and RoseMCP's user 
 why the inspector holds four panes that are smaller versions of Visual Studio's and none that shows
 what the agent is doing; it is why the tray's activity history -- the only record anywhere of what an
 agent did to your solution -- is capped at eight entries and collapsed behind an expander; and it is
-why the panel's pixel tools carry no explanation of the one thing that justifies them. The strongest single fact in this
+why the panel's pixel tools carried no explanation of the one thing that justifies them (#393). The strongest single fact in this
 review is that the broker computes a dozen facts specifically so a window can show them, documents in
 each one's XML summary *why a reader needs it*, and no window renders them: `InfoAge`,
 `InstallLocation`, `LiveAppSessionSummary.Notice`, the names in `FailedProjects`, every field of
@@ -51,7 +51,7 @@ Studio's terms, which it cannot win.
 | **The job** | "Is Rose healthy, what is it costing me, and what is my agent doing to my solution" | "What is the agent doing to my process, why did it stop, do I agree" | "Point at the thing I am talking about" |
 | **The moment they open it** | Something feels wrong (slow agent, suspicious answer); or once, on install, to copy the endpoint | The tray said a session exists and something is stopped, or they clicked Inspect | It is already there -- it is resident from the first XAML call and never opened deliberately |
 | **What it shows** | Headline + subtitle; per-solution cards (state, memory, pid/uptime/config/projects/load time, degraded reasons, running calls, collapsed history); per-session cards (state, pids, XAML stack, stop reason, heartbeat, resume countdown) | Header (session, state, execution, facts); Pause/Continue/3 steps + hold; five tabs -- Events, Breakpoints, Stack, Threads, XAML | Idle / Select / Rulers / Just my XAML / Deselect / Magnify / Hide; a rulers readout row; a zoom row with a hex swatch |
-| **Verdict** | **Useful** | **Wrong-shaped** | **Select: essential. Rulers: useful. Magnify: essential and unexplained.** |
+| **Verdict** | **Useful** | **Wrong-shaped** | **Select: essential. Rulers: useful. Magnify: essential.** |
 
 Per-pane and per-tool verdicts:
 
@@ -73,7 +73,7 @@ Per-pane and per-tool verdicts:
 | Panel: Just my XAML | Essential | And correctly the default |
 | Panel: Deselect / Idle / Hide | Necessary plumbing | Fine; "Idle" reads as a status, not a button |
 | Panel: Rulers (734 lines) | Useful | Real layout work, but the numbers cannot be handed to the agent |
-| Panel: Magnify / Pixel lens / Scale (739 lines) | Essential, unexplained | The OS magnifier filters bilinearly and cannot be told not to, so it can answer neither question this answers; nothing in the repo says so (USE-08) |
+| Panel: Magnify / Pixel lens / Scale (739 lines) | Essential | The OS magnifier filters bilinearly and cannot be told not to, so it can answer neither question this answers; the reason is written beside the feature (#393) |
 
 ---
 
@@ -336,7 +336,7 @@ them, then marked against what the window does.
 | 4 | Now show me that element's properties | **Not answered** | The panel selects; the window that shows the selection is another application with no link to it. Alt-tab, find the tray, find the session, click Inspect. #226 is exactly this and diagnoses it correctly. |
 | 5 | Did the agent's edit land, and on what? | **Not answered** | `rose_xaml_apply` succeeds and nothing in the app marks what changed. The overlay already knows how to draw an outline on a handle. |
 | 6 | Tell the agent this is wrong | **Not answered** | No note, no copy-the-address, no "flag this". The selection is a fact the agent has to think to ask about. |
-| 7 | What colour is that pixel, exactly? | **Answered, uniquely** | And nothing says why it had to be built. The OS magnifier bilinear-filters with no way to disable it, so it cannot give an accurate colour or show a one-pixel gap at a corner radius. That reason is absent from the code, the invariant and the wiki (USE-08). |
+| 7 | What colour is that pixel, exactly? | **Answered, uniquely** | The OS magnifier bilinear-filters with no way to disable it, so it cannot give an accurate colour or show a one-pixel gap at a corner radius. The code, the invariant and a decision say so (#393); the wiki does not. |
 
 ### Where the pitch and the code disagree
 
@@ -531,52 +531,11 @@ running or finished, names its client and the directory it came from.
   there are, and which one is stopped -- into the Stack pane's caption ("4 frames on thread 7 of 6").
   If per-thread stacks are ever wanted, they belong as a thread selector on the Stack pane, not as a
   tab. This is the clearest cut in the review.
-### USE-08 The magnifier's reason for existing is written down nowhere, so a reader concludes it duplicates Windows Magnifier
 
-- **Severity:** Medium
-- **Effort:** S (a comment and a decision record); M if the crash class is to get a test
-- **Where:** `src/RoseMcp.Xaml.Tap/tap_tool_zoom.h:1-11` (the file header), `:178-190` (the `Zoom`
-  enum's comment), `docs/invariants/overlay.md:31-45`
-- **What:** The pixel lens exists for a reason the code never states. **Windows Magnifier applies
-  bilinear filtering that cannot be turned off.** That makes it unable to answer either question this
-  tool exists for: you can never read an accurate colour out of a filtered image, and at 8x you
-  cannot see that a `Border` with a corner radius has a one-pixel gap between its stroke and the
-  background, because the filter smears the gap into the stroke. Nearest-neighbour replication of the
-  captured pixels shows the device pixels the app actually produced, and the render-transform mode
-  scales the live visual tree so text and vectors stay sharp rather than being resampled.
-
-  The code argues the *implementation* alternative and never the *product* one. `tap_tool_zoom.h:183-190`
-  explains at length why a `ScaleTransform` on an `Image` cannot be used, since UWP and WinUI expose
-  no bitmap scaling mode and XAML therefore always filters, and the enum's comment names the two
-  questions the lens answers. Neither says why the operating system's own magnifier cannot answer
-  them. A reviewer arrives with "Windows ships this" and finds nothing in the repository that
-  disagrees. **This review's first draft recommended deleting the feature on exactly that reasoning,
-  and was wrong.**
-- **Why it matters:** This is the repository's own comment convention, "why this and not that",
-  applied to the alternative a maintainer would weigh and not to the alternative a *reviewer* or a
-  *user* would weigh. The cost is not hypothetical: the feature came within one review of being cut,
-  and a user who does not know about the filtering will reach for Win+plus, get a wrong colour, and
-  never learn they were misled. The generalisation is worth taking across the product. Where a
-  feature duplicates something the platform appears to offer, the reason the platform's version does
-  not suffice is load-bearing documentation rather than trivia.
-- **Suggested change:** Three things, none of them deletion.
-  1. Put the reason in `tap_tool_zoom.h`'s file header in one sentence: Windows Magnifier filters
-     bilinearly with no way to disable it, so it cannot answer "what colour is this exactly" or "is
-     this edge one pixel or two", which are the two questions this tool exists for.
-  2. Add a decision record, `the-magnifier-is-nearest-neighbour-because-the-os-one-is-not.md`, and
-     link `overlay.md` to it. The invariant file explains why XAML cannot do it and inherits the
-     same gap.
-  3. Give the crash class a guard rather than a paragraph. The two recorded crashes, reading
-     `PixelWidth` in a completion handler and capturing a `RenderTargetBitmap` in a lambda destroyed
-     on a pool thread, are the strongest argument in the file for the lens being *hard*, not for it
-     being *unwanted*. They are also untested: no test opens the lens, though the overlay's other
-     tests run in CI.
-
-  Surface the reason to the user too. The lens's tooltip says "a nearest-neighbour magnifier that
-  follows the pointer, leaving the app untouched", which describes the mechanism. "Exact pixels and
-  exact colours; the Windows magnifier smooths both" describes the benefit.
-
-
+### ~~USE-08 The magnifier's reason for existing is written down nowhere, so a reader concludes it duplicates Windows Magnifier~~
+**#393.** Nothing said why the panel had a magnifier when Windows ships one, and a review nearly cut it
+as a duplicate. The code, a decision and the lens's tooltip say why it stays: the Windows magnifier
+filters, so it can read neither an exact colour nor a one-pixel gap.
 
 ### USE-09 Nothing in the inspector can be copied, in a window whose purpose is feeding facts to an agent
 
@@ -722,7 +681,7 @@ less than it costs, in maintenance, in screen space, or in risk to somebody's ru
 
 | Cut | Where | Size | Why it earns less than it costs |
 |---|---|---|---|
-| ~~The pixel lens and the hex colour readout~~ **Withdrawn.** | `tap_tool_zoom.h` | -- | The first draft cut this as an OS duplicate. It is not one: Windows Magnifier filters bilinearly with no way to disable it, so it cannot read an exact colour or show a one-pixel gap at a corner radius. Keep the feature; write down why it exists (USE-08). |
+| ~~The pixel lens and the hex colour readout~~ **Withdrawn.** | `tap_tool_zoom.h` | -- | The first draft cut this as an OS duplicate. It is not one: Windows Magnifier filters bilinearly with no way to disable it, so it cannot read an exact colour or show a one-pixel gap at a corner radius. Kept, and why it exists is written beside it (#393). |
 | **The Threads pane** | `ThreadsPane.xaml` + `.xaml.cs` + `ThreadRow` | ~245 lines | A strict subset of Visual Studio's Threads window, answering no supervision question, and the only pane that freezes somebody's application as a side effect of being on screen. |
 | **The Breakpoints compose form's position** (not the form) | `BreakpointsPane.xaml:17-150` | reorder only | Keep the flow -- it is good -- but it is a driving feature sitting where the supervision view should be. Demote to a disclosure. |
 | ~~The tray's 44px title bar~~ **#462.** | -- | -- | The tray has no window. |
@@ -748,9 +707,9 @@ Two things I considered cutting and would keep:
 **#462, #463.** The tray has no window to change. A degraded workspace's details on demand and a session
 report's age are in the RoseMCP window.
 
-### The in-app panel -- explain one feature, add one button
+### The in-app panel -- add one button
 
-1. Write down why the pixel lens exists, in the header, a decision record and the tooltip (USE-08).
+1. ~~Write down why the pixel lens exists~~ **#393.** The code, a decision and the tooltip say why.
 2. Then **#226**: a button that opens the inspector on this session, by the
    four-hop route the issue already designs (named event, host latch, existing once-a-second
    self-report, `InspectorLauncher`). That single button turns a selection into an answer and is the

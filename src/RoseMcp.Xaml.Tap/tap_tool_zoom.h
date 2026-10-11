@@ -3,6 +3,11 @@
 // The magnifier: scaling the app with a render transform, or magnifying a capture of it pixel by
 // pixel and reading the colour under the pointer.
 //
+// Windows has a magnifier of its own, and it cannot do this one's job: it filters bilinearly and
+// cannot be told not to, so it can neither read an exact colour nor show a one-pixel gap at a
+// corner radius. A feature that looks like a copy of the platform's is the first thing a reader
+// would cut, which is why the reason is written here, beside it.
+//
 // Included after the provider's aliases, like the overlay it lives on, because it builds XAML.
 //
 // A tool rather than more of the overlay. It owns its buttons, its row of the toolbar and its
@@ -129,7 +134,7 @@ public:
 			[this] { SetZoomMode(Zoom::Transform); });
 		m_pixelButton = Chip(
 			Glyph(IconPixels, 12.0),
-			L"Pixel lens -- a nearest-neighbour magnifier that follows the pointer, leaving the app untouched",
+			L"Pixel lens -- exact pixels and exact colours, which the Windows magnifier smooths; the app is left alone",
 			[this] { SetZoomMode(Zoom::Lens); });
 		m_zoomOutButton = Chip(Glyph(IconZoomOut, 12.0), L"Zoom out", [this] { ZoomBy(-1); });
 		m_zoomInButton = Chip(Glyph(IconZoomIn, 12.0), L"Zoom in", [this] { ZoomBy(1); });

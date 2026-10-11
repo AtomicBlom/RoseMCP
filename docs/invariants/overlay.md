@@ -28,7 +28,10 @@ Read before changing `src/RoseMcp.Xaml.Tap/tap_overlay.h` or `tap_measure.h`.
   broken by the same cause. And beware the shape of the check that hid it: comparing the layer's
   XamlRoot against the XamlRoot of content fetched *from that same layer's XamlRoot* is circular, and
   reported "shared" no matter what was true.
-- **The magnifier replicates pixels by hand, because XAML will not.** WPF has
+- **The magnifier replicates pixels by hand, because XAML will not.** It exists at all because the
+  Windows magnifier filters bilinearly and cannot be told not to, so it can neither read an exact
+  colour nor show a one-pixel gap; [the decision](../decisions/the-panel-keeps-a-magnifier-because-the-windows-one-filters.md)
+  says why the feature stays. The same filtering is what XAML would add. WPF has
   `RenderOptions.BitmapScalingMode`; UWP and WinUI have no bitmap scaling mode at all -- the only
   `InterpolationMode` either exposes is `ColorInterpolationMode` on a gradient brush -- so a
   `ScaleTransform` on an `Image` always filters and would smear exactly what is being inspected. So a

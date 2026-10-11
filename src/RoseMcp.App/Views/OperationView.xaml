@@ -2,7 +2,8 @@
 	x:Class="RoseMcp.App.Views.OperationView"
 	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
 	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-	xmlns:core="using:RoseMcp.Ui.Core.Views">
+	xmlns:core="using:RoseMcp.Ui.Core.Views"
+	xmlns:views="using:RoseMcp.App.Views">
 
 	<!-- One operation: a line that opens to its body. The same control on an agent's card and in the Activity
 	     view, so an operation reads one way wherever it is. -->
@@ -154,6 +155,9 @@
 			<TextBlock Text="{x:Bind Row.CallId, Mode=OneWay}" Visibility="{x:Bind Row.HasCallId, Mode=OneWay}" TextWrapping="Wrap"
 				IsTextSelectionEnabled="True" Style="{StaticResource CaptionTextBlockStyle}"
 				Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+
+			<!-- A note to the agent that made the call, about the call. -->
+			<views:NoteComposerView Composer="{x:Bind Row.Composer, Mode=OneWay}" />
 		</StackPanel>
 	</StackPanel>
 </UserControl>

@@ -97,6 +97,10 @@ public sealed class ProducedFactTests
 		typeof(WorkerMemory),
 		typeof(LiveAppMemory),
 		typeof(MachineMemory),
+		typeof(AgentNote),
+		typeof(NoteSubject),
+		typeof(NoteReply),
+		typeof(NoteList),
 	];
 
 	/// <summary>

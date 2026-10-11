@@ -4,13 +4,13 @@ using RoseMcp.Ui.Core.Inspector;
 namespace RoseMcp.Ui.Core.Views;
 
 /// <summary>
-/// What the RoseMCP window reads of the broker while it is open: the clients, the workspaces, the debug sessions
-/// and the newest of the activity record, each held current by a long poll; the memory, on a timer; and which build
-/// the broker is, asked whenever the broker is reached again.
+/// What the RoseMCP window reads of the broker while it is open: the clients, the workspaces, the debug sessions,
+/// the newest of the activity record and the notes the person has sent agents, each held current by a long poll;
+/// the memory, on a timer; and which build the broker is, asked whenever the broker is reached again.
 /// <para>
 /// One feed for the window rather than one per view, because the window shows a count from three of them in its
-/// view list whichever view is open, and the Agents and Workspaces views both join the clients to the record. Four
-/// long polls are four requests held open on a loopback port, and the feed runs only while the window is on screen:
+/// view list whichever view is open, and the Agents and Workspaces views both join the clients to the record. Five
+/// long polls are five requests held open on a loopback port, and the feed runs only while the window is on screen:
 /// <see cref="Stop"/> cancels every one of them, which is what a window closing or being minimised calls.
 /// </para>
 /// <para>
@@ -36,6 +36,7 @@ public sealed class RoseFeed
 	private readonly ViewWatch<OperatorWorkspaceList> _workspaces;
 	private readonly ViewWatch<OperatorSessionList> _sessions;
 	private readonly ViewWatch<ActivityPage> _activity;
+	private readonly ViewWatch<NoteList> _notes;
 	private readonly PollLoop _memory;
 	private bool _askingHello;
 
@@ -67,10 +68,16 @@ public sealed class RoseFeed
 			view => Took(() => Activity = view),
 			Failed);
 
+		_notes = new ViewWatch<NoteList>(
+			(after, wait, cancellationToken) => client.NotesAsync(after, wait, cancellationToken),
+			view => view.Version,
+			view => Took(() => Notes = view),
+			Failed);
+
 		_memory = new PollLoop(ReadMemoryAsync, MemoryInterval, Failed);
 	}
 
-	/// <summary>Any of the four views changed. Raised on the context the feed was started from.</summary>
+	/// <summary>Any of the five views changed. Raised on the context the feed was started from.</summary>
 	public event Action? Changed;
 
 	/// <summary>A memory sample arrived.</summary>
@@ -86,6 +93,9 @@ public sealed class RoseFeed
 	public OperatorSessionList Sessions { get; private set; } = new() { Version = string.Empty };
 
 	public ActivityPage Activity { get; private set; } = new() { Bodies = false, Matched = 0, Retention = TimeSpan.Zero };
+
+	/// <summary>The notes the person has sent agents, with where each has got to and what the agent answered.</summary>
+	public NoteList Notes { get; private set; } = new() { Version = string.Empty };
 
 	/// <summary>The last memory sample, or null before the first.</summary>
 	public MemoryReport? Memory { get; private set; }
@@ -111,6 +121,7 @@ public sealed class RoseFeed
 		_workspaces.Start();
 		_sessions.Start();
 		_activity.Start();
+		_notes.Start();
 		_memory.Start();
 	}
 
@@ -121,6 +132,7 @@ public sealed class RoseFeed
 		_workspaces.Stop();
 		_sessions.Stop();
 		_activity.Stop();
+		_notes.Stop();
 		_memory.Stop();
 	}
 
@@ -137,6 +149,7 @@ public sealed class RoseFeed
 		_workspaces.Kick();
 		_sessions.Kick();
 		_activity.Kick();
+		_notes.Kick();
 	}
 
 	private void Took(Action keep)

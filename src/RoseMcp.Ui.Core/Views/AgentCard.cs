@@ -7,7 +7,8 @@ namespace RoseMcp.Ui.Core.Views;
 
 /// <summary>
 /// One agent session as the Agents view shows it: what it is called, which branch it is on and how it reached Rose;
-/// what it is using; and its operations, in the order every list of them keeps.
+/// what it is using; the notes the person has sent it, with its answers; and its operations, in the order every list
+/// of them keeps, each of which can be the subject of a note.
 /// <para>
 /// A card is one client of the broker. Two sessions in one folder are two relays and so two cards, which share the
 /// workspace they use; a client that reached the broker over http without the relay is one card saying so, since
@@ -33,6 +34,7 @@ public sealed class AgentCard : Observable
 	private string _more = string.Empty;
 	private DateTimeOffset? _lastCallUtc;
 	private string _modeWithoutIdle = string.Empty;
+	private string _notesSummary = string.Empty;
 
 	public AgentCard(ClientSummary client, IReadOnlyList<ActivityEntry> entries, AgentContext context, DateTimeOffset now)
 	{
@@ -141,6 +143,35 @@ public sealed class AgentCard : Observable
 	/// <summary>What the Activity view filters on to show only this agent's calls: the key its calls carry where they carry one.</summary>
 	public string ActivityFilter { get; private set; } = string.Empty;
 
+	/// <summary>The notes the person has sent this session, the earliest first, each with its answers.</summary>
+	public ObservableCollection<NoteRow> Notes { get; } = [];
+
+	public bool HasNotes => Notes.Count > 0;
+
+	/// <summary>How many notes it has been sent, the latest delivery, and whether it answered.</summary>
+	public string NotesSummary
+	{
+		get => _notesSummary;
+		private set => Set(ref _notesSummary, value);
+	}
+
+	/// <summary>Shows the notes sent to this session: those whose client is this card's row.</summary>
+	public void ShowNotes(IReadOnlyList<AgentNote> notes)
+	{
+		var mine = notes.Where(note => note.ClientId == Id).ToList();
+
+		Rows.Merge(Notes, mine, row => row.Id, note => note.Id, note => new NoteRow(note), (row, note) => row.Update(note));
+		NotesSummary = NoteRow.Summarise(mine);
+		OnPropertyChanged(nameof(HasNotes));
+	}
+
+	/// <summary>
+	/// The notes sent to sessions none of <paramref name="clients"/> stands for any more: what the Agents view keeps
+	/// showing once a card has gone, so a note never vanishes with its session.
+	/// </summary>
+	public static IReadOnlyList<AgentNote> GoneNotes(IReadOnlyList<AgentNote> notes, IReadOnlyList<ClientSummary> clients) =>
+		[.. notes.Where(note => clients.All(client => client.Id != note.ClientId))];
+
 	/// <summary>Brings the card in line with the client's row and the calls the record holds for it.</summary>
 	public void Update(ClientSummary client, IReadOnlyList<ActivityEntry> entries, AgentContext context, DateTimeOffset now)
 	{
@@ -158,6 +189,10 @@ public sealed class AgentCard : Observable
 		var shown = OperationOrder.Sort(entries).Take(OperationLimit).ToList();
 		OperationOrder.Merge(Operations, shown, now);
 		OnPropertyChanged(nameof(HasOperations));
+
+		// A note about one of its calls goes to this session, which a client without the relay cannot be told apart as.
+		NoteRecipient[] recipients = client.Named ? [new NoteRecipient(client.Id, Title)] : [];
+		foreach (var operation in Operations.Where(operation => operation.IsCall)) operation.Composer.Offer(recipients, NoteTargets.UnnamedCaller);
 
 		var calls = entries.Count(entry => entry.Kind == ActivityEntryKind.Call);
 		OperationsHeader = calls == 0 ? "No calls in what the record holds" : "Operations";

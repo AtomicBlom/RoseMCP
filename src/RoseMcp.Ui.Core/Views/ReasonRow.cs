@@ -84,6 +84,24 @@ public sealed class ReasonRow : Observable
 		set => Set(ref _note, value);
 	}
 
+	/// <summary>A note asking an agent about this reason: what "Ask an agent why" opens.</summary>
+	public NoteComposer Composer { get; } = new();
+
+	/// <summary>Says which solution this reason is in and which sessions a note about it can go to, the likeliest first.</summary>
+	public void OfferNote(string workspace, IReadOnlyList<NoteRecipient> recipients)
+	{
+		Composer.Regard(new NoteSubject
+		{
+			Kind = NoteSubjectKind.WorkspaceReason,
+			Readable = Line,
+			Workspace = workspace,
+			ReasonKind = Kind,
+			Reason = Id,
+		});
+
+		Composer.Offer(recipients, NoteTargets.NobodyToAsk);
+	}
+
 	/// <summary>Brings the row in line with the reason as the broker now reports it, keeping the person's half-made choice.</summary>
 	public void Update(HealthReason reason)
 	{

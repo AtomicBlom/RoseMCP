@@ -72,6 +72,14 @@ public sealed partial class WorkspacesView : UserControl
 		if (!_showing || _feed is not { } feed) return;
 
 		WorkspaceRow.Merge(_rows, feed.Workspaces.Workspaces, feed.Activity.Entries, DateTime.UtcNow);
+
+		// A note about a reason can go to any session the broker tells apart, the workspace's own users first.
+		foreach (var row in _rows)
+		{
+			var recipients = NoteTargets.For(row.Path, feed.Clients.Clients, feed.Activity.Entries);
+			foreach (var reason in row.Reasons) reason.OfferNote(row.Path, recipients);
+		}
+
 		if (feed.Memory is { } sample)
 		{
 			foreach (var row in _rows) row.ShowMemory(sample);

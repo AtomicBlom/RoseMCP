@@ -19,6 +19,7 @@ using RoseMcp.Settings;
 using RoseMcp.Ui;
 using RoseMcp.Ui.Core.Tray;
 using RoseMcp.Ui.Core.Updates;
+using RoseMcp.Ui.Core.Views;
 
 namespace RoseMcp.Tray;
 
@@ -122,6 +123,9 @@ internal sealed class TrayIconHost : IDisposable
 
 	private ILogger _logger = NullLogger.Instance;
 	private IServiceProvider? _services;
+
+	/// <summary>The broker's notes while it serves, whose answers this says in a notification; let go when it stops.</summary>
+	private AgentNotes? _notes;
 	private DateTimeOffset _servingSince;
 	private RestartReport? _restart;
 	private BrokerState _broker = BrokerState.Starting;
@@ -240,6 +244,7 @@ internal sealed class TrayIconHost : IDisposable
 		_servingSince = DateTimeOffset.UtcNow;
 		_restart = new RestartReport();
 
+		HearNotes(services.GetRequiredService<AgentNotes>());
 		ReportIconProblem();
 
 		// Off the UI thread, since the change can wait a moment on another tray's.
@@ -293,6 +298,21 @@ internal sealed class TrayIconHost : IDisposable
 	});
 
 	/// <summary>
+	/// Listens for agents answering notes on <paramref name="notes"/>, letting go of whatever it listened to before;
+	/// null lets go and listens to nothing. An answer arrives on the call that gave it, and is said from the icon's
+	/// queue.
+	/// </summary>
+	private void HearNotes(AgentNotes? notes)
+	{
+		if (_notes is not null) _notes.Replied -= OnNoteAnswered;
+
+		_notes = notes;
+		if (_notes is not null) _notes.Replied += OnNoteAnswered;
+	}
+
+	private void OnNoteAnswered(AgentNote note) => NoteAnswered(AgentNames.Of(note), note.Replies.LastOrDefault()?.Text);
+
+	/// <summary>
 	/// The broker is about to stop. Every timer stops and the broker's services are let go before it does, and
 	/// the icon says it is stopping until <see cref="Dispose"/> removes it.
 	/// </summary>
@@ -305,6 +325,7 @@ internal sealed class TrayIconHost : IDisposable
 		_checkoutTimer.Stop();
 		_updateTimer?.Stop();
 		_iconRetry.Stop();
+		HearNotes(null);
 		_services = null;
 		_restart = null;
 		_broker = BrokerState.Stopping;

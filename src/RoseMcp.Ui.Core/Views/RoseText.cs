@@ -20,11 +20,6 @@ public static class RoseText
 		"Nothing is being debugged. An agent attaches with rose_debug_attach or launches with rose_debug_launch; "
 			+ "Debug an app opens an Inspector window that takes the one session there is.";
 
-	/// <summary>What "Ask an agent why" says, where a note cannot be delivered.</summary>
-	public const string NotesUnavailable =
-		"This build of Rose cannot deliver a note to an agent. Ask in the agent's own session instead: it can read "
-			+ "this reason with rose_workspace_status.";
-
 	/// <summary>
 	/// Why a read failed, said for a window that keeps trying: what is wrong and what will put it right, never only
 	/// that something did.

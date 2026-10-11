@@ -113,6 +113,8 @@ public sealed partial class ActivityView : UserControl
 
 		Fill(AgentChoice, _agents, agent);
 		Fill(WorkspaceChoice, _workspaces, workspace);
+
+		AddressNotes();
 	}
 
 	private void Ask()
@@ -141,6 +143,13 @@ public sealed partial class ActivityView : UserControl
 		Empty.Visibility = _list.IsEmpty ? Visibility.Visible : Visibility.Collapsed;
 
 		OperationView.LoadBodies(_list.Rows);
+		AddressNotes();
+	}
+
+	/// <summary>Offers each call's note the session that made it, as the client table has it now.</summary>
+	private void AddressNotes()
+	{
+		if (_feed is { } feed) NoteTargets.Address(_list.Rows, feed.Clients.Clients, feed.Activity.Entries);
 	}
 
 	private async void OnOlder(object sender, RoutedEventArgs args)

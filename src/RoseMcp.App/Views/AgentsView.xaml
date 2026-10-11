@@ -17,74 +17,117 @@
 		</Grid>
 
 		<ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-			<ItemsRepeater x:Name="Cards">
-				<ItemsRepeater.Layout>
-					<StackLayout Spacing="10" />
-				</ItemsRepeater.Layout>
-				<ItemsRepeater.ItemTemplate>
-					<DataTemplate x:DataType="core:AgentCard">
-						<Border Style="{StaticResource CardStyle}" Padding="14,12">
-							<StackPanel Spacing="6">
-								<StackPanel Orientation="Horizontal" Spacing="8">
-									<TextBlock Text="{x:Bind Title, Mode=OneWay}" Style="{StaticResource BodyStrongTextBlockStyle}"
-										VerticalAlignment="Center" />
-									<Border Style="{StaticResource PillStyle}" Visibility="{x:Bind HasBranch, Mode=OneWay}">
-										<TextBlock Text="{x:Bind Branch, Mode=OneWay}" Style="{StaticResource MonoCaptionTextBlockStyle}" />
-									</Border>
-									<Border Style="{StaticResource PillStyle}" Visibility="{x:Bind IsDisconnected, Mode=OneWay}">
-										<TextBlock Text="not connected" Style="{StaticResource CaptionTextBlockStyle}" />
-									</Border>
+			<StackPanel Spacing="10">
+				<ItemsRepeater x:Name="Cards">
+					<ItemsRepeater.Layout>
+						<StackLayout Spacing="10" />
+					</ItemsRepeater.Layout>
+					<ItemsRepeater.ItemTemplate>
+						<DataTemplate x:DataType="core:AgentCard">
+							<Border Style="{StaticResource CardStyle}" Padding="14,12">
+								<StackPanel Spacing="6">
+									<StackPanel Orientation="Horizontal" Spacing="8">
+										<TextBlock Text="{x:Bind Title, Mode=OneWay}" Style="{StaticResource BodyStrongTextBlockStyle}"
+											VerticalAlignment="Center" />
+										<Border Style="{StaticResource PillStyle}" Visibility="{x:Bind HasBranch, Mode=OneWay}">
+											<TextBlock Text="{x:Bind Branch, Mode=OneWay}" Style="{StaticResource MonoCaptionTextBlockStyle}" />
+										</Border>
+										<Border Style="{StaticResource PillStyle}" Visibility="{x:Bind IsDisconnected, Mode=OneWay}">
+											<TextBlock Text="not connected" Style="{StaticResource CaptionTextBlockStyle}" />
+										</Border>
+									</StackPanel>
+
+									<TextBlock Text="{x:Bind Folder, Mode=OneWay}" Visibility="{x:Bind HasFolder, Mode=OneWay}"
+										TextTrimming="CharacterEllipsis" Style="{StaticResource MonoCaptionTextBlockStyle}"
+										Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+									<TextBlock Text="{x:Bind Mode, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+										Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+									<TextBlock Visibility="{x:Bind IsUnnamed, Mode=OneWay}" TextWrapping="Wrap"
+										Style="{StaticResource CaptionTextBlockStyle}"
+										Foreground="{ThemeResource SystemFillColorCautionBrush}"
+										Text="Rose cannot tell which session this is, and it will not reconnect by itself after a restart. Register Rose with the agent through the relay to give it a card of its own." />
+									<TextBlock Visibility="{x:Bind ToolsStale, Mode=OneWay}" TextWrapping="Wrap"
+										Style="{StaticResource CaptionTextBlockStyle}"
+										Foreground="{ThemeResource SystemFillColorCautionBrush}"
+										Text="This session holds Rose's tools from before the restart. Reconnect it (/mcp in Claude Code) to pick up the current ones." />
+
+									<ItemsRepeater ItemsSource="{x:Bind Using}" Visibility="{x:Bind IsUsingAnything, Mode=OneWay}">
+										<ItemsRepeater.Layout>
+											<StackLayout Orientation="Horizontal" Spacing="6" />
+										</ItemsRepeater.Layout>
+										<ItemsRepeater.ItemTemplate>
+											<DataTemplate x:DataType="core:UsingChip">
+												<Button Style="{StaticResource ChipButtonStyle}" Click="OnChip" Tag="{x:Bind}"
+													ToolTipService.ToolTip="{x:Bind Key}">
+													<TextBlock Text="{x:Bind Text}" Style="{StaticResource CaptionTextBlockStyle}" />
+												</Button>
+											</DataTemplate>
+										</ItemsRepeater.ItemTemplate>
+									</ItemsRepeater>
+
+									<StackPanel Spacing="4" Margin="0,4,0,0" Visibility="{x:Bind HasNotes, Mode=OneWay}">
+										<TextBlock Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}">
+											<Run Text="You" />
+											<Run Text="  ·  " />
+											<Run Text="{x:Bind NotesSummary, Mode=OneWay}" />
+										</TextBlock>
+										<ItemsRepeater ItemsSource="{x:Bind Notes}">
+											<ItemsRepeater.Layout>
+												<StackLayout Spacing="6" />
+											</ItemsRepeater.Layout>
+											<ItemsRepeater.ItemTemplate>
+												<DataTemplate x:DataType="core:NoteRow">
+													<views:NoteView Row="{x:Bind}" />
+												</DataTemplate>
+											</ItemsRepeater.ItemTemplate>
+										</ItemsRepeater>
+									</StackPanel>
+
+									<TextBlock Text="{x:Bind OperationsHeader, Mode=OneWay}" Margin="0,4,0,0"
+										Style="{StaticResource CaptionTextBlockStyle}"
+										Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+									<ItemsRepeater ItemsSource="{x:Bind Operations}">
+										<ItemsRepeater.Layout>
+											<StackLayout Spacing="0" />
+										</ItemsRepeater.Layout>
+										<ItemsRepeater.ItemTemplate>
+											<DataTemplate x:DataType="core:OperationRow">
+												<views:OperationView Row="{x:Bind}" />
+											</DataTemplate>
+										</ItemsRepeater.ItemTemplate>
+									</ItemsRepeater>
+									<HyperlinkButton Content="{x:Bind More, Mode=OneWay}" Visibility="{x:Bind HasMore, Mode=OneWay}"
+										Click="OnMore" Tag="{x:Bind}" Padding="8,2" />
 								</StackPanel>
+							</Border>
+						</DataTemplate>
+					</ItemsRepeater.ItemTemplate>
+				</ItemsRepeater>
 
-								<TextBlock Text="{x:Bind Folder, Mode=OneWay}" Visibility="{x:Bind HasFolder, Mode=OneWay}"
-									TextTrimming="CharacterEllipsis" Style="{StaticResource MonoCaptionTextBlockStyle}"
-									Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-								<TextBlock Text="{x:Bind Mode, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
-									Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-
-								<TextBlock Visibility="{x:Bind IsUnnamed, Mode=OneWay}" TextWrapping="Wrap"
-									Style="{StaticResource CaptionTextBlockStyle}"
-									Foreground="{ThemeResource SystemFillColorCautionBrush}"
-									Text="Rose cannot tell which session this is, and it will not reconnect by itself after a restart. Register Rose with the agent through the relay to give it a card of its own." />
-								<TextBlock Visibility="{x:Bind ToolsStale, Mode=OneWay}" TextWrapping="Wrap"
-									Style="{StaticResource CaptionTextBlockStyle}"
-									Foreground="{ThemeResource SystemFillColorCautionBrush}"
-									Text="This session holds Rose's tools from before the restart. Reconnect it (/mcp in Claude Code) to pick up the current ones." />
-
-								<ItemsRepeater ItemsSource="{x:Bind Using}" Visibility="{x:Bind IsUsingAnything, Mode=OneWay}">
-									<ItemsRepeater.Layout>
-										<StackLayout Orientation="Horizontal" Spacing="6" />
-									</ItemsRepeater.Layout>
-									<ItemsRepeater.ItemTemplate>
-										<DataTemplate x:DataType="core:UsingChip">
-											<Button Style="{StaticResource ChipButtonStyle}" Click="OnChip" Tag="{x:Bind}"
-												ToolTipService.ToolTip="{x:Bind Key}">
-												<TextBlock Text="{x:Bind Text}" Style="{StaticResource CaptionTextBlockStyle}" />
-											</Button>
-										</DataTemplate>
-									</ItemsRepeater.ItemTemplate>
-								</ItemsRepeater>
-
-								<TextBlock Text="{x:Bind OperationsHeader, Mode=OneWay}" Margin="0,4,0,0"
-									Style="{StaticResource CaptionTextBlockStyle}"
-									Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-								<ItemsRepeater ItemsSource="{x:Bind Operations}">
-									<ItemsRepeater.Layout>
-										<StackLayout Spacing="0" />
-									</ItemsRepeater.Layout>
-									<ItemsRepeater.ItemTemplate>
-										<DataTemplate x:DataType="core:OperationRow">
-											<views:OperationView Row="{x:Bind}" />
-										</DataTemplate>
-									</ItemsRepeater.ItemTemplate>
-								</ItemsRepeater>
-								<HyperlinkButton Content="{x:Bind More, Mode=OneWay}" Visibility="{x:Bind HasMore, Mode=OneWay}"
-									Click="OnMore" Tag="{x:Bind}" Padding="8,2" />
-							</StackPanel>
-						</Border>
-					</DataTemplate>
-				</ItemsRepeater.ItemTemplate>
-			</ItemsRepeater>
+				<!-- Notes to sessions no card stands for any more, kept so a note never vanishes with its session. -->
+				<Border x:Name="GoneCard" Style="{StaticResource CardStyle}" Padding="14,12" Visibility="Collapsed">
+					<StackPanel Spacing="6">
+						<TextBlock Text="Notes to sessions that have gone" Style="{StaticResource BodyStrongTextBlockStyle}" />
+						<TextBlock Text="Each is kept for a day after anything last happened to it. A note not yet delivered still arrives if its session calls again."
+							TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+							Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+						<ItemsRepeater x:Name="GoneNotes">
+							<ItemsRepeater.Layout>
+								<StackLayout Spacing="8" />
+							</ItemsRepeater.Layout>
+							<ItemsRepeater.ItemTemplate>
+								<DataTemplate x:DataType="core:NoteRow">
+									<StackPanel Spacing="2">
+										<views:NoteView Row="{x:Bind}" ShowAgent="True" />
+										<HyperlinkButton Content="Show its calls in Activity" Click="OnNoteCalls" Tag="{x:Bind}" Padding="10,0" />
+									</StackPanel>
+								</DataTemplate>
+							</ItemsRepeater.ItemTemplate>
+						</ItemsRepeater>
+					</StackPanel>
+				</Border>
+			</StackPanel>
 		</ScrollViewer>
 
 		<TextBlock x:Name="Empty" Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="460"

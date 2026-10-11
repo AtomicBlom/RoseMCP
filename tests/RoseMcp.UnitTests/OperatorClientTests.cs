@@ -170,6 +170,42 @@ public sealed class OperatorClientTests
 	}
 
 	/// <summary>
+	/// A note goes to the notes route with its subject's kind by name, which is how the route binds it; and the notes
+	/// are read there, waiting only when given a version and a wait.
+	/// </summary>
+	[Test]
+	public async Task Notes_are_sent_and_read_at_the_notes_route()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var note = new AgentNote
+		{
+			Id = "note-0123456789abcdef",
+			ClientId = "client-01234567",
+			ClientKey = "0123456789abcdef",
+			Subject = new NoteSubject { Kind = NoteSubjectKind.ActivityCall, Readable = "rose_outline A", ActivityEntry = "0123456789abcdef" },
+			Text = "Why?",
+			PostedUtc = DateTimeOffset.UtcNow,
+			Delivery = NoteDelivery.Waiting,
+		};
+
+		using var handler = new FakeHandler(request => request.Method == HttpMethod.Post
+			? Json(note)
+			: Json(new NoteList { Notes = [note], Version = "v2" }));
+		using var client = new OperatorClient(Tray, "tok-1", handler);
+
+		var sent = await client.SendNoteAsync(new NoteRequest { Client = note.ClientId, Subject = note.Subject, Text = note.Text }, cancellationToken);
+		sent.Id.ShouldBe(note.Id);
+		handler.Last!.RequestUri!.AbsolutePath.ShouldBe("/operator/notes");
+		handler.LastBody!.ShouldContain("\"ActivityCall\"", Case.Sensitive, "a subject's kind travels by name");
+
+		(await client.NotesAsync(after: null, waitSeconds: 30, cancellationToken)).Version.ShouldBe("v2");
+		handler.Last!.RequestUri!.PathAndQuery.ShouldBe("/operator/notes");
+
+		await client.NotesAsync(after: "v1", waitSeconds: 30, cancellationToken);
+		handler.Last!.RequestUri!.PathAndQuery.ShouldBe("/operator/notes?after=v1&waitSeconds=30");
+	}
+
+	/// <summary>
 	/// Hello reads the broker's build back whole, commit and checkout distance included: the window
 	/// that shows them reads nothing else to learn which build it is talking to.
 	/// </summary>

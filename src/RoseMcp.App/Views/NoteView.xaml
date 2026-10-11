@@ -1,0 +1,55 @@
+<UserControl
+	x:Class="RoseMcp.App.Views.NoteView"
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	xmlns:core="using:RoseMcp.Ui.Core.Views">
+
+	<!-- One note the person sent: what it says and what about, where its delivery has got to, and the agent's answers
+	     under it. The same control on an agent's card and among the notes to sessions that have gone. -->
+	<Border BorderThickness="2,0,0,0" BorderBrush="{ThemeResource RoseAccentBrush}" Padding="10,4,4,4">
+		<StackPanel Spacing="2">
+			<TextBlock Text="{x:Bind Row.Agent, Mode=OneWay}" Visibility="{x:Bind ShowAgent, Mode=OneWay}"
+				Style="{StaticResource BodyStrongTextBlockStyle}" />
+			<TextBlock Text="{x:Bind Row.Text, Mode=OneWay}" TextWrapping="Wrap" IsTextSelectionEnabled="True"
+				Style="{StaticResource BodyTextBlockStyle}" />
+			<TextBlock TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+				Foreground="{ThemeResource TextFillColorTertiaryBrush}">
+				<Run Text="about" />
+				<Run Text="{x:Bind Row.About, Mode=OneWay}" />
+				<Run Text="  ·  " />
+				<Run Text="{x:Bind Row.Sent, Mode=OneWay}" />
+			</TextBlock>
+			<TextBlock Text="{x:Bind Row.References, Mode=OneWay}" Visibility="{x:Bind Row.HasReferences, Mode=OneWay}"
+				TextWrapping="Wrap" IsTextSelectionEnabled="True" Style="{StaticResource MonoCaptionTextBlockStyle}"
+				Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+
+			<!-- Coloured by where it has got to: waiting in the accent, delivered quietly, gone as a caution. -->
+			<Grid ToolTipService.ToolTip="{x:Bind Row.DeliveredWith, Mode=OneWay}">
+				<TextBlock Text="{x:Bind Row.State, Mode=OneWay}" Visibility="{x:Bind Row.IsWaiting, Mode=OneWay}" TextWrapping="Wrap"
+					Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource RoseAccentBrush}" />
+				<TextBlock Text="{x:Bind Row.State, Mode=OneWay}" Visibility="{x:Bind Row.IsDelivered, Mode=OneWay}" TextWrapping="Wrap"
+					Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+				<TextBlock Text="{x:Bind Row.State, Mode=OneWay}" Visibility="{x:Bind Row.IsGone, Mode=OneWay}" TextWrapping="Wrap"
+					Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+			</Grid>
+
+			<ItemsRepeater ItemsSource="{x:Bind Row.Replies, Mode=OneWay}" Visibility="{x:Bind Row.HasReplies, Mode=OneWay}" Margin="12,4,0,0">
+				<ItemsRepeater.Layout>
+					<StackLayout Spacing="4" />
+				</ItemsRepeater.Layout>
+				<ItemsRepeater.ItemTemplate>
+					<DataTemplate x:DataType="core:NoteAnswer">
+						<StackPanel Spacing="1" ToolTipService.ToolTip="{x:Bind Call}">
+							<TextBlock Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}">
+								<Run Text="{x:Bind Time}" />
+								<Run Text="  ·  the agent answered" />
+							</TextBlock>
+							<TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" IsTextSelectionEnabled="True"
+								Style="{StaticResource BodyTextBlockStyle}" />
+						</StackPanel>
+					</DataTemplate>
+				</ItemsRepeater.ItemTemplate>
+			</ItemsRepeater>
+		</StackPanel>
+	</Border>
+</UserControl>

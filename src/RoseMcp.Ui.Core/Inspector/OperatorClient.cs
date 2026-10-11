@@ -149,6 +149,21 @@ public sealed class OperatorClient : IDisposable
 			$"/operator/health/proposals/{Uri.EscapeDataString(proposalId)}/reject", null, Quick, cancellationToken);
 
 	/// <summary>
+	/// Sends a note to an agent session, to ride on the answer to its next Rose call of any tool. Answers with the
+	/// note as the broker holds it, waiting for that call.
+	/// </summary>
+	public Task<AgentNote> SendNoteAsync(NoteRequest request, CancellationToken cancellationToken) =>
+		PostAsync<NoteRequest, AgentNote>("/operator/notes", request, Quick, cancellationToken);
+
+	/// <summary>
+	/// Every note the broker holds, with where each one's delivery has got to and what the agent answered. A long poll
+	/// where <paramref name="after"/> and <paramref name="waitSeconds"/> say, answered when a note is sent, delivered or
+	/// answered, or its session goes.
+	/// </summary>
+	public Task<NoteList> NotesAsync(string? after, int waitSeconds, CancellationToken cancellationToken) =>
+		GetAsync<NoteList>(Watched("/operator/notes", after, waitSeconds), PollBudget(waitSeconds), cancellationToken);
+
+	/// <summary>
 	/// Which build the broker is, and how far its checkout has moved on. Given the read budget: the
 	/// broker waits a couple of seconds at most for its checkout's commits to be counted and otherwise
 	/// answers that they are still being counted, so the build always arrives inside it.

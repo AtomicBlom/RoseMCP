@@ -50,6 +50,8 @@ public sealed class OperationRow : Observable
 		WorkspaceKey = entry.WorkspaceKey ?? string.Empty;
 		DebugSession = entry.DebugSession ?? string.Empty;
 		Client = AgentNames.Of(entry);
+		ClientId = entry.ClientId;
+		ClientKey = entry.ClientKey;
 		MarkerText = IsMarker ? DescribeStart(entry) : string.Empty;
 
 		Update(entry, now);
@@ -88,6 +90,30 @@ public sealed class OperationRow : Observable
 
 	/// <summary>Which agent made the call, as the Activity view names it.</summary>
 	public string Client { get; }
+
+	/// <summary>The row the broker kept for the client that made the call, when the call ended.</summary>
+	public string? ClientId { get; }
+
+	/// <summary>The key the record files that client's calls under, which outlives a broker restart where the row does not.</summary>
+	public string? ClientKey { get; }
+
+	/// <summary>A note to the agent that made the call, about the call: what "Ask the agent about this" opens.</summary>
+	public NoteComposer Composer { get; } = new();
+
+	/// <summary>What a note about a call is about: the call in words, and its entry in the record.</summary>
+	public static NoteSubject SubjectOf(ActivityEntry entry)
+	{
+		var call = string.Join(" ", new[] { entry.Tool, entry.Target }.Where(part => part is { Length: > 0 }));
+		var readable = entry.Outcome switch
+		{
+			ActivityOutcome.Failed => $"{call}, which failed",
+			ActivityOutcome.Running => $"{call}, still running",
+			ActivityOutcome.Cancelled => $"{call}, which was cancelled",
+			_ => call,
+		};
+
+		return new NoteSubject { Kind = NoteSubjectKind.ActivityCall, Readable = readable, ActivityEntry = entry.Id };
+	}
 
 	/// <summary>When it started, for ordering.</summary>
 	public DateTimeOffset StartedUtc { get; private set; }
@@ -268,6 +294,8 @@ public sealed class OperationRow : Observable
 	/// <summary>Brings the row in line with the entry as the record now has it.</summary>
 	public void Update(ActivityEntry entry, DateTimeOffset now)
 	{
+		if (IsCall) Composer.Regard(SubjectOf(entry));
+
 		StartedUtc = entry.StartedUtc;
 		FinishedUtc = entry.FinishedUtc;
 		Outcome = entry.Outcome;

@@ -23,6 +23,9 @@ public static class AgentNames
 	/// <summary>The client an entry of the record names, as it was when the call ended.</summary>
 	public static string Of(ActivityEntry entry) => Choose(entry.ClientLabel, entry.Origin, entry.ClientName);
 
+	/// <summary>The client a note was sent to, as the table had it when the note was sent.</summary>
+	public static string Of(AgentNote note) => Choose(note.ClientLabel, note.ClientFolder, note.ClientName);
+
 	/// <summary>The last part of a folder, which is what tells two worktrees of one repository apart.</summary>
 	public static string Leaf(string folder)
 	{

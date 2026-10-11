@@ -328,7 +328,12 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			Key,
 			CallOrigin.Directory ?? "(no origin)");
 
-		using var activity = _activities.Begin(SolutionPath, operation ?? tool, DescribeTarget(arguments), progress);
+		var target = DescribeTarget(arguments);
+
+		// The call being recorded, where a client's tool call is what reached here, learns which workspace serves it.
+		CallRecording.Current?.Routed(workspace: SolutionPath, workspaceKey: Key, target: target);
+
+		using var activity = _activities.Begin(SolutionPath, operation ?? tool, target, progress);
 
 		try
 		{

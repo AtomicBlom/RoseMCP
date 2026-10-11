@@ -3,7 +3,9 @@ using System.Text.Json.Nodes;
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 using ModelContextProtocol;
@@ -158,6 +160,16 @@ public static class ServiceCollectionExtensions
 		// sessions, read by the admin and operator routes.
 		services.AddSingleton<ConnectedClients>();
 
+		// Every call each client made, kept on disk: written by every call, read by the operator routes, and
+		// disposed with the host, which writes what is still queued. The host's lifetime, where there is one,
+		// flushes it as the host stops, for a host that stops without disposing its services.
+		services.AddSingleton(provider => new ActivityRecord(
+			provider.GetRequiredService<IOptions<BrokerOptions>>(),
+			provider.GetRequiredService<RelayConnections>(),
+			provider.GetRequiredService<ConnectedClients>(),
+			provider.GetService<ILogger<ActivityRecord>>() ?? NullLogger<ActivityRecord>.Instance,
+			provider.GetService<IHostApplicationLifetime>()));
+
 		// No inspector unless a host that has an operator endpoint replaces this. A stdio broker
 		// genuinely cannot open one, and saying so beats a tool argument that silently does nothing.
 		services.TryAddSingleton<IInspectorPresenter>(NoInspector.WithoutAnEndpoint);
@@ -196,6 +208,7 @@ public static class ServiceCollectionExtensions
 
 		return builder
 			.WithCallCorrelation()
+			.WithActivityRecord()
 			.WithArgumentAliases(aliases)
 			.WithIgnoredArgumentNotices()
 			.WithCallOrigin()
@@ -220,6 +233,75 @@ public static class ServiceCollectionExtensions
 			using var correlation = CallCorrelation.Begin(context.Params?.Meta);
 
 			return await next(context, cancellationToken);
+		}));
+
+	/// <summary>
+	/// Records every tool call in the <see cref="ActivityRecord"/>: the client that made it, its arguments as they
+	/// arrived, how it ended and what it answered, with what the routing adds on the way -- the workspace or debug
+	/// session, the target, a write's diffs -- through the <see cref="CallRecording"/> it makes ambient.
+	/// <para>
+	/// A filter, for the reason <see cref="WithCallOrigin"/> is one: every call passes through it, so no tool can be
+	/// added that the record misses. Second, after the correlation id, so an entry carries the id every log line of
+	/// the call does; and before every other, so the arguments are the ones the client sent rather than the
+	/// spellings the alias filter corrected, a refusal any later filter makes is recorded as the call's failure, and
+	/// the answer is the one the client was given, its notices included. An exception arriving here has already been
+	/// put in the caller's words by the error boundary inside it.
+	/// </para>
+	/// <para>
+	/// A relay's own read of what its session has open is not one of the session's calls, and is not recorded. The
+	/// operator routes a window reads through are not MCP calls and never pass here, which is what keeps a window's
+	/// own reads -- and an inspector's step forwarded to a live-app host -- out of what an agent did. Recording
+	/// never fails a call: a record that cannot start is a call that goes unrecorded.
+	/// </para>
+	/// </summary>
+	private static IMcpServerBuilder WithActivityRecord(this IMcpServerBuilder builder) =>
+		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
+		{
+			var parameters = context.Params;
+			var server = context.Server;
+			CallRecording? recording = null;
+
+			try
+			{
+				var record = CallSession.IsRelayRead(parameters?.Meta) ? null : server.Services?.GetService<ActivityRecord>();
+
+				recording = record?.Begin(
+					parameters?.Name,
+					parameters?.Arguments,
+					CallSession.Of(null, parameters?.Meta),
+					server.SessionId,
+					server.ClientInfo?.Name,
+					OriginDirectory(parameters));
+			}
+			catch (Exception exception)
+			{
+				server.Services?.GetService<ILoggerFactory>()?
+					.CreateLogger(typeof(ActivityRecord))
+					.LogWarning(exception, "{Tool} could not be recorded in the activity record.", parameters?.Name);
+			}
+
+			if (recording is null) return await next(context, cancellationToken);
+
+			using (recording)
+			{
+				try
+				{
+					var result = await next(context, cancellationToken);
+					recording.Finish(result);
+
+					return result;
+				}
+				catch (OperationCanceledException)
+				{
+					recording.Cancel();
+					throw;
+				}
+				catch (Exception exception)
+				{
+					recording.Fail(exception.Message);
+					throw;
+				}
+			}
 		}));
 
 	/// <summary>

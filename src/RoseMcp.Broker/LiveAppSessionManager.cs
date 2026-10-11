@@ -162,6 +162,8 @@ public sealed class LiveAppSessionManager(
 		var hostPath = LiveAppHostLauncher.ResolveHostPath(architecture, _options);
 		var sessionId = NewSessionId();
 
+		CallRecording.Current?.Routed(debugSession: sessionId, target: target.Description);
+
 		using var activity = Activities.Begin(sessionId, "start session", target.Description);
 		try
 		{

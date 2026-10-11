@@ -63,6 +63,21 @@ public sealed class BrokerOptions
 	public TimeSpan HealthRecordWait { get; set; } = Settings.WorkspaceHealthFile.DefaultWait;
 
 	/// <summary>
+	/// Where the activity record is kept, or null for its own place: the directory
+	/// <see cref="ActivityRecord.RootVariable"/> names, else <c>Activity</c> under the logs, which
+	/// <c>ROSEMCP_LOG_ROOT</c> moves for a test run. A test sets it so it never writes the record a person reads.
+	/// </summary>
+	public string? ActivityDirectory { get; set; }
+
+	/// <summary>
+	/// How long the activity record keeps an entry. Asked each time the record prunes rather than once, so a person
+	/// changing the setting is heeded by a broker already running; the machine's settings file by default, and
+	/// replaced by a test that must not depend on what the machine it runs on has chosen.
+	/// </summary>
+	public Func<TimeSpan> ActivityRetention { get; set; } =
+		() => TimeSpan.FromDays(Settings.RoseSettingsFile.Read().ActivityRetentionDays);
+
+	/// <summary>
 	/// How long a freshly started worker has to complete its MCP handshake.
 	/// <para>
 	/// Set explicitly because the SDK's own default is 60 seconds, and a worker begins loading its

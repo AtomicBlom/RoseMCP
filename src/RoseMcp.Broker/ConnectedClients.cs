@@ -167,6 +167,23 @@ public sealed class ConnectedClients
 	}
 
 	/// <summary>
+	/// The row of the client a call came from, as <see cref="Describe"/> lists it, or null where the table keeps none
+	/// for it. Read by the activity record as a call ends, so an entry names the client as the table had it then.
+	/// </summary>
+	/// <param name="relayed">The client a relay named, as <see cref="CallSession.Of"/> gives it with no transport session; null for none.</param>
+	/// <param name="transportSession">The transport's own session, where it has one.</param>
+	public ClientSummary? Of(string? relayed, string? transportSession)
+	{
+		var transport = string.IsNullOrWhiteSpace(transportSession) ? null : transportSession;
+		var watchers = _relays.Watchers();
+
+		lock (_gate)
+		{
+			return _rows.TryGetValue(KeyOf(relayed, transport), out var row) ? row.Describe(watchers) : null;
+		}
+	}
+
+	/// <summary>
 	/// <paramref name="client"/> as the broker keeps it: each string without control or formatting characters
 	/// and cut to a length, at most <see cref="MaxRoots"/> roots, a process id only where it is positive, and a
 	/// tool hash only in the shape one has. What a relay sends is shown to a person and written to the log.
@@ -213,7 +230,8 @@ public sealed class ConnectedClients
 	private static bool IsToolHash(string? value) =>
 		value is { Length: 64 } && value.All(character => char.IsAsciiDigit(character) || char.IsAsciiHexDigitLower(character));
 
-	private static string KeyOf(string? relayed, string? transportSession) =>
+	/// <summary>The key a client's row is filed under: the session a relay named, else the transport's session, else the one unnamed client.</summary>
+	internal static string KeyOf(string? relayed, string? transportSession) =>
 		relayed is not null ? $"relay:{relayed}"
 			: transportSession is not null ? $"transport:{transportSession}"
 			: "unnamed";

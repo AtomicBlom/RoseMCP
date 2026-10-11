@@ -78,6 +78,7 @@ public static class OperatorApi
 		MapHello(operators);
 		MapSessions(operators);
 		MapClients(operators);
+		MapActivity(operators);
 		MapDebugging(operators);
 		MapXaml(operators);
 		MapHealth(operators);
@@ -166,6 +167,43 @@ public static class OperatorApi
 	/// </summary>
 	private static void MapClients(RouteGroupBuilder operators) =>
 		operators.MapGet("/clients", (ConnectedClients clients) => Json(clients.Describe()));
+
+	/// <summary>
+	/// The activity record: the newest entries for a client, a workspace, a debug session or a tool in a window of
+	/// time, without their bodies unless asked, and one entry by its id with them. Under the operator token rather
+	/// than on the unauthenticated admin routes, since an entry carries what an agent sent and was answered, source
+	/// included. Reading it is not recorded: these are not MCP calls.
+	/// </summary>
+	private static void MapActivity(RouteGroupBuilder operators)
+	{
+		operators.MapGet(
+			"/activity",
+			(
+				ActivityRecord record,
+				string? client,
+				string? workspace,
+				string? session,
+				string? tool,
+				DateTimeOffset? since,
+				DateTimeOffset? until,
+				int? limit,
+				bool? bodies) => Json(record.Query(new ActivityQuery
+				{
+					Client = client,
+					Workspace = workspace,
+					DebugSession = session,
+					Tool = tool,
+					Since = since,
+					Until = until,
+					Limit = limit ?? ActivityQuery.DefaultLimit,
+					Bodies = bodies ?? false,
+				})));
+
+		operators.MapGet(
+			"/activity/{id}",
+			(ActivityRecord record, string id) => Json(record.Find(id) ?? throw new KeyNotFoundException(
+				$"The activity record has no entry {id}. It keeps an entry for {record.Retention.TotalDays:0.#} day(s).")));
+	}
 
 	/// <summary>Watching a target and steering it.</summary>
 	private static void MapDebugging(RouteGroupBuilder operators)

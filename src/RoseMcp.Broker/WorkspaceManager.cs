@@ -328,6 +328,10 @@ public sealed class WorkspaceManager(
 			attributed = status with { Health = health.Describe(worker.SolutionPath, status.Health) };
 		}
 
+		// A write's files and diffs are kept for the activity record here, as the worker gave them: absolute, and
+		// before the broker leaves the diff off for the caller, which every write passes this step to have done.
+		if (attributed is WorkspaceMutationResult written) CallRecording.Current?.Wrote(written);
+
 		return (T)(object)(attributed is WorkspaceMutationResult mutation
 			? WritePaths.Relative(
 				mutation with { Notices = [.. mutation.Notices, .. SharedFileNotices(mutation, worker)] },

@@ -93,7 +93,12 @@ internal static class Program
 			})
 			.WithStdioServerTransport();
 
-		await builder.Build().RunAsync();
+		var host = builder.Build();
+
+		// Started with the host rather than at the first call, so the record says the broker started when it did.
+		host.Services.GetRequiredService<ActivityRecord>();
+
+		await host.RunAsync();
 		return 0;
 	}
 

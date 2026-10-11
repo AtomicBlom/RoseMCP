@@ -32,10 +32,16 @@ public static class AdminApi
 	/// </summary>
 	private const int MaxIntroduction = 64 * 1024;
 
-	/// <summary>Maps the admin routes. Resolves the relay registry now, so its start time is the host's.</summary>
+	/// <summary>
+	/// Maps the admin routes. Resolves the relay registry and the activity record now, so their start time is the
+	/// host's.
+	/// </summary>
 	public static WebApplication MapRoseAdminApi(this WebApplication app)
 	{
 		var relays = app.Services.GetRequiredService<RelayConnections>();
+
+		// Started with the host rather than at the first call, so the record says the broker started when it did.
+		app.Services.GetRequiredService<ActivityRecord>();
 
 		// Exactly what the tray window renders, so the two cannot disagree.
 		app.MapGet(

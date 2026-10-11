@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json.Nodes;
 using System.Threading.Channels;
 
 using ModelContextProtocol;
@@ -6,12 +8,13 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
 using RoseMcp.Broker;
+using RoseMcp.Contracts;
 
 namespace RoseMcp.Server;
 
 /// <summary>
-/// Forwards this session's tool calls to a tray that is already running, instead of starting
-/// workers of our own.
+/// Forwards this session's tool calls to a broker that is already running -- the tray's, almost
+/// always -- instead of starting workers of our own, and outlives that broker being replaced.
 /// <para>
 /// The tray hosts a broker and serves MCP over http, so delegating to it needs no new protocol:
 /// this is an MCP client of an endpoint that already exists. What it buys is the pair of things
@@ -28,6 +31,21 @@ namespace RoseMcp.Server;
 /// The tools are not redeclared here. Listing is forwarded too, so the surface cannot drift from
 /// the tray's.
 /// </para>
+/// <para>
+/// A deploy restarts the broker and leaves this process running, since an installed relay sits apart
+/// from what a deploy replaces. So the relay watches the broker, reconnects to the new one by itself,
+/// and compares what the new one offers with what its client last saw: the same tool definitions and
+/// instructions mean the client hears nothing at the protocol level, and different ones mean one
+/// <c>notifications/tools/list_changed</c>, after which the client lists the tools again without
+/// reconnecting. Either way the first result after a restart carries one line saying what happened.
+/// See <c>docs/decisions/a-deploy-replaces-the-relay-only-when-its-protocol-changes.md</c>.
+/// </para>
+/// <para>
+/// It also tells the broker whom it serves -- the client's folder, roots, branch, process, name and label,
+/// and whether the client holds the broker's tools -- once the client has made its first request, again
+/// after every reconnect, and whenever any of that changes. See
+/// <c>docs/decisions/a-relay-names-its-session-to-the-broker.md</c>.
+/// </para>
 /// </summary>
 public sealed class TrayRelay : IAsyncDisposable
 {
@@ -42,11 +60,47 @@ public sealed class TrayRelay : IAsyncDisposable
 	/// </summary>
 	private static readonly TimeSpan ReconnectWindow = TimeSpan.FromSeconds(10);
 
-	private readonly Uri _endpoint;
-	private readonly ILoggerFactory _loggerFactory;
+	/// <summary>
+	/// How long a session that has just started waits for a tray before owning its workers instead.
+	/// Short on purpose: this runs before the session can do anything, and a tray that is slow to
+	/// answer is indistinguishable from one that is not there. Being wrong costs a private set of
+	/// workers, not correctness.
+	/// </summary>
+	private static readonly TimeSpan StartupWindow = TimeSpan.FromSeconds(2);
+
+	/// <summary>
+	/// How long reading a broker's tools and instance may take. Bounded on its own rather than by the
+	/// call that found the broker gone, because that call may be cancelled while the comparison is the
+	/// only thing that would tell an idle client its tools changed.
+	/// </summary>
+	private static readonly TimeSpan ReadBudget = TimeSpan.FromSeconds(10);
+
+	/// <summary>The pause between the watch's reconnect attempts: a tray mid-deploy is down for as long as the copy takes.</summary>
+	private static readonly TimeSpan RetryPause = TimeSpan.FromSeconds(2);
+
+	/// <summary>How long a ping may take to say the broker is still there when its watch ended.</summary>
+	private static readonly TimeSpan PingBudget = TimeSpan.FromSeconds(3);
+
+	private static readonly IReadOnlyDictionary<string, object?> NoArguments = new Dictionary<string, object?>();
+
+	private readonly RelayUpstream _upstream;
 	private readonly ILogger _logger;
 	private readonly string _workingDirectory;
+
+	/// <summary>
+	/// The name this relay gives the session it serves, minted once for the life of the process and sent on every
+	/// call. The tray's http transport has no session of its own to tell relayed clients apart by, and without this
+	/// every one of them is the same caller to it: one agent acknowledging a reason would quiet it for all of them.
+	/// See <see cref="CallSession.Of"/>. Sent with the relay's own listings and reads too, so the broker never
+	/// takes them for a client of its own.
+	/// </summary>
+	private readonly string _session;
 	private readonly SemaphoreSlim _reconnecting = new(1, 1);
+	private readonly CancellationTokenSource _lifetime = new();
+	private readonly TaskCompletionSource _ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+	private readonly Lock _servedGate = new();
+	private readonly PendingNotice _notice = new();
+	private readonly DebugSessionMemory _debugSessions = new();
 
 	/// <summary>
 	/// Which of the tray's tools may be re-sent after the connection dies, learned from the tool list
@@ -56,22 +110,103 @@ public sealed class TrayRelay : IAsyncDisposable
 
 	private McpClient _tray;
 
-	private TrayRelay(Uri endpoint, McpClient tray, string workingDirectory, ILoggerFactory loggerFactory)
+	/// <summary>The broker instance the relay is connected to, where the broker said. Written only under the reconnect gate.</summary>
+	private string? _instance;
+
+	/// <summary>
+	/// How many reconnects have finished adopting a broker. Written only under the reconnect gate; the
+	/// watch reads it when it begins, which is how a reconnect tells a watch that reached the broker
+	/// being adopted from one that reached a broker restarted since.
+	/// </summary>
+	private int _adoptions;
+
+	/// <summary>
+	/// Completed except while a reconnect has published a new connection and is still reading what that
+	/// broker offers. Calls wait on it: one answered by the new broker before the reading is done would
+	/// carry no line, and the client would have an answer from a broker it was not told had restarted.
+	/// Written with the connection, under <see cref="_publishing"/>, so no call reads one without the other.
+	/// </summary>
+	private Task _adopted = Task.CompletedTask;
+
+	/// <summary>
+	/// Guards the connection and its <see cref="_adopted"/> as a pair. Read apart, a call could take the
+	/// finished reading of the connection before and then the new connection, and be answered by a
+	/// broker the relay has not finished reading.
+	/// </summary>
+	private readonly Lock _publishing = new();
+
+	/// <summary>The broker's tools and instructions as last read.</summary>
+	private ToolSurface _surface;
+
+	/// <summary>
+	/// What the client holds: the tools as it last listed them through here, and the instructions it
+	/// was given when it connected or last told had changed. Guarded by <see cref="_servedGate"/>.
+	/// </summary>
+	private ToolSurface _served;
+
+	/// <summary>The scope of the watch in progress, cancelled when its connection is replaced so the watch moves to the new one.</summary>
+	private CancellationTokenSource? _watch;
+
+	private Task _watching = Task.CompletedTask;
+
+	/// <summary>What the relay knows of its client, sent to the broker by <see cref="IntroduceAgain"/>.</summary>
+	private readonly ClientIntroduction _introduction;
+
+	/// <summary>Guards <see cref="_introducing"/> and <see cref="_introductionQueued"/>.</summary>
+	private readonly Lock _introducingGate = new();
+
+	/// <summary>The last introduction started, which every later one waits on, so they reach the broker in order.</summary>
+	private Task _introducing = Task.CompletedTask;
+
+	/// <summary>Whether an introduction is waiting to start; one waiting already sends the latest facts, so another is not queued behind it.</summary>
+	private bool _introductionQueued;
+
+	private TrayRelay(
+		RelayUpstream upstream,
+		McpClient tray,
+		string? instance,
+		ToolSurface surface,
+		string workingDirectory,
+		string session,
+		ILoggerFactory loggerFactory)
 	{
-		_endpoint = endpoint;
+		_upstream = upstream;
 		_tray = tray;
+		_instance = instance;
+		_surface = surface;
+		_served = surface;
 		_workingDirectory = workingDirectory;
-		_loggerFactory = loggerFactory;
+		_session = session;
 		_logger = loggerFactory.CreateLogger<TrayRelay>();
+		Instructions = surface.Instructions;
+
+		_introduction = new ClientIntroduction(
+			session,
+			workingDirectory,
+			Environment.GetEnvironmentVariable(ClientIntroduction.LabelVariable),
+			ClientProcess.Find,
+			_logger);
 	}
 
 	/// <summary>
-	/// Connects to a tray if one is listening, or returns null so the caller can run its own broker.
-	/// <para>
-	/// A short timeout on purpose: this runs before the session can do anything, and a tray that is
-	/// slow to answer is indistinguishable from one that is not there. Being wrong here costs a
-	/// private set of workers, not correctness.
-	/// </para>
+	/// The broker's server instructions, which the relay gives its own client when it connects.
+	/// Without them a relayed session would get none at all, since its client never sees the broker's
+	/// handshake.
+	/// </summary>
+	public string? Instructions { get; }
+
+	/// <summary>The collection the relay's server is given, whose change sends the client <c>notifications/tools/list_changed</c>.</summary>
+	public ToolListSignal ToolsChanged { get; } = new();
+
+	/// <summary>
+	/// Completes when the broker is gone for good: a broker this relay started has exited, and the
+	/// session ends with it. A tray never completes it, since a tray is reconnected to.
+	/// </summary>
+	public Task Ended => _ended.Task;
+
+	/// <summary>
+	/// Connects to a tray if one is listening, or returns null so the caller can serve the session
+	/// another way: a broker of its own, or for an installed relay the install's broker.
 	/// </summary>
 	public static async Task<TrayRelay?> TryConnectAsync(
 		ServerOptions options,
@@ -83,24 +218,71 @@ public sealed class TrayRelay : IAsyncDisposable
 
 		if (!await IsListeningAsync(options, cancellationToken))
 		{
-			logger.LogInformation("No tray at {Endpoint}; this session will own its workers.", endpoint);
+			logger.LogInformation("No tray at {Endpoint}; this session is served another way.", endpoint);
 			return null;
 		}
+
+		var upstream = new TrayUpstream(endpoint, loggerFactory);
 
 		try
 		{
-			var tray = await ConnectAsync(endpoint, loggerFactory, TimeSpan.FromSeconds(2), cancellationToken);
+			var relay = await ConnectAsync(upstream, Environment.CurrentDirectory, loggerFactory, StartupWindow, cancellationToken);
 
-			logger.LogInformation("Relaying to the tray at {Endpoint}; its workers are shared.", endpoint);
+			logger.LogInformation(
+				"Relaying to the tray at {Endpoint} as relay {Relay}; its workers are shared.", endpoint, upstream.RelayId);
 
-			return new TrayRelay(endpoint, tray, Environment.CurrentDirectory, loggerFactory);
+			return relay;
 		}
 		catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
 		{
+			await upstream.DisposeAsync();
+
 			logger.LogInformation(
-				"No tray at {Endpoint} ({Reason}); this session will own its workers.", endpoint, exception.Message);
+				"The tray at {Endpoint} did not take this session ({Reason}); it is served another way.", endpoint, exception.Message);
 
 			return null;
+		}
+	}
+
+	/// <summary>
+	/// Connects through <paramref name="upstream"/>, reads what the broker offers, and starts watching
+	/// it. The relay owns the upstream once this returns and disposes it; where this throws, the
+	/// caller still does.
+	/// </summary>
+	public static async Task<TrayRelay> ConnectAsync(
+		RelayUpstream upstream,
+		string workingDirectory,
+		ILoggerFactory loggerFactory,
+		TimeSpan within,
+		CancellationToken cancellationToken)
+	{
+		var tray = await upstream.ConnectAsync(within, cancellationToken);
+
+		try
+		{
+			using var reading = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+			reading.CancelAfter(ReadBudget);
+
+			var session = CallSession.Mint();
+			var hello = await upstream.HelloAsync(tray, reading.Token);
+			var tools = await ListAsync(tray, session, reading.Token);
+
+			var relay = new TrayRelay(
+				upstream, tray, hello?.Instance, ToolSurface.Of(tools, tray.ServerInstructions), workingDirectory, session, loggerFactory);
+
+			relay._retries.Learn(tools);
+			relay.SayIfAnotherBuild(tray);
+			relay.SayIfAnotherProtocol(hello);
+
+			// Not any call's work: it outlives every call, and reconnects on behalf of all of them.
+			relay._watching = Detached.Run(relay.WatchAsync);
+
+			return relay;
+		}
+		catch
+		{
+			await tray.DisposeAsync();
+			throw;
 		}
 	}
 
@@ -129,17 +311,29 @@ public sealed class TrayRelay : IAsyncDisposable
 		}
 	}
 
+	/// <summary>Forwards a listing, and keeps it as what the client now holds.</summary>
 	public ValueTask<ListToolsResult> ListToolsAsync(CancellationToken cancellationToken) =>
 		InvokeAsync(
 			async (tray, token) =>
 			{
-				var tools = (await tray.ListToolsAsync(cancellationToken: token))
-					.Select(tool => tool.ProtocolTool)
-					.ToArray();
+				var tools = await ListAsync(tray, _session, token);
 
-				// The same list the client gets, read once on the way past. It is what decides whether a
-				// call may be re-sent after the connection dies, and it costs nothing extra to know.
+				// The same list the client gets, read once on the way past. It decides whether a call may
+				// be re-sent after the connection dies, and it is what the client now holds, which is what
+				// a broker met after a restart is compared with.
 				_retries.Learn(tools);
+
+				bool heldChanged;
+				lock (_servedGate)
+				{
+					var listed = ToolSurface.Of(tools, _served.Instructions);
+					heldChanged = !string.Equals(listed.Fingerprint, _served.Fingerprint, StringComparison.Ordinal);
+					_served = listed;
+				}
+
+				// What the client holds is part of what the broker is told of it: a client that has just
+				// listed the tools a restart changed holds the broker's tools again.
+				if (heldChanged) IntroduceAgain();
 
 				return new ListToolsResult { Tools = tools };
 			},
@@ -147,7 +341,8 @@ public sealed class TrayRelay : IAsyncDisposable
 			cancellationToken);
 
 	/// <summary>
-	/// Forwards one call, adding the directory this session was started in and changing nothing else.
+	/// Forwards one call, adding the directory this session was started in and the name it serves under, and
+	/// changing nothing else.
 	/// <para>
 	/// A fact, not a conclusion, and that distinction is the whole of it. This used to resolve the
 	/// working directory to a solution and write the answer into the <c>workspace</c> argument, which
@@ -163,6 +358,11 @@ public sealed class TrayRelay : IAsyncDisposable
 	/// arguments. It cannot pre-empt what the caller said, cannot miss an argument it does not know
 	/// the name of, and cannot refuse on behalf of a tool that never asked.
 	/// </para>
+	/// <para>
+	/// The one thing added on the way back is the restart notice, on the first result after a
+	/// reconnect. It is claimed only once a result is in hand, so a call that fails on its way here
+	/// leaves the line for the next one.
+	/// </para>
 	/// </summary>
 	public async ValueTask<CallToolResult> CallToolAsync(
 		CallToolRequestParams request,
@@ -174,17 +374,197 @@ public sealed class TrayRelay : IAsyncDisposable
 
 		await using var progress = OrderedProgress.For(client, request.ProgressToken);
 
-		return await InvokeAsync(
+		var result = await InvokeAsync(
 			(tray, token) => CancellableToolCall.InvokeAsync(
-				tray, request.Name, arguments, progress, token, _workingDirectory),
+				tray, request.Name, arguments, progress, token, _workingDirectory, session: _session),
 			_retries.MayRetry(request.Name),
 			cancellationToken);
+
+		if (DebugSessionMemory.Changes(request.Name)) await RememberDebugSessionsAsync(cancellationToken);
+
+		return _notice.Claim() is { } notice ? IgnoredArguments.Noticed(result, [notice.Describe()]) : result;
 	}
 
+	/// <summary>
+	/// Takes the server one of the client's requests arrived on, which carries the client's name and what it
+	/// declared, and tells the broker whom this relay serves the first time there is anyone to name. Called on
+	/// every listing and call before it is forwarded; it starts the introduction and returns at once, so no
+	/// request waits on it.
+	/// </summary>
+	public void Introduce(McpServer client)
+	{
+		if (_introduction.Learn(client)) IntroduceAgain();
+	}
+
+	/// <summary>Asks the client its roots again and tells the broker, as the client's <c>roots/list_changed</c> asks.</summary>
+	public void RootsChanged()
+	{
+		_introduction.RootsChanged();
+		IntroduceAgain();
+	}
+
+	/// <summary>
+	/// Starts telling the broker whom this relay serves, after any introduction already under way, unless one
+	/// is already waiting -- it will send the latest facts when it starts -- or the client has not yet made a
+	/// request, so there is nobody to name, or the relay is ending.
+	/// <para>
+	/// Not any call's work: it is detached from whichever call or reconnect asked for it, bounded by
+	/// <see cref="ReadBudget"/> and by the relay's lifetime, and never throws, so neither a broker from before
+	/// the route nor a client that will not say its roots can fail anything the session asked for.
+	/// </para>
+	/// </summary>
+	private void IntroduceAgain()
+	{
+		if (!_introduction.Known) return;
+
+		lock (_introducingGate)
+		{
+			if (_introductionQueued || _lifetime.IsCancellationRequested) return;
+
+			_introductionQueued = true;
+			var previous = _introducing;
+			_introducing = Detached.Run(() => IntroduceAfterAsync(previous));
+		}
+	}
+
+	private async Task IntroduceAfterAsync(Task previous)
+	{
+		await previous;
+
+		lock (_introducingGate)
+		{
+			_introductionQueued = false;
+		}
+
+		try
+		{
+			using var bounded = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+			bounded.CancelAfter(ReadBudget);
+
+			string held;
+			string offered;
+			lock (_servedGate)
+			{
+				held = _served.Fingerprint;
+				offered = Volatile.Read(ref _surface).Fingerprint;
+			}
+
+			var client = await _introduction.GatherAsync(held, string.Equals(held, offered, StringComparison.Ordinal), bounded.Token);
+			await _upstream.IntroduceAsync(client, bounded.Token);
+		}
+		catch (Exception exception)
+		{
+			_logger.LogDebug(exception, "Could not tell {Upstream} whom this relay serves.", _upstream.Name);
+		}
+	}
+
+	/// <summary>
+	/// Stops watching, then closes the connection and the upstream. A broker this relay started goes
+	/// with its connection, and its workers with it.
+	/// <para>
+	/// The reconnect gate and the lifetime source are left undisposed on purpose: a call still unwinding
+	/// as the host stops may release the one or read the other's token, and neither holds anything to
+	/// free while no wait handle has been asked of it and no timer set on it.
+	/// </para>
+	/// </summary>
 	public async ValueTask DisposeAsync()
 	{
-		_reconnecting.Dispose();
-		await _tray.DisposeAsync();
+		await _lifetime.CancelAsync();
+
+		try
+		{
+			await _watching;
+		}
+		catch (Exception exception)
+		{
+			_logger.LogDebug(exception, "The watch ended with an error as the relay closed.");
+		}
+
+		// Never faults, and the lifetime it is bounded by is cancelled: an introduction in flight ends now.
+		Task introducing;
+		lock (_introducingGate)
+		{
+			introducing = _introducing;
+		}
+
+		await introducing;
+
+		await DisposeQuietlyAsync(_tray);
+		await _upstream.DisposeAsync();
+	}
+
+	/// <summary>The broker's tools, asked for under the relay's session, so the broker counts the listing as this session's rather than an unnamed client's.</summary>
+	private static async Task<Tool[]> ListAsync(McpClient tray, string session, CancellationToken cancellationToken)
+	{
+		var options = new RequestOptions { Meta = new JsonObject { [CallSession.MetaKey] = session } };
+
+		return [.. (await tray.ListToolsAsync(options, cancellationToken)).Select(tool => tool.ProtocolTool)];
+	}
+
+	/// <summary>
+	/// Logs where the broker is another build than this relay, naming both commits.
+	/// <para>
+	/// Said, not refused, and only in the log, at information: the relay forwards rather than answers,
+	/// so every tool a session sees is the broker's whichever build the relay is. An installed relay is
+	/// older than the broker after every deploy that left the relay protocol alone, which is the
+	/// ordinary state. What the line buys is the explanation for a session whose relay was started from
+	/// some other copy.
+	/// </para>
+	/// </summary>
+	private void SayIfAnotherBuild(McpClient tray)
+	{
+		var mismatch = BuildIdentity.Mismatch(
+			_upstream.Name,
+			BuildIdentity.FromHandshake(tray.ServerInfo?.Version),
+			BuildIdentity.Of(typeof(TrayRelay).Assembly));
+
+		if (mismatch is not null) _logger.LogInformation("{Mismatch}", mismatch);
+	}
+
+	/// <summary>Warns where the broker speaks another relay protocol, which is the one difference a reconnect cannot mend.</summary>
+	private void SayIfAnotherProtocol(RelayHello? hello)
+	{
+		if (hello is null || hello.RelayProtocol == RelayProtocol.Version) return;
+
+		_logger.LogWarning(
+			"{Upstream} speaks relay protocol {Theirs} and this relay {Ours}; reconnecting the MCP client starts the relay installed with it.",
+			_upstream.Name,
+			hello.RelayProtocol,
+			RelayProtocol.Version);
+	}
+
+	/// <summary>
+	/// Reads which debug sessions this session has open, after a call that may have started or ended
+	/// one, so a restart can name the ones that ended. Best effort: a reading that fails leaves the
+	/// last one standing and never fails the call it follows.
+	/// </summary>
+	private async Task RememberDebugSessionsAsync(CancellationToken cancellationToken)
+	{
+		var tray = _tray;
+		if (!_surface.Declares(ToolNames.DebugList)) return;
+
+		var reading = _debugSessions.Begin();
+
+		try
+		{
+			var listing = await CancellableToolCall.InvokeAsync(
+				tray, ToolNames.DebugList, NoArguments, progress: null, cancellationToken, _workingDirectory, session: _session, relayRead: true);
+
+			_debugSessions.Record(reading, DebugSessionMemory.Read(listing));
+		}
+		catch (Exception exception)
+		{
+			_logger.LogDebug(exception, "Could not read which debug sessions are open, so a restart notice may not name them.");
+		}
+	}
+
+	/// <summary>The connection calls use now, and the reading of it a reconnect may still be doing.</summary>
+	private (McpClient Tray, Task Adopted) Published()
+	{
+		lock (_publishing)
+		{
+			return (_tray, _adopted);
+		}
 	}
 
 	/// <summary>
@@ -204,7 +584,14 @@ public sealed class TrayRelay : IAsyncDisposable
 		bool retryable,
 		CancellationToken cancellationToken)
 	{
-		var tray = _tray;
+		// A reconnect still reading the broker it reached holds calls back until it has, so the line it
+		// decides on goes on the first result the new broker gives.
+		var (tray, adopted) = Published();
+		while (!adopted.IsCompleted)
+		{
+			await adopted.WaitAsync(cancellationToken);
+			(tray, adopted) = Published();
+		}
 
 		using var cancelling = cancellationToken.Register(
 			() => _logger.LogDebug("The client cancelled this call."));
@@ -220,10 +607,10 @@ public sealed class TrayRelay : IAsyncDisposable
 		}
 		catch (Exception exception) when (IsTransportFailure(exception) && !cancellationToken.IsCancellationRequested)
 		{
-			_logger.LogWarning(exception, "The tray at {Endpoint} stopped answering; reconnecting.", _endpoint);
+			_logger.LogWarning(exception, "{Upstream} stopped answering; reconnecting.", _upstream.Name);
 
 			// Reconnected either way, so the next call does not pay for this one's failure.
-			var reconnected = await ReconnectAsync(tray, cancellationToken);
+			var reconnected = await ReconnectAsync(tray, ReconnectWindow, cancellationToken);
 
 			// One retry, not a loop: a second transport failure means the tray is genuinely unreachable
 			// rather than merely restarted, and retrying past that turns a clear failure into a hang. The
@@ -243,39 +630,100 @@ public sealed class TrayRelay : IAsyncDisposable
 	/// Replaces the dead connection, unless another call got there first. Concurrent calls all fail
 	/// at once when the tray goes down, and each of them reconnecting would leave one session
 	/// holding several sockets to a tray that has only just come back.
+	/// <para>
+	/// The watch and the calls share it, so whichever notices first reconnects and the rest find the
+	/// new connection waiting. What the new broker offers is compared inside it, so one restart is one
+	/// comparison and at most one <c>list_changed</c>, and a call retrying after it finds the restart
+	/// notice already waiting for its result. <paramref name="within"/> counts the wait for the gate
+	/// too, so a call queued behind a watch that is still failing to reach the tray gets one more
+	/// attempt rather than a second window of its own.
+	/// </para>
 	/// </summary>
-	private async Task<McpClient> ReconnectAsync(McpClient stale, CancellationToken cancellationToken)
+	/// <param name="stale">The connection found wanting; one already replaced is not replaced again.</param>
+	/// <param name="within">How long reaching the broker may take, the wait for the gate included.</param>
+	/// <param name="cancellationToken">The caller's token.</param>
+	/// <param name="watchBeganAt">
+	/// For a watch that reached another broker, how many adoptions had finished when it began; an
+	/// adoption finishing since means the broker it reached is the one adopted.
+	/// </param>
+	private async Task<McpClient> ReconnectAsync(McpClient stale, TimeSpan within, CancellationToken cancellationToken, int? watchBeganAt = null)
 	{
+		var asked = Stopwatch.GetTimestamp();
 		await _reconnecting.WaitAsync(cancellationToken);
 
 		try
 		{
 			if (!ReferenceEquals(_tray, stale)) return _tray;
 
-			try
+			// The watch reads the connection and the instance without the gate, so it can pair a connection
+			// still being adopted with the instance before it, and find "another" broker that is the one
+			// being adopted. An adoption finishing since the watch began is what says so: the instance
+			// cannot, since an adopt whose hello went unanswered leaves none to compare.
+			var adoptedSinceTheWatchBegan = watchBeganAt is { } began && began != Volatile.Read(ref _adoptions);
+			if (adoptedSinceTheWatchBegan) return _tray;
+
+			await DisposeQuietlyAsync(stale);
+
+			if (!_upstream.Reconnects)
 			{
-				await stale.DisposeAsync();
+				_ended.TrySetResult();
+
+				throw new McpException(
+					$"{_upstream.Name} has stopped, and this session cannot start another while a deploy may be "
+						+ "replacing its files. Reconnect the MCP client (/mcp) to start a session on the build now installed.");
 			}
-			catch (Exception exception)
-			{
-				_logger.LogDebug(exception, "Disposing the dead tray connection failed, which is expected.");
-			}
+
+			var left = within - Stopwatch.GetElapsedTime(asked);
+
+			McpClient fresh;
 
 			try
 			{
-				_tray = await ConnectAsync(_endpoint, _loggerFactory, ReconnectWindow, cancellationToken);
-				_logger.LogInformation("Reconnected to the tray at {Endpoint}.", _endpoint);
-
-				return _tray;
+				fresh = await _upstream.ConnectAsync(left > TimeSpan.Zero ? left : TimeSpan.Zero, cancellationToken);
 			}
 			catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
 			{
 				throw new McpException(
-					$"The RoseMCP tray at {_endpoint} is not answering, so this session has nowhere to run the "
-						+ "call. It restarts during a deploy, so trying again in a moment usually works, and the "
-						+ "call after a restart is slow because the solution loads again.",
+					$"{_upstream.Name} is not answering, so this session has nowhere to run the call. It restarts "
+						+ "during a deploy, so trying again in a moment usually works, and the call after a restart is "
+						+ "slow because the solution loads again.",
 					exception);
 			}
+
+			// Calls are held from the moment the connection is published until the adopt is over, so none is
+			// answered by the new broker before the relay knows what to tell the client about it.
+			var adopting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+			lock (_publishing)
+			{
+				_adopted = adopting.Task;
+				_tray = fresh;
+			}
+
+			try
+			{
+				_logger.LogInformation("Reconnected to {Upstream}.", _upstream.Name);
+
+				// A reconnect is usually a deploy, which is exactly when the tray becomes another build.
+				SayIfAnotherBuild(fresh);
+
+				// Not the call's work, though a call may have found the broker gone: what it reads serves
+				// every call after this one.
+				await Detached.Run(() => AdoptAsync(fresh));
+			}
+			finally
+			{
+				// Counted once the adopt is over, never when the connection is published: a watch that began
+				// in between paired this connection with the instance before it.
+				Interlocked.Increment(ref _adoptions);
+				adopting.TrySetResult();
+
+				// A broker met by a reconnect is usually a new one, which knows nothing of this session.
+				IntroduceAgain();
+			}
+
+			CancelQuietly(Volatile.Read(ref _watch));
+
+			return fresh;
 		}
 		finally
 		{
@@ -284,37 +732,246 @@ public sealed class TrayRelay : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Opens a connection, retrying until <paramref name="within"/> elapses. A tray that is mid
-	/// restart refuses the socket outright, so the first attempt failing says nothing about the next.
+	/// Reads what a newly connected broker offers and decides what the client is told: one
+	/// <c>list_changed</c> where its tools or instructions differ from what the client holds, nothing
+	/// where they match, and a line on the next result wherever anything happened at all.
 	/// </summary>
-	private static async Task<McpClient> ConnectAsync(
-		Uri endpoint,
-		ILoggerFactory loggerFactory,
-		TimeSpan within,
-		CancellationToken cancellationToken)
+	private async Task AdoptAsync(McpClient fresh)
 	{
-		var deadline = DateTime.UtcNow + within;
+		using var reading = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+		reading.CancelAfter(ReadBudget);
 
-		while (true)
+		var hello = await _upstream.HelloAsync(fresh, reading.Token);
+
+		ToolSurface? surface = null;
+
+		try
+		{
+			var tools = await ListAsync(fresh, _session, reading.Token);
+
+			_retries.Learn(tools);
+			surface = ToolSurface.Of(tools, fresh.ServerInstructions);
+		}
+		catch (Exception exception) when (!_lifetime.IsCancellationRequested)
+		{
+			_logger.LogWarning(exception, "Could not read the tools of {Upstream}; the client is asked to list them again.", _upstream.Name);
+		}
+
+		ToolSurfaceChange? change;
+
+		lock (_servedGate)
+		{
+			change = surface is null ? null : _served.ChangesTo(surface);
+
+			// The client cannot be given new instructions short of reconnecting, so once it has been told
+			// they changed they count as served; otherwise every later reconnect would say so again.
+			if (surface is not null && change is { InstructionsChanged: true }) _served = _served.WithInstructions(surface.Instructions);
+		}
+
+		var restarted = hello is null || _instance is null || !string.Equals(hello.Instance, _instance, StringComparison.Ordinal);
+		var ended = _debugSessions.Take();
+		int? otherProtocol = hello is not null && hello.RelayProtocol != RelayProtocol.Version ? hello.RelayProtocol : null;
+		var refresh = change is not { IsEmpty: true };
+
+		var worthSaying = restarted || ended.Count > 0 || refresh || otherProtocol is not null;
+		if (worthSaying)
+		{
+			_notice.Add(new RestartNotice
+			{
+				Build = BuildIdentity.FromHandshake(fresh.ServerInfo?.Version),
+				Restarted = restarted,
+				EndedSessions = ended,
+				Tools = change,
+				BrokerRelayProtocol = otherProtocol,
+			});
+		}
+
+		_instance = hello?.Instance;
+		if (surface is not null) _surface = surface;
+
+		SayIfAnotherProtocol(hello);
+
+		if (!refresh) return;
+
+		_logger.LogInformation("{Upstream} offers other tools than the client holds; telling it to list them again.", _upstream.Name);
+
+		try
+		{
+			ToolsChanged.Raise();
+		}
+		catch (Exception exception)
+		{
+			_logger.LogDebug(exception, "Could not tell the client its tool list changed.");
+		}
+	}
+
+	/// <summary>
+	/// Watches the broker for as long as the relay lives, and reconnects when it goes.
+	/// <para>
+	/// A watch that closed is a reason to look, not proof: the broker is asked before anything is
+	/// replaced, because reconnecting to a broker that is still there opens a new connection, and the
+	/// debug sessions this session started belong to the old one. A broker that is really gone is
+	/// reconnected to until it is back -- a tray mid-deploy is down for as long as the copy takes --
+	/// unless it was one this relay started, which ends the relay instead. A watch that reached another
+	/// broker instance is not asked about: the old connection reaches that new broker too, which answers
+	/// it, so asking would keep the relay on it.
+	/// </para>
+	/// </summary>
+	private async Task WatchAsync()
+	{
+		var token = _lifetime.Token;
+
+		while (!token.IsCancellationRequested)
+		{
+			// Read before the connection, so a connection published by a reconnect still adopting it is
+			// paired with the count from before that adopt finished.
+			var began = Volatile.Read(ref _adoptions);
+			var watched = _tray;
+			var ended = WatchEnd.Closed;
+
+			using (var scope = CancellationTokenSource.CreateLinkedTokenSource(token))
+			{
+				// A full fence, so the read of the connection below cannot be ordered ahead of this write and
+				// miss a reconnect that cancelled the scope before it was published.
+				Interlocked.Exchange(ref _watch, scope);
+				if (!ReferenceEquals(watched, _tray)) continue;
+
+				try
+				{
+					ended = await _upstream.WatchAsync(watched, _instance, scope.Token);
+				}
+				catch (OperationCanceledException) when (token.IsCancellationRequested)
+				{
+					return;
+				}
+				catch (Exception exception)
+				{
+					_logger.LogDebug(exception, "The watch on {Upstream} ended.", _upstream.Name);
+				}
+			}
+
+			if (token.IsCancellationRequested) return;
+			if (!ReferenceEquals(watched, _tray)) continue;
+
+			if (ended.AnotherInstance is not null)
+			{
+				_logger.LogWarning("{Upstream} is another broker than this relay is connected to; reconnecting.", _upstream.Name);
+				await ReconnectUntilBackAsync(watched, began, token);
+
+				continue;
+			}
+
+			if (await AnswersAsync(watched, token))
+			{
+				await PauseAsync(token);
+
+				// The same broker, which may have let this session's row go while the watch was down; saying
+				// whom the relay serves again costs one request and puts it back as it was.
+				IntroduceAgain();
+				continue;
+			}
+
+			if (!_upstream.Reconnects)
+			{
+				_logger.LogWarning("{Upstream} has stopped; this session ends with it.", _upstream.Name);
+				_ended.TrySetResult();
+
+				return;
+			}
+
+			_logger.LogWarning("{Upstream} has gone; reconnecting.", _upstream.Name);
+			await ReconnectUntilBackAsync(watched, watchBeganAt: null, token);
+		}
+	}
+
+	/// <summary>Reconnects until a broker answers or the relay ends, pausing between attempts.</summary>
+	/// <param name="stale">The connection the watch found wanting.</param>
+	/// <param name="watchBeganAt">For a watch that reached another broker, the adoptions it began at.</param>
+	/// <param name="token">The relay's lifetime.</param>
+	private async Task ReconnectUntilBackAsync(McpClient stale, int? watchBeganAt, CancellationToken token)
+	{
+		while (!token.IsCancellationRequested)
 		{
 			try
 			{
-				using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-				attempt.CancelAfter(TimeSpan.FromSeconds(2));
-
-				var transport = new HttpClientTransport(new HttpClientTransportOptions { Endpoint = endpoint });
-
-				var token = attempt.Token;
-
-				// A reconnect happens inside whichever call found the tray gone, and the connection it
-				// opens serves every call after that one.
-				return await Detached.Run(() => McpClient.CreateAsync(
-					transport, loggerFactory: loggerFactory, cancellationToken: token));
+				await ReconnectAsync(stale, ReconnectWindow, token, watchBeganAt);
+				return;
 			}
-			catch when (DateTime.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
+			catch (OperationCanceledException) when (token.IsCancellationRequested)
 			{
-				await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
+				return;
 			}
+			catch (Exception exception)
+			{
+				_logger.LogDebug(exception, "{Upstream} is not back yet.", _upstream.Name);
+			}
+
+			if (!await PauseAsync(token)) return;
+		}
+	}
+
+	/// <summary>
+	/// Whether the broker behind <paramref name="client"/> still answers. Any answer counts: on the
+	/// 2026-07-28 revision there is no <c>ping</c>, and a live broker refuses it with a protocol
+	/// error, which proves it is there as well as a reply would. Only a failure to reach it at all
+	/// says it has gone.
+	/// </summary>
+	private static async Task<bool> AnswersAsync(McpClient client, CancellationToken token)
+	{
+		using var bounded = CancellationTokenSource.CreateLinkedTokenSource(token);
+		bounded.CancelAfter(PingBudget);
+
+		try
+		{
+			await client.PingAsync(cancellationToken: bounded.Token);
+			return true;
+		}
+		catch (McpProtocolException)
+		{
+			return true;
+		}
+		catch (Exception)
+		{
+			return false;
+		}
+	}
+
+	/// <summary>Waits <see cref="RetryPause"/>, or returns false at once when the relay is ending.</summary>
+	private static async Task<bool> PauseAsync(CancellationToken token)
+	{
+		try
+		{
+			await Task.Delay(RetryPause, token);
+			return true;
+		}
+		catch (OperationCanceledException)
+		{
+			return false;
+		}
+	}
+
+	/// <summary>Cancels a watch's scope, which may already have been disposed by the watch finishing.</summary>
+	private static void CancelQuietly(CancellationTokenSource? scope)
+	{
+		try
+		{
+			scope?.Cancel();
+		}
+		catch (ObjectDisposedException)
+		{
+			// The watch it scoped has already ended, which is what cancelling it was for.
+		}
+	}
+
+	private async Task DisposeQuietlyAsync(McpClient client)
+	{
+		try
+		{
+			await client.DisposeAsync();
+		}
+		catch (Exception exception)
+		{
+			_logger.LogDebug(exception, "Disposing the dead tray connection failed, which is expected.");
 		}
 	}
 

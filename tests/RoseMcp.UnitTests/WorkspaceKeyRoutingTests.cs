@@ -298,6 +298,7 @@ public sealed class WorkspaceKeyRoutingTests
 		return new WorkspaceManager(
 			options,
 			new CallerPaths(options),
+			new WorkspaceHealth(options, NullLogger<WorkspaceHealth>.Instance),
 			NullLoggerFactory.Instance,
 			NullLogger<WorkspaceManager>.Instance);
 	}

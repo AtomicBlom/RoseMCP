@@ -36,6 +36,56 @@ public sealed class BrokerOptions
 	public bool DefaultRootIsTheCaller { get; set; }
 
 	/// <summary>
+	/// Whether this broker has exactly one client for its whole life: true for a stdio broker, false for the
+	/// tray and an http server, whichever sessions reach them.
+	/// <para>
+	/// It decides what a call carrying no session id means. Over stdio that is the one client, so whatever
+	/// it acknowledges is its own. Over http a call with no session id is any client at all -- the transport
+	/// serves each request without a session -- and an acknowledgement taken from one would silence a reason
+	/// for every agent on the machine, so it is refused rather than shared. False unless the host that knows
+	/// says otherwise, because refusing costs an agent a line it could not stop hearing, and sharing costs
+	/// every other agent a reason it never heard.
+	/// </para>
+	/// </summary>
+	public bool ServesOneClient { get; set; }
+
+	/// <summary>
+	/// Where local application data is, for the per-machine record of accepted reasons beside
+	/// <c>settings.json</c>; null for this user's own. A test sets it so it never writes the record a person
+	/// relies on.
+	/// </summary>
+	public string? LocalAppData { get; set; }
+
+	/// <summary>
+	/// How long a change to the record of accepted reasons waits for another process to let go of it before it is
+	/// given up and said to have failed. A test shortens it, so a file it holds on purpose costs it no time.
+	/// </summary>
+	public TimeSpan HealthRecordWait { get; set; } = Settings.WorkspaceHealthFile.DefaultWait;
+
+	/// <summary>
+	/// Where the activity record is kept, or null for its own place: the directory
+	/// <see cref="ActivityRecord.RootVariable"/> names, else <c>Activity</c> under the logs, which
+	/// <c>ROSEMCP_LOG_ROOT</c> moves for a test run. A test sets it so it never writes the record a person reads.
+	/// </summary>
+	public string? ActivityDirectory { get; set; }
+
+	/// <summary>
+	/// How long the activity record keeps an entry. Asked each time the record prunes rather than once, so a person
+	/// changing the setting is heeded by a broker already running; the machine's settings file by default, and
+	/// replaced by a test that must not depend on what the machine it runs on has chosen.
+	/// </summary>
+	public Func<TimeSpan> ActivityRetention { get; set; } =
+		() => TimeSpan.FromDays(Settings.RoseSettingsFile.Read().ActivityRetentionDays);
+
+	/// <summary>
+	/// Opens one of the activity record's files for writing, created new or opened to append. A file on disk, shared
+	/// for reading and deleting, everywhere but a test, which replaces it to make a write fail or stall the way a full
+	/// or slow disk does, which no folder can be made to do on demand.
+	/// </summary>
+	public Func<string, FileMode, Stream> OpenActivityFile { get; set; } =
+		(path, mode) => new FileStream(path, mode, FileAccess.Write, FileShare.Read | FileShare.Delete);
+
+	/// <summary>
 	/// How long a freshly started worker has to complete its MCP handshake.
 	/// <para>
 	/// Set explicitly because the SDK's own default is 60 seconds, and a worker begins loading its
@@ -87,10 +137,29 @@ public sealed class BrokerOptions
 	public TimeSpan SolutionGoneGrace { get; set; } = TimeSpan.FromMinutes(2);
 
 	/// <summary>
-	/// How often the eviction sweep looks, when eviction is on. A minute is far finer than limits
+	/// How often the sweep looks: for workers to evict, when eviction is on, and for workers holding a
+	/// rebuilt analyzer to reload, which can be asked for in every host. A minute is far finer than limits
 	/// counted in minutes need, and costs a file-existence check per worker.
 	/// </summary>
 	public TimeSpan EvictionSweepInterval { get; set; } = TimeSpan.FromMinutes(1);
+
+	/// <summary>
+	/// How long a worker whose reads found a rebuilt analyzer goes unused before it is replaced, where
+	/// <see cref="ReloadsRebuiltAnalyzersWhenIdle"/> says to. A minute: long enough that an agent between two
+	/// calls of one task is not made to wait for a design-time build, short enough that the workspace has the
+	/// new build by the time somebody comes back to it.
+	/// </summary>
+	public TimeSpan RebuiltAnalyzerReloadAfter { get; set; } = TimeSpan.FromMinutes(1);
+
+	/// <summary>
+	/// Whether a worker holding a rebuilt analyzer is replaced once it has gone unused for
+	/// <see cref="RebuiltAnalyzerReloadAfter"/>. Asked at the moment of deciding rather than once, so a person
+	/// changing the setting is heeded by a broker already running; the machine's settings file by default,
+	/// read only when some worker holds a rebuilt analyzer, and replaced by a test that must not depend on
+	/// what the machine it runs on has chosen.
+	/// </summary>
+	public Func<bool> ReloadsRebuiltAnalyzersWhenIdle { get; set; } =
+		() => Settings.RoseSettingsFile.Read().ReloadRebuiltAnalyzersWhenIdle;
 
 	/// <summary>
 	/// How long a live-app session whose host has stopped answering stays listed, as ended, before the

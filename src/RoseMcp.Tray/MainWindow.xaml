@@ -88,6 +88,7 @@
 					<MenuFlyoutItem x:Name="TrayOpenInspector" Text="Open inspector" />
 					<ToggleMenuFlyoutItem x:Name="TrayShowInspectorOnAttach" Text="Show inspector when the debugger attaches" />
 					<MenuFlyoutItem x:Name="TrayCopyInspectorCommand" Text="Copy inspector command" />
+					<ToggleMenuFlyoutItem x:Name="TrayReloadRebuiltAnalyzers" Text="Reload a workspace when its analyzers are rebuilt" />
 					<MenuFlyoutItem x:Name="TrayOpenLogs" Text="Open log folder" />
 					<MenuFlyoutItem x:Name="TrayCloseAll" Text="Close all workspaces" />
 					<MenuFlyoutSeparator />
@@ -157,6 +158,13 @@
 								</MenuFlyoutItem.Icon>
 							</MenuFlyoutItem>
 							<MenuFlyoutSeparator />
+							<ToggleMenuFlyoutItem x:Name="WindowReloadRebuiltAnalyzers"
+								Text="Reload a workspace when its analyzers are rebuilt"
+								Click="OnToggleReloadRebuiltAnalyzers">
+								<ToggleMenuFlyoutItem.Icon>
+									<FontIcon Glyph="&#xE72C;" />
+								</ToggleMenuFlyoutItem.Icon>
+							</ToggleMenuFlyoutItem>
 							<MenuFlyoutItem Text="Open log folder" Click="OnOpenLogs">
 								<MenuFlyoutItem.Icon>
 									<FontIcon Glyph="&#xE8B7;" />
@@ -444,7 +452,7 @@
 			<TextBlock MaxWidth="440" TextAlignment="Center" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
 				Text="A solution is loaded the first time a client asks about it, and stays warm here for every session after that." />
 			<TextBlock Margin="0,12,0,0" TextAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
-				Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Register the endpoint with your agent:" />
+				Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Register RoseMCP with your agent:" />
 			<Button Style="{StaticResource ChipButtonStyle}" Click="OnCopyRegistration" HorizontalAlignment="Center"
 				ToolTipService.ToolTip="Copy">
 				<Grid ColumnSpacing="10" ColumnDefinitions="*,Auto">

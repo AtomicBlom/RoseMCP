@@ -95,17 +95,29 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 ;
 ; Everything both architectures build identically, which is most of a payload: the managed assemblies
 ; are architecture-neutral IL and the two publishes emit the same bytes. Carried once and laid down
-; whichever machine this is.
-Source: "{#StageDir}\payload\shared\*"; DestDir: "{app}"; \
+; whichever machine this is. The relay's folder is left out here and laid down below, only when the
+; relay installed is not this one.
+Source: "{#StageDir}\payload\shared\*"; DestDir: "{app}"; Excludes: "\relay"; \
     Flags: recursesubdirs createallsubdirs ignoreversion
 
 ; What is genuinely each architecture's own: the apphosts, the assemblies stamped with their RID, and
 ; the native WindowsAppSDK pieces. Exactly one of these two runs, and neither can collide with the
 ; shared set -- a file is in shared precisely when every architecture had it identical, and left here
 ; otherwise.
-Source: "{#StageDir}\payload\win-x64\*"; DestDir: "{app}"; Check: IsX64OS; \
+Source: "{#StageDir}\payload\win-x64\*"; DestDir: "{app}"; Check: IsX64OS; Excludes: "\relay"; \
     Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "{#StageDir}\payload\win-arm64\*"; DestDir: "{app}"; Check: IsArm64; \
+Source: "{#StageDir}\payload\win-arm64\*"; DestDir: "{app}"; Check: IsArm64; Excludes: "\relay"; \
+    Flags: recursesubdirs createallsubdirs ignoreversion
+
+; The relay a client registers, in a folder an install leaves alone -- with the relays running from it
+; -- while the relay there speaks the relay protocol this one does, so those sessions reconnect to the
+; new tray by themselves. RelayIsStale is decided once, before any file is laid down, because the
+; marker that decides it is itself one of these files.
+Source: "{#StageDir}\payload\shared\relay\*"; DestDir: "{app}\relay"; Check: RelayIsStale; \
+    Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#StageDir}\payload\win-x64\relay\*"; DestDir: "{app}\relay"; Check: IsX64OS and RelayIsStale; \
+    Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#StageDir}\payload\win-arm64\relay\*"; DestDir: "{app}\relay"; Check: IsArm64 and RelayIsStale; \
     Flags: recursesubdirs createallsubdirs ignoreversion
 
 ; The debug hosts, which are shared rather than per-architecture. ICorDebug has no cross-architecture
@@ -121,9 +133,11 @@ Source: "{#StageDir}\payload\live-app\win-arm64\*"; DestDir: "{app}\live-app\win
     Flags: recursesubdirs createallsubdirs ignoreversion
 
 ; Installed so the uninstaller can stop what it is about to remove, and extracted to {tmp} as well so
-; the same thing can run before the first file is laid down.
+; the same thing can run before the first file is laid down. The layout goes to {tmp} beside it,
+; because deciding whether the installed relay stays reads it; removing an install reads nothing.
 Source: "{#StageDir}\RoseMcp.Deploy.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\RoseMcp.Deploy.ps1"; Flags: dontcopy
+Source: "{#StageDir}\published-layout.json"; Flags: dontcopy
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\tray\RoseMcp.Tray.exe"; Parameters: "--port {#DefaultPort} --worker ""{app}\RoseMcp.Worker.exe"""
@@ -148,16 +162,44 @@ Filename: "{app}\tray\RoseMcp.Tray.exe"; \
 ; deliberately not listed: somebody who uninstalls to reinstall a newer build should not lose what
 ; they configured, and a single json file is not what anyone is reclaiming space for.
 Type: filesandordirs; Name: "{app}\Logs"
+; The relay, which an install that kept it never recorded laying down.
+Type: filesandordirs; Name: "{app}\relay"
 ; The install root itself, once its contents are gone. Inno removes only the files it laid down, and
 ; a publish leaves generated companions beside them.
 Type: dirifempty; Name: "{app}"
 
-[Messages]
-FinishedLabel=Setup has finished installing [name] on your computer.%n%nRegister the endpoint with your agent:%n    claude mcp add --transport http rose http://127.0.0.1:{#DefaultPort}%n%nThe tray shows this command too.
-
 [Code]
 const
   PowerShellQuiet = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ';
+
+var
+  { Whether the relay installed is not this one, so its files are laid down. True until PrepareToInstall
+    finds one worth keeping, which a new install never does. }
+  RelayStale: Boolean;
+
+function InitializeSetup(): Boolean;
+begin
+  RelayStale := True;
+  Result := True;
+end;
+
+function RelayIsStale: Boolean;
+begin
+  Result := RelayStale;
+end;
+
+{ The relay form of the registration, naming the relay this install put down, which is what keeps a
+  session connected across the next install. Set here rather than in [Messages], which cannot name
+  the install folder. }
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = wpFinished then
+    WizardForm.FinishedLabel.Caption :=
+      'Setup has finished installing RoseMCP on your computer.' + #13#10#13#10 +
+      'Register it with your agent:' + #13#10 +
+      '    claude mcp add rose -s user -- "' + ExpandConstant('{app}\relay\RoseMcp.Server.exe') + '"' + #13#10#13#10 +
+      'The tray shows this command too.';
+end;
 
 { Runs a snippet against the shared deploy script and returns its exit code. The knowledge of what to
   stop, in what order, and how long to wait for a worker to let go lives in RoseMcp.Deploy.ps1
@@ -224,17 +266,22 @@ end;
   forever and be loaded by a version that never shipped it; Inno's own file list cannot see those,
   because it never put them there.
 
-  Clearing keeps Logs/ and settings.json, which live under the same root and are not payload. }
+  Clearing keeps Logs/ and settings.json, which live under the same root and are not payload, and the
+  relay's folder where the relay in it is this one: its relays are still running, and stay so.
+  Whether it was kept is read back afterwards, which is what RelayIsStale answers. }
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  ScriptPath, Root: string;
+  ScriptPath, Root, VerdictPath, Verdict: string;
   ExitCode: Integer;
+  Verdicts: TArrayOfString;
 begin
   Result := '';
   NeedsRestart := False;
 
   ExtractTemporaryFile('RoseMcp.Deploy.ps1');
+  ExtractTemporaryFile('published-layout.json');
   ScriptPath := ExpandConstant('{tmp}\RoseMcp.Deploy.ps1');
+  VerdictPath := ExpandConstant('{tmp}\relay.txt');
   Root := ExpandConstant('{app}');
 
   ReportPrerequisites(ScriptPath);
@@ -243,7 +290,9 @@ begin
     Exit;
 
   if not RunDeployScript(ScriptPath,
-    'Stop-Install -Root ''' + Root + ''' | Out-Null; Clear-InstallPayload -Root ''' + Root + '''',
+    'Stop-Install -Root ''' + Root + ''' -KeepCurrentRelay | Out-Null; ' +
+    'Clear-InstallPayload -Root ''' + Root + ''' -KeepCurrentRelay; ' +
+    '$(if (Test-RelayCurrent -Root ''' + Root + ''') { ''current'' } else { ''stale'' }) | Set-Content -LiteralPath ''' + VerdictPath + '''',
     ExitCode) then
   begin
     Result := 'Could not run the shutdown step. Close the RoseMCP tray and any editor connected to it, then try again.';
@@ -254,7 +303,18 @@ begin
     would not exit -- which is exactly the case where continuing overwrites a file somebody still has
     open. Naming the cause beats failing on the first DLL that happens to be locked. }
   if ExitCode <> 0 then
+  begin
     Result := 'RoseMCP is still running and would not shut down. Close the tray from its icon, then try again.';
+    Exit;
+  end;
+
+  // Anything but a clear verdict that the relay stays lays it down again, which is the safe way to be
+  // wrong: the relays running were stopped with everything else unless it said current.
+  Verdict := '';
+  if LoadStringsFromFile(VerdictPath, Verdicts) and (GetArrayLength(Verdicts) > 0) then
+    Verdict := Trim(Verdicts[0]);
+
+  RelayStale := Verdict <> 'current';
 end;
 
 // The uninstaller has the same problem the installer does: the thing it is removing is running. It

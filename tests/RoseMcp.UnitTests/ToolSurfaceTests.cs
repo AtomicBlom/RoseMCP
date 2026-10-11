@@ -1,6 +1,9 @@
+using System.IO.Pipelines;
+
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
+using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -59,6 +62,7 @@ public sealed class ToolSurfaceTests
 		ToolNames.SearchSymbols,
 		ToolNames.SetAttribute,
 		ToolNames.SymbolInfo,
+		ToolNames.WorkspaceAcknowledge,
 		ToolNames.WorkspaceClose,
 		ToolNames.WorkspaceList,
 		ToolNames.WorkspaceOpen,
@@ -286,10 +290,58 @@ public sealed class ToolSurfaceTests
 	}
 
 	/// <summary>
+	/// The trim leaves the definitions the SDK answers calls with alone. The SDK decides from a tool's
+	/// own output schema whether its result carries structured content, so a listing that cleared the
+	/// schema in place would leave every later call -- every client's, since a client always lists
+	/// first -- answering in text alone. A relay reads its notices and the debug sessions out of
+	/// structured content, so it would hear nothing.
+	/// </summary>
+	[Test]
+	public async Task A_listing_leaves_later_results_structured()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		var toServer = new Pipe();
+		var toClient = new Pipe();
+
+		var services = new ServiceCollection();
+		services.AddLogging();
+		services.AddRoseMcpBroker().WithStreamServerTransport(toServer.Reader.AsStream(), toClient.Writer.AsStream());
+
+		await using var provider = services.BuildServiceProvider();
+		using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		var running = provider.GetRequiredService<McpServer>().RunAsync(stop.Token);
+
+		await using (var client = await McpClient.CreateAsync(
+			new StreamClientTransport(toServer.Writer.AsStream(), toClient.Reader.AsStream()),
+			cancellationToken: cancellationToken))
+		{
+			var listed = await client.ListToolsAsync(cancellationToken: cancellationToken);
+			listed.ShouldAllBe(tool => tool.ProtocolTool.OutputSchema == null, "the listing is trimmed");
+
+			var answer = await client.CallToolAsync(ToolNames.WorkspaceList, cancellationToken: cancellationToken);
+
+			answer.StructuredContent.ShouldNotBeNull("a call after a listing still carries its structured content");
+		}
+
+		await stop.CancelAsync();
+
+		try
+		{
+			await running;
+		}
+		catch (OperationCanceledException)
+		{
+		}
+	}
+
+	/// <summary>
 	/// The tools the instructions do not route, named so adding one is a decision. Each is the other
 	/// half of a pair whose first half is routed -- you list or remove what you have just set, you
 	/// deselect what you have selected -- so a session that reached the naming tool has the counterpart
 	/// in that tool's own description. rose_workspace_close is housekeeping nothing else depends on.
+	/// rose_workspace_acknowledge acts on the ids rose_workspace_status hands out, and status's description
+	/// names it: a session has no use for it before it has read a reason.
 	/// <para>
 	/// rose_xaml_select_element was here on the reasoning that a read hands out the handle it takes.
 	/// That held while arming select mode was routed beside it; with arming gone from the surface,
@@ -303,6 +355,7 @@ public sealed class ToolSurfaceTests
 		ToolNames.DebugListTracepoints,
 		ToolNames.DebugRemoveBreakpoint,
 		ToolNames.DebugRemoveTracepoint,
+		ToolNames.WorkspaceAcknowledge,
 		ToolNames.WorkspaceClose,
 		ToolNames.XamlDeselect,
 	];

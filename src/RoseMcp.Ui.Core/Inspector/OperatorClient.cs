@@ -80,8 +80,68 @@ public sealed class OperatorClient : IDisposable
 	/// <summary>Whether this client has a token at all, which decides which empty state to show.</summary>
 	public bool HasToken { get; }
 
-	public Task<IReadOnlyList<LiveAppSessionSummary>> SessionsAsync(CancellationToken cancellationToken) =>
-		GetAsync<IReadOnlyList<LiveAppSessionSummary>>("/operator/sessions", Quick, cancellationToken);
+	/// <summary>
+	/// Which build the broker is, and how far its checkout has moved on. Given the read budget: the
+	/// broker waits a couple of seconds at most for its checkout's commits to be counted and otherwise
+	/// answers that they are still being counted, so the build always arrives inside it.
+	/// </summary>
+	public Task<OperatorHello> HelloAsync(CancellationToken cancellationToken) =>
+		GetAsync<OperatorHello>("/operator/hello", Quick, cancellationToken);
+
+	/// <summary>Every debug session on the machine, whoever started it.</summary>
+	public async Task<IReadOnlyList<LiveAppSessionSummary>> SessionsAsync(CancellationToken cancellationToken) =>
+		(await SessionListAsync(after: null, waitSeconds: 0, cancellationToken)).Sessions;
+
+	/// <summary>
+	/// Every debug session on the machine with the view's version. Given <paramref name="after"/>, the version of the
+	/// last answer, and a <paramref name="waitSeconds"/> above zero, a long poll answered when a session starts, ends
+	/// or changes state -- so the budget is the wait plus a margin.
+	/// </summary>
+	public Task<OperatorSessionList> SessionListAsync(string? after, int waitSeconds, CancellationToken cancellationToken) =>
+		GetAsync<OperatorSessionList>(Watched("/operator/sessions", after, waitSeconds), PollBudget(waitSeconds), cancellationToken);
+
+	/// <summary>
+	/// The broker's clients: each agent session behind a relay, and the clients without one. A long poll where
+	/// <paramref name="after"/> and <paramref name="waitSeconds"/> say, answered when a client connects, calls or goes.
+	/// </summary>
+	public Task<ClientList> ClientsAsync(string? after, int waitSeconds, CancellationToken cancellationToken) =>
+		GetAsync<ClientList>(Watched("/operator/clients", after, waitSeconds), PollBudget(waitSeconds), cancellationToken);
+
+	/// <summary>
+	/// Every workspace the broker holds a worker for, with its health, folder, configuration, platform, memory, idle
+	/// time and close time. A long poll where <paramref name="after"/> and <paramref name="waitSeconds"/> say, answered
+	/// when a row changes in anything but its memory and its clock.
+	/// </summary>
+	public Task<OperatorWorkspaceList> WorkspacesAsync(string? after, int waitSeconds, CancellationToken cancellationToken) =>
+		GetAsync<OperatorWorkspaceList>(Watched("/operator/workspaces", after, waitSeconds), PollBudget(waitSeconds), cancellationToken);
+
+	/// <summary>
+	/// A page of the activity record: the newest entries <paramref name="filter"/> matches, or those older than
+	/// <paramref name="before"/>, the <c>next</c> of the page before. A long poll where <paramref name="after"/> and
+	/// <paramref name="waitSeconds"/> say, answered when a call the filter matches starts or ends.
+	/// </summary>
+	public Task<ActivityPage> ActivityAsync(
+		ActivityFilter filter,
+		string? before,
+		string? after,
+		int waitSeconds,
+		CancellationToken cancellationToken)
+	{
+		var query = new List<string>(filter.Arguments());
+		if (!string.IsNullOrEmpty(before)) query.Add($"before={Uri.EscapeDataString(before)}");
+
+		var path = query.Count == 0 ? "/operator/activity" : $"/operator/activity?{string.Join('&', query)}";
+
+		return GetAsync<ActivityPage>(Watched(path, after, waitSeconds), PollBudget(waitSeconds), cancellationToken);
+	}
+
+	/// <summary>One entry of the activity record, with its arguments, response and diffs.</summary>
+	public Task<ActivityEntry> ActivityEntryAsync(string id, CancellationToken cancellationToken) =>
+		GetAsync<ActivityEntry>($"/operator/activity/{Uri.EscapeDataString(id)}", Quick, cancellationToken);
+
+	/// <summary>What the broker, each worker, each live-app host and each debugged app hold, and the machine's memory, sampled now.</summary>
+	public Task<MemoryReport> MemoryAsync(CancellationToken cancellationToken) =>
+		GetAsync<MemoryReport>("/operator/memory", Quick, cancellationToken);
 
 	public Task<LiveAppSessionSummary> SessionAsync(string sessionId, CancellationToken cancellationToken) =>
 		GetAsync<LiveAppSessionSummary>($"/operator/sessions/{sessionId}", Quick, cancellationToken);
@@ -284,6 +344,18 @@ public sealed class OperatorClient : IDisposable
 		PostAsync<object?, LiveSessionClosed>($"/operator/sessions/{sessionId}/detach", null, Quick, cancellationToken);
 
 	private static string Lowered(bool value) => value ? "true" : "false";
+
+	/// <summary>
+	/// <paramref name="path"/> with the long poll's arguments added, where there is a version to wait past and a
+	/// wait to do it in; unchanged otherwise, which reads the view at once.
+	/// </summary>
+	private static string Watched(string path, string? after, int waitSeconds)
+	{
+		if (string.IsNullOrEmpty(after) || waitSeconds <= 0) return path;
+
+		var separator = path.Contains('?', StringComparison.Ordinal) ? '&' : '?';
+		return $"{path}{separator}after={Uri.EscapeDataString(after)}&waitSeconds={waitSeconds}";
+	}
 
 	private Task<T> GetAsync<T>(string path, TimeSpan budget, CancellationToken cancellationToken) =>
 		SendAsync<T>(() => new HttpRequestMessage(HttpMethod.Get, path), budget, cancellationToken);

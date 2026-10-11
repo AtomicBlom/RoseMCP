@@ -38,6 +38,26 @@ public sealed class RoseSettingsTests
 		var settings = RoseSettingsFile.Read(home.Path);
 
 		settings.ShowInspectorOnAttach.ShouldBeFalse();
+		settings.ReloadRebuiltAnalyzersWhenIdle.ShouldBeFalse();
+	}
+
+	/// <summary>
+	/// Off unless chosen, since a reload is a design-time build of every project, and on once chosen, for
+	/// every host: the broker reads it when a worker holds a rebuilt analyzer, not once at start.
+	/// </summary>
+	[Test]
+	public void Reloading_rebuilt_analyzers_is_off_until_chosen_and_kept_once_it_is()
+	{
+		using var home = new TemporaryHome();
+
+		RoseSettingsFile.Read(home.Path).ReloadRebuiltAnalyzersWhenIdle.ShouldBeFalse();
+
+		RoseSettingsFile.Write(new RoseSettings { ReloadRebuiltAnalyzersWhenIdle = true }, home.Path).ShouldBeTrue();
+
+		var read = RoseSettingsFile.Read(home.Path);
+		read.ReloadRebuiltAnalyzersWhenIdle.ShouldBeTrue();
+		read.ShowInspectorOnAttach.ShouldBeFalse();
+		File.ReadAllText(RoseSettingsFile.PathFor(home.Path)).ShouldContain("reloadRebuiltAnalyzersWhenIdle", Case.Sensitive);
 	}
 
 	[Test]

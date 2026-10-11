@@ -6,6 +6,21 @@ Read before changing analyzer loading, `RoseMcp.XamlStubs`, or anything handing 
   loaded assembly is held open for the life of the process, and this process lives for hours, so
   loading them in place means the user cannot rebuild their own generator -- `dotnet build` fails
   with MSB3021. There is a regression test for this; do not "simplify" it away.
+- **A rebuilt analyzer is said on every read, and never reloaded in place.** An assembly cannot be
+  unloaded, and the loader copies each path once per process, so after somebody rebuilds their
+  generator or analyzer every diagnostic, generated file and fix still comes from the build that was
+  loaded -- and with nothing to say so, the agent iterating on an analyzer reads its old behaviour as
+  the new one's. The read barrier compares each analyzer reference on disk, once per distinct path,
+  with the stamp the loader recorded when it copied the file (not a stamp taken at the end of the
+  load, which a rebuild landing mid-load would slip past), and every read and status name the
+  assembly and say that `rose_workspace_reload` picks it up. It is a notice, not a degraded reason:
+  the answers are stale in one named way, not untrusted. It never reloads the solution in place,
+  because that takes the same copies from the same loader, so the record survives an in-place
+  reload, and a file missing mid-rebuild keeps the verdict it had. The worker's own analyzers -- the
+  XAML stub generator -- are left out: they change only with a new worker. The broker hears of it
+  from the worker's info, asked after every call, and where a person has turned the setting on the
+  sweep starts a new worker once the old one has gone a minute unused (see
+  [transport-and-lifetime.md](transport-and-lifetime.md)).
 - **Each analyzer directory loads into an `AssemblyLoadContext` of its own, and a dependency is
   never resolved by simple name alone.** A solution spanning several target frameworks carries a
   generator per framework and the versions differ -- one 96-project solution holds four versions of

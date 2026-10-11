@@ -12,8 +12,12 @@
                whole tree is published into a stage first, with the running instance untouched;
                only once that succeeds are the tray and any stdio server running from the install
                stopped -- a running exe cannot be overwritten -- the stage copied over, and the
-               tray restarted. So the outage is a copy rather than a build, a failed build leaves
-               the old instance serving, and it still costs an /mcp reconnect and a solution reload.
+               tray restarted. So the outage is a copy rather than a build, and a failed build leaves
+               the old instance serving. A session connected through the relay keeps its connection:
+               the relay sits in a folder this leaves alone unless the relay protocol changed,
+               reconnects to the new tray by itself and tells its client the tools changed only if
+               they did, and the deploy says how many reconnected. What a deploy still costs is a
+               solution reload on the first call.
 
       package  Build the release artifacts. Windows gets **one** zip carrying every architecture,
                because choosing between them is a step people get wrong -- an x64 zip on an ARM64
@@ -153,14 +157,35 @@ function Publish-Tree
 
     if (-not (Test-WindowsRid $Rid))
     {
-        Write-Host '  (no live-app hosts: they are Windows-only)'
+        Write-Host '  (no relay or live-app hosts: they are Windows-only)'
         return
     }
+
+    Publish-Relay -Rid $Rid -Into $Into
 
     if (-not $NoLiveApp)
     {
         Publish-LiveAppHosts -Into $Into -Folder (Get-PublishedLayout).liveAppHost.folder -HostRids (Get-LiveAppRuntimes -Rid $Rid)
     }
+}
+
+function Publish-Relay
+{
+    <#
+        The relay: the server published again, into a folder of its own, with a marker naming the relay
+        protocol it speaks. The marker is what an install compares to decide whether the relay it has
+        can stay, and its relays keep running, through the deploy -- written here rather than by either
+        installer, so the zip, the Inno installer and a promote all carry the same one.
+    #>
+    param([string] $Rid, [string] $Into)
+
+    $relay = (Get-PublishedLayout).relay
+    $folder = Join-LayoutPath $Into, $relay.folder
+
+    Invoke-Dotnet @('publish', "$repo/src/$($relay.project)", '-c', 'Release', '-r', $Rid,
+        '--self-contained', 'false', '-o', $folder) "relay ($Rid)"
+
+    Set-Content -LiteralPath (Join-LayoutPath $folder, $relay.marker) -Value ([string] $relay.protocol) -NoNewline -Encoding ascii
 }
 
 function Get-PackagedLiveAppRuntimes
@@ -440,19 +465,54 @@ if ($Mode -eq 'promote')
 
     # Everything about stopping and restarting is about the tray and the stdio servers holding the
     # install's files open, and neither exists off Windows: there is nothing to stop, and nothing to
-    # overwrite while it runs. Stop-Install knows that and returns a no-op there.
-    $stopped = Stop-Install -Root $Destination
+    # overwrite while it runs. Stop-Install knows that and returns a no-op there. The relay's folder is
+    # left alone, and its relays running, when the relay in it speaks the protocol this one does.
+    $onWindowsRid = Test-WindowsRid $Runtime[0]
+    $stopped = Stop-Install -Root $Destination -KeepCurrentRelay:$onWindowsRid
 
     Write-Host "  copying $stage -> $Destination"
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-    Copy-Item -Path "$stage/*" -Destination $Destination -Recurse -Force
+    Copy-InstallPayload -From $stage -To $Destination
 
-    if (-not (Test-WindowsRid $Runtime[0])) { Write-Host '  no tray to restart on this platform' }
+    if ($onWindowsRid -and -not (Test-RelayCurrent -Root $Destination))
+    {
+        Install-Relay -From @(Join-LayoutPath $stage, (Get-PublishedLayout).relay.folder) -Root $Destination
+    }
+
+    $trayStarted = $false
+    if (-not $onWindowsRid) { Write-Host '  no tray to restart on this platform' }
     elseif ($NoRestart) { Write-Host '  not restarting (-NoRestart)' }
-    else { Start-Tray -Root $Destination -WorkspaceRoot $WorkspaceRoot -Port $Port }
+    else
+    {
+        Start-Tray -Root $Destination -WorkspaceRoot $WorkspaceRoot -Port $Port
+        $trayStarted = $true
+    }
 
     Write-Host "promoted $($Runtime[0]) to $Destination"
-    if ($stopped.TrayWasRunning -or $stopped.ServersStopped) { Write-Host 'reconnect the MCP client with /mcp; the first call reloads the solution' }
+
+    if ($stopped.ServersStopped -gt 0)
+    {
+        # Only a session registered with the root's server, or a relay that ran its own broker for want
+        # of a tray, is here: both lose their connection, and the first can avoid it next time.
+        Write-Host (("{0} session(s) connected to the install's own server, or relaying to one they started with no tray running, " +
+            'lost their connection and need /mcp. The relay keeps a session connected across a deploy:') -f $stopped.ServersStopped)
+        Write-Host "  claude mcp add rose -s user -- `"$((Get-RelayExecutable -Root $Destination).Replace('/', '\'))`""
+    }
+
+    if ($stopped.RelaysStopped -gt 0)
+    {
+        Write-Host ("the relay protocol changed, so {0} relay(s) were stopped; their sessions need /mcp to start the new relay" -f $stopped.RelaysStopped)
+    }
+
+    if ($trayStarted -and $stopped.RelaysKept -gt 0)
+    {
+        $relays = Wait-RelayReconnect -Root $Destination -Port $Port
+        Write-Host ("{0} of {1} relay(s) reconnected to the new tray; the first call in each reloads its solution" -f $relays.Connected, $relays.Expected)
+    }
+    elseif ($stopped.RelaysKept -gt 0)
+    {
+        Write-Host ("{0} relay(s) keep trying to reach a tray on port {1}, and reconnect when one starts" -f $stopped.RelaysKept, $Port)
+    }
 
     return
 }

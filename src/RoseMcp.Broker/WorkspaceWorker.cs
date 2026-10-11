@@ -38,7 +38,8 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	private readonly McpClient _client;
 	private readonly ActivityLog _activities;
 	private readonly ILogger _logger;
-	private int _refreshingHeap;
+	/// <summary>The worker asked about itself after calls, one refresh at a time and none dropped.</summary>
+	private readonly CoalescedRefresh _refresh;
 	private string? _loadFailure;
 	private string? _key;
 
@@ -59,6 +60,9 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// <summary><see cref="LastUsedUtc"/> as ticks, so a call ending on one thread and the sweep reading on another cannot tear it.</summary>
 	private long _lastUsedTicks;
 
+	/// <summary><see cref="RebuiltAnalyzersSinceUtc"/> as ticks, zero for none, so the sweep reading it cannot tear it.</summary>
+	private long _rebuiltAnalyzersSinceTicks;
+
 	/// <summary>The clock the idle times are read from, the one the eviction sweep reads too.</summary>
 	private readonly TimeProvider _clock;
 
@@ -76,6 +80,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		_clock = clock;
 		StartedUtc = clock.GetUtcNow().UtcDateTime;
 		_lastUsedTicks = StartedUtc.Ticks;
+		_refresh = new CoalescedRefresh(() => RefreshProcessInfoAsync(CancellationToken.None), () => IsAlive);
 	}
 
 	public string SolutionPath { get; }
@@ -116,6 +121,12 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	public string? VersionMismatch { get; init; }
 
 	/// <summary>
+	/// The MSBuild properties the worker was started under, where any were asked for; null where it chose its own.
+	/// Fixed for the worker's life, since a worker cannot change them without restarting.
+	/// </summary>
+	public WorkspaceBuildOverrides? Build { get; init; }
+
+	/// <summary>
 	/// The worker's process id, learned on connect. Held so memory can be sampled from outside
 	/// the process, which keeps working when the worker itself has stopped answering.
 	/// </summary>
@@ -129,6 +140,23 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// worker that crashed is the one whose log somebody wants to open.
 	/// </summary>
 	public string? LogPath { get; private set; }
+
+	/// <summary>
+	/// The analyzer assemblies the worker's reads have found rebuilt since it loaded them, by full path, as of
+	/// the last time the broker asked it about itself -- which it does after every call. Empty while none is.
+	/// </summary>
+	public IReadOnlyList<string> RebuiltAnalyzers { get; private set; } = [];
+
+	/// <summary>What the worker's reads say about <see cref="RebuiltAnalyzers"/>, or null where nothing has been rebuilt.</summary>
+	public string? RebuiltAnalyzersNotice { get; private set; }
+
+	/// <summary>
+	/// When the broker first heard of a rebuilt analyzer in this worker, on the clock the idle times are read
+	/// from, or null while it has heard of none. The idle reload counts its quiet minute from here as well as
+	/// from the last use.
+	/// </summary>
+	internal DateTime? RebuiltAnalyzersSinceUtc =>
+		Volatile.Read(ref _rebuiltAnalyzersSinceTicks) is var ticks and not 0 ? new DateTime(ticks, DateTimeKind.Utc) : null;
 
 	/// <summary>
 	/// The last status report to pass through, whoever asked for it. The broker asks on connect, so
@@ -258,6 +286,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		{
 			VersionMismatch = ChildHostVersion.Mismatch(
 				client.ServerInfo?.Version, workerPath, typeof(WorkspaceWorker).Assembly),
+			Build = build,
 		};
 
 		if (worker.VersionMismatch is not null) logger.LogWarning("{Mismatch}", worker.VersionMismatch);
@@ -281,13 +310,18 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// activity log either way, so a long call shows up in the tray even when nobody else is
 	/// watching. An operation overrides the activity's label, which is otherwise the tool name.
 	/// </para>
+	/// <para>
+	/// <paramref name="heard"/> is what the calling session hears about the workspace's reasons, sent with the
+	/// call so a read's degraded notice leaves out what the person accepted and the session acknowledged.
+	/// </para>
 	/// </summary>
 	public async Task<T> CallAsync<T>(
 		string tool,
 		IReadOnlyDictionary<string, object?> arguments,
 		CancellationToken cancellationToken,
 		IProgress<ProgressNotificationValue>? progress = null,
-		string? operation = null)
+		string? operation = null,
+		IReadOnlyList<ReasonHearing>? heard = null)
 	{
 		// One line per forwarded call, so which rose_* tools a session actually reaches for is
 		// measurable from the files already being written rather than from anybody's recollection. The
@@ -301,11 +335,16 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			Key,
 			CallOrigin.Directory ?? "(no origin)");
 
-		using var activity = _activities.Begin(SolutionPath, operation ?? tool, DescribeTarget(arguments), progress);
+		var target = DescribeTarget(arguments);
+
+		// The call being recorded, where a client's tool call is what reached here, learns which workspace serves it.
+		CallRecording.Current?.Routed(workspace: SolutionPath, workspaceKey: Key, target: target);
+
+		using var activity = _activities.Begin(SolutionPath, operation ?? tool, target, progress);
 
 		try
 		{
-			var result = await SendAsync<T>(tool, arguments, activity, cancellationToken);
+			var result = await SendAsync<T>(tool, arguments, activity, cancellationToken, heard);
 
 			// Whoever asked, the answer describes this worker, and it is the freshest one there is.
 			if (result is WorkspaceStatusReport status) LastStatus = status;
@@ -376,7 +415,8 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		Busy: Volatile.Read(ref _holds) > 0 || _activities.Running(SolutionPath).Count > 0,
 		LastUsedUtc: LastUsedUtc,
 		StoppedUtc: StoppedUtc,
-		SolutionMissingSinceUtc: SolutionMissingSinceUtc);
+		SolutionMissingSinceUtc: SolutionMissingSinceUtc,
+		RebuiltAnalyzersSinceUtc: RebuiltAnalyzersSinceUtc);
 
 	/// <summary>
 	/// This worker as <c>rose_workspace_list</c> reports it. Broker-side facts only, so listing never
@@ -418,11 +458,42 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		Projects = [],
 		LoadDiagnostics = [],
 		DegradedReasons = [StopDescription()],
+		Health = [BrokerReason(ReasonKinds.WorkerStopped, HealthEffect.BlocksAnswers, StopDescription(), ExitReason.ToString())],
 		Notices =
 		[
 			"Nothing is loaded, and asking for status started nothing. The next call that needs this "
 				+ "workspace starts a fresh worker; rose_workspace_reload starts one now.",
 		],
+	};
+
+	/// <summary>
+	/// The health a summary shows: the last status report's, or the load failure the broker saw where no report
+	/// came, with the version mismatch as a note -- each in the order its list gives it.
+	/// </summary>
+	private IReadOnlyList<HealthReason> Health(WorkspaceStatusReport? status)
+	{
+		IReadOnlyList<HealthReason> reported = status?.Health
+			?? (_loadFailure is null ? [] : [BrokerReason(ReasonKinds.LoadFailed, HealthEffect.BlocksAnswers, _loadFailure)]);
+
+		return VersionMismatch is null
+			? reported
+			: [.. reported, BrokerReason(ReasonKinds.WorkerVersionMismatch, HealthEffect.Note, VersionMismatch)];
+	}
+
+	/// <summary>
+	/// A reason the broker words itself, about the worker rather than the solution, so it covers no project and
+	/// its kind is its id. Its line is its text: each is a sentence or two the broker wrote, with no MSBuild
+	/// message inside it to cut. It is about its text, or about <paramref name="subject"/> where the text carries
+	/// something that changes on every stop -- an eviction says how long the worker sat unused -- so an
+	/// acceptance of the stop is not lost to the next one's duration.
+	/// </summary>
+	private static HealthReason BrokerReason(string kind, HealthEffect effect, string text, string? subject = null) => new()
+	{
+		Id = kind,
+		Kind = kind,
+		Effect = effect,
+		Subjects = [subject ?? text],
+		Line = text,
 	};
 
 	/// <summary>Why this worker stopped, as one sentence for a person.</summary>
@@ -469,6 +540,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			ProcessId = info.ProcessId;
 			ManagedHeapBytes = info.ManagedHeapBytes;
 			LogPath = info.LogPath ?? LogPath;
+			NoteRebuiltAnalyzers(info);
 
 			WatchForExit(info.ProcessId);
 		}
@@ -477,6 +549,24 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			// Memory reporting is a nicety. Losing it must not stop the workspace from opening.
 			_logger.LogDebug(exception, "Could not read worker info for {SolutionPath}.", SolutionPath);
 		}
+	}
+
+	/// <summary>
+	/// Takes what the worker says its reads found rebuilt, starting the idle reload's clock the first time it
+	/// hears of any and stopping it when there are none again.
+	/// </summary>
+	private void NoteRebuiltAnalyzers(WorkerInfo info)
+	{
+		RebuiltAnalyzers = info.RebuiltAnalyzers;
+		RebuiltAnalyzersNotice = info.RebuiltAnalyzersNotice;
+
+		if (info.RebuiltAnalyzers.Count == 0)
+		{
+			Volatile.Write(ref _rebuiltAnalyzersSinceTicks, 0);
+			return;
+		}
+
+		Interlocked.CompareExchange(ref _rebuiltAnalyzersSinceTicks, _clock.GetUtcNow().UtcDateTime.Ticks, 0);
 	}
 
 	/// <summary>
@@ -526,53 +616,22 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Re-reads the managed heap once the work that changes it has finished. It is first read on
-	/// connect, before anything has loaded, and without this the window would show that first
-	/// reading -- a few dozen megabytes -- for the life of the process. Coalesced, so a burst of
-	/// calls costs one round trip, and skipped for a worker on its way out.
+	/// Asks the worker about itself again once the work that changes it has finished: its managed heap, first
+	/// read on connect before anything has loaded, and what its reads found rebuilt, which the idle reload
+	/// decides on. Coalesced by <see cref="CoalescedRefresh"/>, so a burst of calls costs a round trip or two
+	/// rather than one each and the last call's request is never dropped, and skipped for a worker on its way out.
 	/// </summary>
-	private void RefreshHeapSoon()
-	{
-		if (!IsAlive || Interlocked.CompareExchange(ref _refreshingHeap, 1, 0) != 0) return;
-
-		_ = Detached.Run(async () =>
-		{
-			try
-			{
-				await RefreshProcessInfoAsync(CancellationToken.None);
-			}
-			finally
-			{
-				Volatile.Write(ref _refreshingHeap, 0);
-			}
-		});
-	}
+	private void RefreshHeapSoon() => _refresh.Request();
 
 	/// <summary>
 	/// Samples memory from the process table rather than asking the worker, so the numbers stay
 	/// truthful for a worker that is wedged -- which is exactly when someone is looking at them.
+	/// <paramref name="sampleMemory"/> false leaves the memory out, for a read that only compares rows
+	/// and would otherwise open the process for figures it throws away.
 	/// </summary>
-	public WorkspaceSummary Describe()
+	public WorkspaceSummary Describe(bool sampleMemory = true)
 	{
-		long? workingSet = null;
-		long? privateMemory = null;
-
-		// Only while it runs. A stopped worker's row stays for as long as the idle limit, and Windows
-		// hands a dead process's id to the next one it starts, so sampling it would report somebody
-		// else's memory as this solution's.
-		if (IsAlive && ProcessId is { } id)
-		{
-			try
-			{
-				using var process = Process.GetProcessById(id);
-				workingSet = process.WorkingSet64;
-				privateMemory = process.PrivateMemorySize64;
-			}
-			catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
-			{
-				// The process is gone. Reporting no numbers is more honest than reporting stale ones.
-			}
-		}
+		var memory = sampleMemory ? Memory() : null;
 
 		// Read once: a client's status call can replace it between one property and the next.
 		var status = LastStatus;
@@ -588,8 +647,8 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			StartedUtc = StartedUtc,
 			Uptime = _clock.GetUtcNow().UtcDateTime - StartedUtc,
 			ProcessId = ProcessId,
-			WorkingSetBytes = workingSet,
-			PrivateMemoryBytes = privateMemory,
+			WorkingSetBytes = memory?.WorkingSetBytes,
+			PrivateMemoryBytes = memory?.PrivateMemoryBytes,
 			ManagedHeapBytes = IsAlive ? ManagedHeapBytes : null,
 			WorkerLogPath = LogPath,
 			BuildConfiguration = status?.BuildConfiguration,
@@ -598,13 +657,36 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 				? []
 				: [.. status.Projects.Where(project => !project.LoadedSuccessfully).Select(project => project.Name)],
 			DegradedReasons = status?.DegradedReasons ?? (_loadFailure is null ? [] : [_loadFailure]),
-			Notices = VersionMismatch is null
-				? status?.Notices ?? []
-				: [.. status?.Notices ?? [], VersionMismatch],
+			Notices = Notices(status),
+			Health = Health(status),
 			LoadSeconds = LoadDuration?.TotalSeconds,
 			Running = _activities.Running(SolutionPath),
 			Recent = _activities.Recent(SolutionPath),
 		};
+	}
+
+	/// <summary>
+	/// The worker process's memory, with the managed heap it last reported; null once it has stopped. Only while it
+	/// runs: a stopped worker's row stays for as long as the idle limit, and Windows hands a dead process's id to the
+	/// next one it starts, so sampling it would report somebody else's memory as this solution's.
+	/// </summary>
+	public ProcessMemory? Memory() =>
+		IsAlive && ProcessId is { } id ? ProcessMemorySampler.Read(id, ManagedHeapBytes) : null;
+
+	/// <summary>
+	/// The notices a row shows: the last status's, then what that status cannot know -- this worker being a
+	/// different build from the broker, and an analyzer a read found rebuilt since the status was taken. The
+	/// rebuilt line is the one every read carries, so a status taken after the read already has it and it is
+	/// said once.
+	/// </summary>
+	private IReadOnlyList<string> Notices(WorkspaceStatusReport? status)
+	{
+		var notices = new List<string>(status?.Notices ?? []);
+
+		if (VersionMismatch is { } mismatch) notices.Add(mismatch);
+		if (IsAlive && RebuiltAnalyzersNotice is { } rebuilt && !notices.Contains(rebuilt)) notices.Add(rebuilt);
+
+		return notices;
 	}
 
 	/// <summary>
@@ -668,7 +750,8 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		string tool,
 		IReadOnlyDictionary<string, object?> arguments,
 		IProgress<ProgressNotificationValue>? progress,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IReadOnlyList<ReasonHearing>? heard = null)
 	{
 		ModelContextProtocol.Protocol.CallToolResult result;
 		try
@@ -676,7 +759,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			// Not CallToolAsync: it abandons the wait without telling the worker, which then finishes
 			// the whole operation. Reads on a workspace are ordered, so that abandoned work is the
 			// delay before the next call on it can start.
-			result = await CancellableToolCall.InvokeAsync(_client, tool, arguments, progress, cancellationToken);
+			result = await CancellableToolCall.InvokeAsync(_client, tool, arguments, progress, cancellationToken, heard: heard);
 		}
 		catch (Exception exception) when (IsTransportFailure(exception))
 		{
@@ -725,6 +808,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		}
 
 		return Text(arguments, "target")
+			?? Text(arguments, "symbol")
 			?? Text(arguments, "hintName")
 			?? Text(arguments, "query")
 			?? Text(arguments, "project")

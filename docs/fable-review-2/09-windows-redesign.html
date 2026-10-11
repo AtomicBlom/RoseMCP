@@ -426,7 +426,7 @@
           <tr><td class="rid">B3 · B4<span class="st chg">Change</span></td><td><b>What is each agent doing, against which workspace?</b> This is now the first view: each agent's operations in one list, running ones first. Any operation opens to show its arguments and response, formatted. An edit also shows the code it changed, as a diff. The record is kept on disk across reloads and restarts, and searchable in Activity.</td><td class="said"><q>The thing I want to see is what is each agent doing against a workspace, in that sense B3 is more important to me than the wall of text.</q></td></tr>
           <tr><td class="rid">B1<span class="st chg">Change</span></td><td><b>Can this workspace's answers be trusted?</b> One line per workspace, in strong colour only when you can do something. The full detail opens on request, and you can mark a known warning as accepted for that solution. When you accept one, you choose what agents read about it: Rose's line, your own note, or nothing. Agents can acknowledge a warning for their own session.</td><td class="said"><q>For me, I'd rather it be a one line summary, with a way to see the full details if I really need to.</q></td></tr>
           <tr><td class="rid">B2<span class="st keep">Keep</span></td><td><b>Busy, loading or stuck?</b> The agent's row shows its running call, for how long, and how far along.</td><td class="said"></td></tr>
-          <tr><td class="rid">B5<span class="st bug">Bug</span></td><td><b>Pick up a rebuilt analyzer or generator.</b> Rose notices that an analyzer, generator or code-fix DLL changed on disk. It tells the agent and you, and can reload the workspace once it's idle. Nothing detects this today; Reload is the only way.</td><td class="said"><q>editing an Analyzer we continue to report using the previous version and don't warn that a reload is needed</q></td></tr>
+          <tr><td class="rid">B5<span class="st bug">Bug</span></td><td><b>Pick up a rebuilt analyzer or generator.</b> Rose notices that an analyzer, generator or code-fix DLL changed on disk. It tells the agent and you, and can reload the workspace once it's idle.</td><td class="said"><q>editing an Analyzer we continue to report using the previous version and don't warn that a reload is needed</q></td></tr>
 
           <tr class="grp"><th colspan="3">C · Watch an agent debug your app</th></tr>
           <tr><td class="rid">C8<span class="st new">New</span></td><td><b>Ask the agent about this.</b> Select a local, an argument, a frame, a thread, an exception, an element, a property, a measurement or a colour, write a note, and send it. The agent gets it at once if its session listens for Rose, and otherwise with its next Rose call. You can see when it arrived and, if the agent answers through Rose, read the answer. Tasks come later: the debugger doesn't understand async tasks yet.</td><td class="said"><q>select a value in the locals, or a thread, or a task and say "I want to know more about this", or "this value doesn't look correct to me"</q></td></tr>
@@ -662,7 +662,7 @@
       <li>Each folder opens in Explorer from its row, and from the detail's Open folder button. Configuration and Platform show what Rose loaded the solution with, so the drawer no longer needs a note about which configuration was chosen.</li>
       <li>Accepting is remembered per solution, per kind of reason, per project, across loads. A new kind of warning, or a new project that fails, still shows.</li>
       <li>When you accept a warning, you choose what agents read about it: Rose's own line, a note of your own, or nothing. "What agents are told" shows the exact text (<a href="#decisions">question 4</a>).</li><li>"Ask an agent why" sends a note about that warning to an agent using the workspace, by the same route as Ask in the debugger.</li><li>An agent can acknowledge a warning so it isn't repeated on every read for its session. It can also propose accepting it, which shows here for you to confirm. An agent's acknowledgement lasts only for its own session; anything longer goes through you.</li>
-      <li>A rebuilt analyzer, generator or code-fix DLL is spotted by a cheap file check on the next read. With the setting on, Rose reloads the workspace once nobody has used it for a minute.</li>
+      <li>A rebuilt analyzer, generator or code-fix DLL shows in the health column, amber because Reload fixes it, with the setting to reload once idle beside it.</li>
     </ul>
   </section>
 
@@ -945,27 +945,17 @@ flowchart LR
     </figure>
 
     <div class="found">
-      <div class="fd"><h3><span class="k">U1</span>Build identity</h3>
-        <ul><li>Stamp each assembly at build time with its full commit (the SDK already adds it), whether the tree was dirty, the build time, and, for a local build, the checkout it came from.</li>
-        <li>Show the commit to people. Handshakes compare the commit, not the version, because today two local builds with the same version can't be told apart.</li>
-        <li>A <code>hello</code> route on <code>/operator</code> returns all of it.</li>
-        <li>For a local build, Rose reads the checkout's <code>HEAD</code> and <code>origin/main</code> to say how far it has moved on.</li></ul>
+      <div class="fd"><h3><span class="k">U1</span><s>Build identity</s></h3>
+        <p><a href="https://github.com/AtomicBlom/RoseMCP/issues/456">#456</a>. Nothing said which build was running. Every process carries its commit, and every handshake compares it.</p>
         <span class="serves">Serves A2, A8</span></div>
-      <div class="fd"><h3><span class="k">U2</span>A relay that outlives a deploy</h3>
-        <ul><li>Today a deploy kills every relay started from the install folder, so each session needs <code>/mcp</code>. Install the relay where the deploy doesn't replace it, and version its own protocol, so only a relay change stops relays.</li>
-        <li>On reconnect, the relay compares a hash of the tool definitions and server instructions. If they're the same, it carries on. If not, it sends <code>tools/list_changed</code>. Claude Code's <a href="https://code.claude.com/docs/en/mcp">MCP docs</a> say it fetches the new list without a reconnect; older versions needed one. The relay must advertise <code>listChanged</code> in its own initialize response, because Claude Code only talks to the relay.</li>
-        <li>The first result after a restart says what happened: "Rose restarted on d41a9e0; loaded solutions reload on first use; your debug session ended".</li></ul>
+      <div class="fd"><h3><span class="k">U2</span><s>A relay that outlives a deploy</s></h3>
+        <p><a href="https://github.com/AtomicBlom/RoseMCP/issues/457">#457</a>. A deploy killed every relay, so every session needed <code>/mcp</code>. The relay outlives a deploy, reconnects by itself, and refreshes the client's tools only when they changed.</p>
         <span class="serves">Serves A9, A2</span></div>
-      <div class="fd"><h3><span class="k">U3</span>Who's connected</h3>
-        <ul><li>At connect, the relay tells the broker who it serves: the session's roots (Claude Code answers <code>roots/list</code> with its working folders), the branch, the Claude Code process, and an optional <code>ROSE_AGENT_LABEL</code>, which whatever starts a session can set, for example to the task it was given.</li>
-        <li>The broker keeps a table of clients. An HTTP client without the relay shows up as unnamed.</li></ul>
+      <div class="fd"><h3><span class="k">U3</span><s>Who's connected</s></h3>
+        <p><a href="https://github.com/AtomicBlom/RoseMCP/issues/458">#458</a>. The broker could not tell one agent session from another. The relay names the session it serves, and the broker keeps a table of its clients, listing one without a relay as unnamed.</p>
         <span class="serves">Serves A3, B4</span></div>
-      <div class="fd"><h3><span class="k">U4</span>The activity record</h3>
-        <ul><li>Every call is recorded with its client, its workspace or debug session, the tool, the target, when it started and finished, the outcome and the error, and its arguments and response.</li>
-        <li>For an edit, the record keeps each changed file's diff, taken from the document before and after. A very large response is cut to a set size, with a note saying so.</li>
-        <li>It's written to disk and kept 7 days, so it survives reloads and restarts.</li>
-        <li>The windows' own reads aren't activity.</li>
-        <li>This replaces today's eight unattributed calls per workspace, forgotten on close.</li></ul>
+      <div class="fd"><h3><span class="k">U4</span><s>The activity record</s></h3>
+        <p><a href="https://github.com/AtomicBlom/RoseMCP/issues/459">#459</a>. The only record of what an agent did was eight unattributed entries per workspace, forgotten on close. Every call is kept on disk for a week, attributed, with its arguments, response and an edit's diff, past reloads and restarts.</p>
         <span class="serves">Serves B3, B4, C3</span></div>
       <div class="fd"><h3><span class="k">U5</span>Notes to an agent</h3>
         <ul><li>A route takes a note: to whom, about what (structured), and your text. The broker queues it per client.</li>
@@ -985,19 +975,10 @@ flowchart LR
         <li>Today an edit's result goes once, to the caller, and nothing else remembers it.</li></ul>
         <span class="serves">Serves D2</span></div>
       <div class="fd"><h3><span class="k">U8</span>Workspace health with a shape</h3>
-        <ul><li>Today's reasons are plain strings. Give each a kind, an effect (blocks answers, may affect some projects, or a note), the projects it covers, and when it was first seen.</li>
-        <li>An accepted reason is remembered per solution, kind and project.</li>
-        <li>Each accepted reason stores what agents read about it: Rose's line, your note, or nothing.</li><li>A tool lets an agent acknowledge a reason for its own session, or propose accepting it for you to confirm.</li></ul>
+        <ul><li>Done in #460: reasons have a shape, a person accepts them, and an agent acknowledges them for its session.</li></ul>
         <span class="serves">Serves B1</span></div>
-      <div class="fd"><h3><span class="k">U9</span>Spot a rebuilt analyzer</h3>
-        <ul><li>At load, record each analyzer reference's path, write time and length. Check them in the read barrier, which already checks files.</li>
-        <li>On a change, tell the agent and the window, and optionally reload when idle. A reload starts a new worker; an assembly can't be unloaded in place.</li>
-        <li>This doesn't depend on the windows and can ship first.</li></ul>
-        <span class="serves">Serves B5</span></div>
-      <div class="fd"><h3><span class="k">U10</span>Everything through the operator API</h3>
-        <ul><li>The tray window reads the broker's objects directly today. The Rose window reads only <code>/operator</code>: clients, workspaces, activity, notes, sessions.</li>
-        <li>That lets it run in its own process and start on demand. Tests can drive it, and so can the later Rose-driven UI automation.</li>
-        <li>The tray process keeps no window, which fixes the window opening at start-up for good.</li></ul>
+      <div class="fd"><h3><span class="k">U10</span><s>Everything through the operator API</s></h3>
+        <p><a href="https://github.com/AtomicBlom/RoseMCP/issues/461">#461</a>. A window could read only the broker's own objects, so it had to live in the broker's process. Everything a window shows is read at <code>/operator</code>, and a view that changes is held open until it does.</p>
         <span class="serves">Serves A1, F1 later</span></div>
     </div>
 
@@ -1060,13 +1041,13 @@ sequenceDiagram
 
     <div class="subtier"><h3>5a · Foundations <span>one PR · data and protocol, with today's windows still in place</span></h3>
     <ol class="steps cards">
-      <li data-id="5.1"><div class="body"><b>Notice a rebuilt analyzer, generator or code fix.</b><span>At load, record each analyzer reference's path, write time and length. Check them in the read barrier. When one changes, tell the agent and the window. As a setting, reload once the workspace is idle.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/455">#455</a> · B5 · U9 · S · fixes today's release</span></div></li>
-      <li data-id="5.2"><div class="body"><b>Build identity.</b><span>Every process carries its commit, a dirty flag, its build time and, for a local build, the checkout it came from. Handshakes compare commits. A <code>hello</code> route returns all of it. A local build says how far its checkout has moved on.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/456">#456</a> · A2, A8 · U1 · S</span></div></li>
-      <li data-id="5.3"><div class="body"><b>A relay that outlives a deploy.</b><span>Starts with the dummy-tool test of <code>list_changed</code> on the installed Claude Code. Installs where a deploy doesn't replace it and versions its own protocol. On reconnect it compares the tool hash, and only a change sends <code>list_changed</code>. The first result after a restart says what happened.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/457">#457</a> · A9, A2 · U2 · M</span></div></li>
-      <li data-id="5.4"><div class="body"><b>Who's connected.</b><span>The relay sends its session's roots, branch, process and optional label. The broker keeps a table of clients, and an HTTP client without the relay shows as unnamed.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/458">#458</a> · A3, B4 · U3 · S</span></div></li>
-      <li data-id="5.5"><div class="body"><b>The activity record.</b><span>Every call, with its client, target, start and finish, outcome, arguments and response. Each edit also gets its diff. The record is written to disk, kept 7 days and survives reloads and restarts. The windows' own reads aren't recorded.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/459">#459</a> · B3, B4, C3 · U4 · M · supersedes #390</span></div></li>
-      <li data-id="5.6"><div class="body"><b>Workspace health with a shape.</b><span>Each reason has a kind, an effect, the projects it covers and when it was first seen. Accepting one is remembered and says what agents read about it. A tool lets an agent acknowledge a reason for its own session, or propose accepting it.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/460">#460</a> · B1 · U8 · M</span></div></li>
-      <li data-id="5.7"><div class="body"><b>The operator API the windows read.</b><span>Clients, workspaces, activity, notes, sessions and memory, tested through the end-to-end host. After this, nothing the new windows need comes from the broker's objects directly.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/461">#461</a> · U10 · M</span></div></li>
+      <li data-id="5.1"><div class="body"><b><s>Notice a rebuilt analyzer, generator or code fix.</s></b><span>A rebuilt analyzer went on answering from the old build, and nothing said so. Every read and status name it and say a reload picks it up, and a setting reloads the workspace once it is idle.</span><span class="uses">Closed in <a href="https://github.com/AtomicBlom/RoseMCP/issues/455">#455</a></span></div></li>
+      <li data-id="5.2"><div class="body"><b><s>Build identity.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/456">#456</a>. Two builds with one version could not be told apart. Every process carries its commit, and handshakes compare it.</span></div></li>
+      <li data-id="5.3"><div class="body"><b><s>A relay that outlives a deploy.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/457">#457</a>. A deploy killed every relay, so every session needed <code>/mcp</code>. The relay outlives a deploy, reconnects by itself, and refreshes the client's tools only when they changed.</span></div></li>
+      <li data-id="5.4"><div class="body"><b><s>Who's connected.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/458">#458</a>. The broker could not tell one agent session from another. The relay names the session it serves, and the broker keeps a table of its clients, listing one without a relay as unnamed.</span></div></li>
+      <li data-id="5.5"><div class="body"><b><s>The activity record.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/459">#459</a>. The only record of what an agent did was eight unattributed entries per workspace. Every call is kept on disk for a week, attributed, with its arguments, response and an edit's diff.</span></div></li>
+      <li data-id="5.6"><div class="body"><b><s>Workspace health with a shape.</s></b><span>Done. Reasons were plain strings; each now has a kind, an effect and its projects, a person accepts one, and an agent acknowledges one.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/460">#460</a> · B1 · U8 · M</span></div></li>
+      <li data-id="5.7"><div class="body"><b><s>The operator API the windows read.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/461">#461</a>. A window could read only the broker's own objects. Clients, workspaces, activity, sessions and memory are read over the operator API, and a view that changes is held open until it does.</span></div></li>
     </ol></div>
 
     <div class="subtier"><h3>5b · The RoseMCP app <span>one PR · the tray loses its window, the new one arrives</span></h3>

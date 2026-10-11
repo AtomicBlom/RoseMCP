@@ -3,7 +3,10 @@ using System.Text.Json.Nodes;
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
@@ -24,10 +27,10 @@ namespace RoseMcp.Broker;
 public static class ServiceCollectionExtensions
 {
 	/// <summary>
-	/// What the client is told during initialize. MinVer stamps it from the git tag at build time, so
-	/// a version in a bug report names a commit.
+	/// What the client is told during initialize: the version with the commit as build metadata, so a
+	/// child or a relay comparing builds compares commits. See <see cref="BuildIdentity"/>.
 	/// </summary>
-	private static readonly string ServerVersion = HostVersion.Of(typeof(ServiceCollectionExtensions).Assembly);
+	private static readonly string ServerVersion = BuildIdentity.Of(typeof(ServiceCollectionExtensions).Assembly).ToHandshake();
 
 	/// <summary>
 	/// Sent to the client during initialize, which means the model reads it before it decides how to
@@ -137,9 +140,40 @@ public static class ServiceCollectionExtensions
 		// reconnecting client reattach to an already-loaded solution rather than reload it.
 		services.AddSingleton<WorkspaceManager>();
 
+		// What the person accepted about each workspace's health and what each session acknowledged, shared for
+		// the reason the workers are: an acceptance made in one session's workspace is the same workspace in the next.
+		services.AddSingleton<WorkspaceHealth>();
+
 		// Live-app sessions are per running target, separate from the per-solution workers, but shared
 		// across connections the same way and supervised the same way.
 		services.AddSingleton<LiveAppSessionManager>();
+
+		// Read only by /operator/hello, and disposed with the host, which is what kills a git still
+		// counting when the broker stops.
+		services.AddSingleton(_ => CheckoutDistanceReader.ForBroker());
+
+		// Which relays are connected, and which instance of the broker this is; read by the admin routes.
+		// On the broker's clock, which says when a relay let go of its watch for the client table's grace.
+		services.AddSingleton(provider => new RelayConnections(provider.GetRequiredService<IOptions<BrokerOptions>>().Value.TimeProvider));
+
+		// Who each client is and when it last called: written by every call and by what relays say of their
+		// sessions, read by the admin and operator routes.
+		services.AddSingleton<ConnectedClients>();
+
+		// Every call each client made, kept on disk: written by every call, read by the operator routes, and
+		// disposed with the host, which writes what is still queued. The host's lifetime, where there is one,
+		// flushes it as the host stops, for a host that stops without disposing its services.
+		services.AddSingleton(provider => new ActivityRecord(
+			provider.GetRequiredService<IOptions<BrokerOptions>>(),
+			provider.GetRequiredService<RelayConnections>(),
+			provider.GetRequiredService<ConnectedClients>(),
+			provider.GetService<ILogger<ActivityRecord>>() ?? NullLogger<ActivityRecord>.Instance,
+			provider.GetService<IHostApplicationLifetime>()));
+
+		// What the operator routes read, made from the singletons above and holding nothing of its own; and the waits
+		// that keep a window's view current, which the host stopping ends so an open poll never holds up a stop.
+		services.AddSingleton<OperatorViews>();
+		services.AddSingleton(provider => new LongPoll(provider.GetService<IHostApplicationLifetime>()));
 
 		// No inspector unless a host that has an operator endpoint replaces this. A stdio broker
 		// genuinely cannot open one, and saying so beats a tool argument that silently does nothing.
@@ -179,9 +213,11 @@ public static class ServiceCollectionExtensions
 
 		return builder
 			.WithCallCorrelation()
+			.WithActivityRecord()
 			.WithArgumentAliases(aliases)
 			.WithIgnoredArgumentNotices()
 			.WithCallOrigin()
+			.WithClientRecord()
 			.WithToolErrorMessages()
 			.WithLeanListing();
 	}
@@ -202,6 +238,75 @@ public static class ServiceCollectionExtensions
 			using var correlation = CallCorrelation.Begin(context.Params?.Meta);
 
 			return await next(context, cancellationToken);
+		}));
+
+	/// <summary>
+	/// Records every tool call in the <see cref="ActivityRecord"/>: the client that made it, its arguments as they
+	/// arrived, how it ended and what it answered, with what the routing adds on the way -- the workspace or debug
+	/// session, the target, a write's diffs -- through the <see cref="CallRecording"/> it makes ambient.
+	/// <para>
+	/// A filter, for the reason <see cref="WithCallOrigin"/> is one: every call passes through it, so no tool can be
+	/// added that the record misses. Second, after the correlation id, so an entry carries the id every log line of
+	/// the call does; and before every other, so the arguments are the ones the client sent rather than the
+	/// spellings the alias filter corrected, a refusal any later filter makes is recorded as the call's failure, and
+	/// the answer is the one the client was given, its notices included. An exception arriving here has already been
+	/// put in the caller's words by the error boundary inside it.
+	/// </para>
+	/// <para>
+	/// A relay's own read of what its session has open is not one of the session's calls, and is not recorded. The
+	/// operator routes a window reads through are not MCP calls and never pass here, which is what keeps a window's
+	/// own reads -- and an inspector's step forwarded to a live-app host -- out of what an agent did. Recording
+	/// never fails a call: a record that cannot start is a call that goes unrecorded.
+	/// </para>
+	/// </summary>
+	private static IMcpServerBuilder WithActivityRecord(this IMcpServerBuilder builder) =>
+		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
+		{
+			var parameters = context.Params;
+			var server = context.Server;
+			CallRecording? recording = null;
+
+			try
+			{
+				var record = CallSession.IsRelayRead(parameters?.Meta) ? null : server.Services?.GetService<ActivityRecord>();
+
+				recording = record?.Begin(
+					parameters?.Name,
+					parameters?.Arguments,
+					CallSession.Of(null, parameters?.Meta),
+					server.SessionId,
+					server.ClientInfo?.Name,
+					OriginDirectory(parameters));
+			}
+			catch (Exception exception)
+			{
+				server.Services?.GetService<ILoggerFactory>()?
+					.CreateLogger(typeof(ActivityRecord))
+					.LogWarning(exception, "{Tool} could not be recorded in the activity record.", parameters?.Name);
+			}
+
+			if (recording is null) return await next(context, cancellationToken);
+
+			using (recording)
+			{
+				try
+				{
+					var result = await next(context, cancellationToken);
+					recording.Finish(result);
+
+					return result;
+				}
+				catch (OperationCanceledException)
+				{
+					recording.Cancel();
+					throw;
+				}
+				catch (Exception exception)
+				{
+					recording.Fail(exception.Message);
+					throw;
+				}
+			}
 		}));
 
 	/// <summary>
@@ -255,7 +360,7 @@ public static class ServiceCollectionExtensions
 		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
 		{
 			using var origin = CallOrigin.Use(OriginDirectory(context.Params));
-			using var session = CallSession.Use(context.Server.SessionId);
+			using var session = CallSession.Use(context.Server.SessionId, CallSession.Of(context.Server.SessionId, context.Params?.Meta));
 
 			return await next(context, cancellationToken);
 		}));
@@ -277,15 +382,54 @@ public static class ServiceCollectionExtensions
 	}
 
 	/// <summary>
+	/// Records every call and every listing in <see cref="ConnectedClients"/>, against the client that made it:
+	/// the session a relay named, else the transport's session, else the one unnamed client.
+	/// <para>
+	/// A filter, for the reason <see cref="WithCallOrigin"/> is one: every call passes through it, so no tool can
+	/// be added that a client's last call misses. The call is recorded as it starts, since a long call is the
+	/// client being busy rather than gone. The relay's name is read with no transport session in the way,
+	/// because the table keys a relayed client by its relay's name however the transport carried the call.
+	/// </para>
+	/// </summary>
+	private static IMcpServerBuilder WithClientRecord(this IMcpServerBuilder builder) =>
+		builder.WithRequestFilters(filters =>
+		{
+			filters.AddCallToolFilter(next => async (context, cancellationToken) =>
+			{
+				var server = context.Server;
+				var meta = context.Params?.Meta;
+				var clients = server.Services?.GetService<ConnectedClients>();
+
+				// A relay's own read of what its session has open is not one of the session's calls.
+				if (CallSession.IsRelayRead(meta)) clients?.ReadByRelay(CallSession.Of(null, meta), server.SessionId);
+				else clients?.Called(CallSession.Of(null, meta), server.SessionId, server.ClientInfo?.Name, server.ClientInfo?.Version);
+
+				return await next(context, cancellationToken);
+			});
+
+			filters.AddListToolsFilter(next => async (context, cancellationToken) =>
+			{
+				var result = await next(context, cancellationToken);
+
+				var server = context.Server;
+				server.Services?.GetService<ConnectedClients>()?.Listed(
+					CallSession.Of(null, context.Params?.Meta), server.SessionId, server.ClientInfo?.Name, server.ClientInfo?.Version);
+
+				return result;
+			});
+		});
+
+	/// <summary>
 	/// Applies <see cref="ToolListing.Trim"/> at the one place every listing passes through, so no tool
-	/// can be added that skips it.
+	/// can be added that skips it -- to copies, through <see cref="ToolListing.Trimmed"/>, since the
+	/// tools a listing returns are the ones the SDK answers calls with.
 	/// </summary>
 	private static IMcpServerBuilder WithLeanListing(this IMcpServerBuilder builder) =>
 		builder.WithRequestFilters(filters => filters.AddListToolsFilter(next => async (context, cancellationToken) =>
 		{
 			var result = await next(context, cancellationToken);
 
-			foreach (var tool in result.Tools) ToolListing.Trim(tool);
+			result.Tools = [.. result.Tools.Select(ToolListing.Trimmed)];
 
 			return result;
 		}));

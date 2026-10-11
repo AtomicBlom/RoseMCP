@@ -16,6 +16,7 @@ namespace RoseMcp.UnitTests;
 internal sealed record PublishedLayout(
 	IReadOnlyList<PublishedLayout.Runtime> Runtimes,
 	IReadOnlyList<PublishedLayout.Component> Components,
+	PublishedLayout.RelayLayout Relay,
 	PublishedLayout.LiveAppHostLayout LiveAppHost,
 	PublishedLayout.PackageLayout Package)
 {
@@ -77,6 +78,14 @@ internal sealed record PublishedLayout(
 	/// <param name="WindowsOnly">Whether only a Windows install carries it.</param>
 	/// <param name="HostsBroker">Whether a broker runs from its folder, and so resolves the others from there.</param>
 	public sealed record Component(string Project, string Executable, string Folder, bool WindowsOnly, bool HostsBroker);
+
+	/// <summary>The stdio relay, in a folder of its own that a deploy replaces only for another protocol.</summary>
+	/// <param name="Project">The project under <c>src</c> published into it.</param>
+	/// <param name="Executable">The apphost's name, without an extension.</param>
+	/// <param name="Folder">Its folder under the install root, and under each runtime's payload in the package.</param>
+	/// <param name="Protocol">The relay protocol the installed relay speaks.</param>
+	/// <param name="Marker">The file in the folder naming the protocol of the relay laid down there.</param>
+	public sealed record RelayLayout(string Project, string Executable, string Folder, int Protocol, string Marker);
 
 	/// <summary>The live-app debug host, one per architecture under a folder named for it.</summary>
 	/// <param name="Project">The project under <c>src</c>.</param>

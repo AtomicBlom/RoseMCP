@@ -55,6 +55,14 @@
       "why": "A folder of its own for the tray's reason, and one more: two WinUI publishes into one directory overwrite each other's WindowsAppSDK payload, and publish -o never removes what it does not write."
     }
   ],
+  "relay": {
+    "project": "RoseMcp.Server",
+    "executable": "RoseMcp.Server",
+    "folder": "relay",
+    "protocol": 2,
+    "marker": "relay-protocol.txt",
+    "why": "The stdio relay a client registers: the server published a second time, into a folder of its own inside each Windows runtime's payload. A deploy leaves the installed folder, and the relays running from it, alone while its marker names the protocol being installed, so a session keeps its connection across the deploy; a different protocol replaces the folder and stops those relays. The protocol is the one RelayProtocol.Version names in the code. Windows only: elsewhere a running file can be replaced, so a client registers the server in the root."
+  },
   "liveAppHost": {
     "project": "RoseMcp.LiveApp",
     "executable": "RoseMcp.LiveApp",

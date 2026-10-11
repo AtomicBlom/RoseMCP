@@ -79,20 +79,36 @@ public static class TraySummary
 	/// Kept to a few words: this is read hovering over a 16-pixel icon, and it is the only view of
 	/// the broker available without opening the window. Counts loaded solutions only, because the
 	/// icon says what is in memory and a stopped row holds none.
+	/// <para>
+	/// It names the build first, version and short commit, because "which build is running" is the
+	/// question a person asks of the icon after every deploy, and two local builds share a version.
+	/// Cut to <see cref="TooltipLimit"/>, past which Windows drops the tooltip's tail itself.
+	/// </para>
 	/// </summary>
-	public static string Tooltip(IReadOnlyList<WorkspaceSummary> workspaces, int sessions, int running)
+	public static string Tooltip(BuildIdentity build, IReadOnlyList<WorkspaceSummary> workspaces, int sessions, int running)
 	{
 		var loaded = workspaces.Count(summary => summary.Alive);
+		var name = $"RoseMCP {build.Version}";
 
-		if (loaded == 0 && sessions == 0) return "RoseMCP - nothing loaded";
+		if (build.ShortCommit() is { } commit) name += build.Dirty == true ? $" ({commit}, modified)" : $" ({commit})";
 
 		var parts = new List<string>();
 
 		if (loaded > 0) parts.Add(Format.Count(loaded, "solution"));
 		if (sessions > 0) parts.Add(Format.Count(sessions, "session"));
 
+		if (parts.Count == 0) return Cut($"{name} - nothing loaded");
+
 		parts.Add(running == 0 ? "idle" : $"{running} running");
 
-		return $"RoseMCP - {string.Join(", ", parts)}";
+		return Cut($"{name} - {string.Join(", ", parts)}");
 	}
+
+	/// <summary>
+	/// The longest tooltip a notification icon shows: <c>NOTIFYICONDATA.szTip</c> holds 128
+	/// characters, the terminator included.
+	/// </summary>
+	public const int TooltipLimit = 127;
+
+	private static string Cut(string tooltip) => tooltip.Length <= TooltipLimit ? tooltip : tooltip[..TooltipLimit];
 }

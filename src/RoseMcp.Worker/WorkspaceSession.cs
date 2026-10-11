@@ -33,6 +33,12 @@ public sealed class WorkspaceSession : IAsyncDisposable
 	private readonly DiskSynchronizer _synchronizer = new();
 
 	/// <summary>
+	/// The analyzer assemblies rebuilt on disk since this process loaded them. Checked by the barrier and never
+	/// a reason to reload in place, which would load the same copies again.
+	/// </summary>
+	private readonly RebuiltAnalyzers _rebuiltAnalyzers;
+
+	/// <summary>
 	/// Paths written by the mutation in flight, and the gate over them. Collected here rather than
 	/// returned by the mutation because the callback is handed to the services by the tool layer, so
 	/// this is the one place every write passes through.
@@ -78,6 +84,8 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		_watcher = new SolutionWatcher(options.SolutionPath, watcherLogger);
 
 		_synchronizer.Reset(_current, options.SolutionPath, load.Inputs);
+		_rebuiltAnalyzers = new RebuiltAnalyzers(loader.AnalyzerLoader.CopiedStamp, AppContext.BaseDirectory);
+		_rebuiltAnalyzers.Track(_current);
 		_pump = Task.Run(PumpAsync);
 	}
 
@@ -98,6 +106,12 @@ public sealed class WorkspaceSession : IAsyncDisposable
 	/// status describes the load it is actually looking at rather than the first one of the process.
 	/// </summary>
 	public LoadOutcome Load { get; private set; }
+
+	/// <summary>
+	/// The analyzer assemblies the last read found rebuilt since this process loaded them, by full path. Read
+	/// without queueing, so the worker can say what its reads have found without waiting behind one.
+	/// </summary>
+	public IReadOnlyList<string> RebuiltAnalyzerPaths => _rebuiltAnalyzers.Current;
 
 	public static WorkspaceSession Create(
 		LoadResult load,
@@ -311,6 +325,10 @@ public sealed class WorkspaceSession : IAsyncDisposable
 				+ string.Join(", ", sync.Deferred.Take(5).Select(Path.GetFileName)));
 		}
 
+		// Said on every read until the process goes, and never folded into mustReload above: a reload here
+		// takes its analyzers from the same loader, which hands back the copies it already loaded.
+		if (RebuiltAnalyzers.Notice(_rebuiltAnalyzers.Check()) is { } rebuilt) notices.Add(rebuilt);
+
 		return new WorkspaceSnapshot
 		{
 			Solution = _current,
@@ -391,6 +409,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		Build = load.Build;
 		Load = LoadOutcome.From(load);
 		_synchronizer.Reset(_current, _options.SolutionPath, load.Inputs, cancellationToken);
+		_rebuiltAnalyzers.Track(_current);
 		Interlocked.Increment(ref _revision);
 
 		previous.Dispose();

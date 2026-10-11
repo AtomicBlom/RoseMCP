@@ -56,17 +56,62 @@ public sealed class OperatorApiTests
 		answer.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 	}
 
+	/// <summary>
+	/// Hello names the broker's build by its commit, which is this suite's own: the server was built
+	/// from the same tree in the same build. For a local build it also counts how far the checkout has
+	/// moved on, which git can always do for the commit the checkout was built at.
+	/// </summary>
+	[Test]
+	public async Task Hello_names_the_brokers_build_by_its_commit()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
+
+		var hello = await broker.Client.GetFromJsonAsync<OperatorHello>(
+			broker.Url("/operator/hello"), ContractJson.Options, cancellationToken);
+
+		var ours = BuildIdentity.Of(typeof(OperatorApiTests).Assembly);
+
+		hello.ShouldNotBeNull();
+		hello!.Build.Commit.ShouldNotBeNull();
+		hello.Build.Commit.ShouldBe(ours.Commit);
+		hello.Build.BuiltUtc.ShouldNotBeNull();
+		hello.Build.Checkout.ShouldBe(ours.Checkout);
+
+		if (ours.Checkout is null)
+		{
+			hello.Checkout.ShouldBeNull("a build that names no checkout has nothing to count from");
+			return;
+		}
+
+		hello.Checkout.ShouldNotBeNull();
+		hello.Checkout!.Head.Count.ShouldNotBeNull(hello.Checkout.Head.Unknown);
+	}
+
+	/// <summary>Hello is behind the token like everything else here: a build's checkout path is the machine's business.</summary>
+	[Test]
+	public async Task Hello_needs_the_token()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
+
+		using var answer = await broker.Anonymous.GetAsync(broker.Url("/operator/hello"), cancellationToken);
+
+		answer.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+	}
+
 	[Test]
 	public async Task Lists_no_sessions_on_a_broker_nobody_is_debugging_through()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
 
-		var sessions = await broker.Client.GetFromJsonAsync<LiveAppSessionSummary[]>(
+		var sessions = await broker.Client.GetFromJsonAsync<OperatorSessionList>(
 			broker.Url("/operator/sessions"), ContractJson.Options, cancellationToken);
 
 		sessions.ShouldNotBeNull();
-		sessions!.ShouldBeEmpty();
+		sessions!.Sessions.ShouldBeEmpty();
+		sessions.Version.ShouldNotBeNullOrWhiteSpace();
 	}
 
 	/// <summary>
@@ -135,11 +180,19 @@ public sealed class OperatorApiTests
 			var sessionId = attached.StructuredContent?.Deserialize<LiveAppSessionSummary>(ContractJson.Options)?.SessionId;
 			sessionId.ShouldNotBeNull();
 
-			var listed = await broker.Client.GetFromJsonAsync<LiveAppSessionSummary[]>(
+			var listed = await broker.Client.GetFromJsonAsync<OperatorSessionList>(
 				broker.Url("/operator/sessions"), ContractJson.Options, cancellationToken);
 
 			listed.ShouldNotBeNull();
-			listed!.ShouldContain(summary => summary.SessionId == sessionId);
+			var row = listed!.Sessions.ShouldHaveSingleItem();
+			row.SessionId.ShouldBe(sessionId);
+
+			// What the session holds is read apart from Rose's own: its host is Rose's cost, the app it debugs is
+			// not. The app is read only while the host says it is serving, so wait for the host to say so.
+			var memory = await SessionMemoryAsync(broker, sessionId!, cancellationToken);
+			memory.Host.ShouldNotBeNull().ProcessId.ShouldBe(row.HostProcessId!.Value);
+			memory.Target.ShouldNotBeNull().ProcessId.ShouldBe(target.Id);
+			memory.Target.WorkingSetBytes.ShouldBeGreaterThan(0);
 
 			// And reachable one at a time, which is what every other route depends on.
 			using var one = await broker.Client.GetAsync(broker.Url($"/operator/sessions/{sessionId}"), cancellationToken);
@@ -228,6 +281,113 @@ public sealed class OperatorApiTests
 		}
 	}
 
+	/// <summary>
+	/// A workspace an agent opens shows in every view a window reads, through the real broker: the workspace list,
+	/// answered as soon as it appears to a window already waiting on it, with its folder, what it was loaded under and
+	/// when it closes; the memory, with its worker beside the broker's own process; the activity record, by workspace,
+	/// failure and text, a page at a time; and the client table, with the agent's calls counted.
+	/// </summary>
+	[Test]
+	public async Task A_workspace_an_agent_opens_shows_in_every_view_a_window_reads()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		var before = await broker.GetAsync<OperatorWorkspaceList>("/operator/workspaces", cancellationToken);
+		before.Workspaces.ShouldBeEmpty();
+		before.IdleEvictionAfter.ShouldNotBeNull("an http broker closes an idle workspace");
+
+		// Held open from before the open, under the client's own timeout.
+		var waiting = broker.GetAsync<OperatorWorkspaceList>(
+			$"/operator/workspaces?after={before.Version}&waitSeconds=20", cancellationToken);
+
+		await using var agent = await McpClient.CreateAsync(
+			new HttpClientTransport(new HttpClientTransportOptions
+			{
+				Endpoint = new Uri(broker.Url("/")),
+				AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {Token}" },
+			}),
+			new McpClientOptions { DiscoverProbeTimeout = Timeout.InfiniteTimeSpan },
+			cancellationToken: cancellationToken);
+
+		await agent.CallToolAsync(
+			ToolNames.WorkspaceOpen,
+			new Dictionary<string, object?> { ["workspace"] = fixture.SolutionPath },
+			cancellationToken: cancellationToken);
+
+		var appeared = await waiting;
+		appeared.Version.ShouldNotBe(before.Version);
+		appeared.Workspaces.ShouldHaveSingleItem().Summary.Workspace.ShouldBe(fixture.SolutionPath);
+
+		// Status waits for the load, so what the views say next is about a loaded workspace.
+		for (var asked = 0; asked < 2; asked++)
+		{
+			var status = await agent.CallToolAsync(
+				ToolNames.WorkspaceStatus,
+				new Dictionary<string, object?> { ["workspace"] = fixture.SolutionPath },
+				cancellationToken: cancellationToken);
+			status.IsError.ShouldNotBe(true);
+		}
+
+		var loaded = (await broker.GetAsync<OperatorWorkspaceList>("/operator/workspaces", cancellationToken)).Workspaces.ShouldHaveSingleItem();
+		loaded.Summary.State.ShouldBe(WorkspaceState.Loaded);
+		loaded.Folder.ShouldBe(Path.GetDirectoryName(fixture.SolutionPath));
+		loaded.Configuration.ShouldBe("Debug");
+		loaded.Platform.ShouldNotBeNullOrWhiteSpace();
+		loaded.Summary.WorkingSetBytes.ShouldNotBeNull().ShouldBeGreaterThan(0);
+		loaded.InUse.ShouldBeFalse("nothing is running on it");
+		loaded.ClosesAtUtc.ShouldBe(loaded.LastUsedUtc + appeared.IdleEvictionAfter!.Value);
+
+		var memory = await broker.GetAsync<MemoryReport>("/operator/memory", cancellationToken);
+		memory.Broker.ProcessId.ShouldNotBe(Environment.ProcessId, "the broker is the server process, not the test");
+		var worker = memory.Workers.ShouldHaveSingleItem();
+		worker.Workspace.ShouldBe(fixture.SolutionPath);
+		worker.Process.ShouldNotBeNull().ProcessId.ShouldBe(loaded.Summary.ProcessId!.Value);
+		memory.Machine.ShouldNotBeNull().TotalBytes.ShouldBeGreaterThan(worker.Process.WorkingSetBytes);
+
+		var workspace = Uri.EscapeDataString(fixture.SolutionPath);
+		var activity = await broker.GetAsync<ActivityPage>($"/operator/activity?workspace={workspace}", cancellationToken);
+		activity.Entries.Select(entry => entry.Tool).ShouldContain(ToolNames.WorkspaceStatus);
+
+		var page = await broker.GetAsync<ActivityPage>($"/operator/activity?workspace={workspace}&limit=1", cancellationToken);
+		page.Entries.ShouldHaveSingleItem();
+		page.Next.ShouldNotBeNull("both status calls matched");
+		var older = await broker.GetAsync<ActivityPage>(
+			$"/operator/activity?workspace={workspace}&limit=1&before={Uri.EscapeDataString(page.Next)}", cancellationToken);
+		older.Entries.ShouldHaveSingleItem().Id.ShouldNotBe(page.Entries[0].Id);
+
+		(await broker.GetAsync<ActivityPage>($"/operator/activity?workspace={workspace}&failures=true", cancellationToken))
+			.Entries.ShouldBeEmpty();
+		(await broker.GetAsync<ActivityPage>($"/operator/activity?text={Uri.EscapeDataString(Path.GetFileName(fixture.Root))}", cancellationToken))
+			.Entries.ShouldNotBeEmpty("the workspace's path names the copy's folder");
+
+		var clients = await broker.GetAsync<ClientList>("/operator/clients", cancellationToken);
+		clients.Clients.ShouldContain(client => client.Calls >= 2);
+	}
+
+	/// <summary>The session's row of the memory report, once its host says it is serving the app.</summary>
+	private static async Task<LiveAppMemory> SessionMemoryAsync(OperatorBroker broker, string sessionId, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + Ceiling;
+
+		while (true)
+		{
+			var memory = await broker.GetAsync<MemoryReport>("/operator/memory", cancellationToken);
+			var row = memory.LiveApps.ShouldHaveSingleItem();
+			row.SessionId.ShouldBe(sessionId);
+
+			if (row is { Host: not null, Target: not null }) return row;
+
+			if (DateTime.UtcNow > deadline)
+			{
+				throw new ShouldAssertException($"The session's host and app were never both read: {JsonSerializer.Serialize(row, ContractJson.Options)}");
+			}
+
+			await Task.Delay(100, cancellationToken);
+		}
+	}
+
 	/// <summary>Reads a log another process still holds open for writing.</summary>
 	private static IEnumerable<string> Lines(string path)
 	{
@@ -265,6 +425,11 @@ public sealed class OperatorApiTests
 		public HttpClient Anonymous { get; }
 
 		public string Url(string path) => $"http://127.0.0.1:{Port}{path}";
+
+		/// <summary>An operator view, read with the token.</summary>
+		public async Task<T> GetAsync<T>(string path, CancellationToken cancellationToken) =>
+			await Client.GetFromJsonAsync<T>(Url(path), ContractJson.Options, cancellationToken)
+				?? throw new ShouldAssertException($"{path} answered nothing.");
 
 		public static async Task<OperatorBroker> StartAsync(CancellationToken cancellationToken)
 		{

@@ -74,7 +74,8 @@ public sealed class WorkspaceHost(
 				loader.AnalyzerLoader);
 
 			// Kept for the reads, which say the workspace is degraded without paying for this description.
-			_described = new DescribedLoad(load, report.DegradedReasons);
+			var described = WorkspaceStatusReporter.ReasonsOf(report);
+			_described = new DescribedLoad(load, described);
 
 			// A reconciliation notice is something that happened, not a reason to distrust the answer:
 			// "Absorbed 16 external file change(s)" is the server doing the job it exists for. These
@@ -85,20 +86,16 @@ public sealed class WorkspaceHost(
 			// good one rather than current truth, which is exactly what Degraded means.
 			// The assembly faults belong to the process rather than to the load or the snapshot, so they are held
 			// here and survive every reload.
-			var reasons = new List<string>(report.DegradedReasons);
-			if (WorkspaceStatusReporter.AssemblyLoadReason(AssemblyLoadFaults) is { } faults) reasons.Add(faults);
-			if (snapshot.Stale) reasons.AddRange(snapshot.Notices);
+			var reasons = new List<WorkspaceReason>(described);
+			if (WorkspaceStatusReporter.AssemblyLoadHealth(AssemblyLoadFaults) is { } faults) reasons.Add(faults);
 
-			var notices = snapshot.Stale
-				? report.Notices
-				: (IReadOnlyList<string>)[.. report.Notices, .. snapshot.Notices];
-
-			return report with
+			if (snapshot.Stale)
 			{
-				State = reasons.Count == 0 ? WorkspaceState.Loaded : WorkspaceState.Degraded,
-				DegradedReasons = reasons,
-				Notices = notices,
-			};
+				reasons.AddRange(snapshot.Notices.Select(notice =>
+					WorkspaceReason.Of(ReasonKinds.SolutionMissing, HealthEffect.BlocksAnswers, notice)));
+			}
+
+			return WorkspaceStatusReporter.WithReasons(report, reasons, snapshot.Stale ? [] : snapshot.Notices);
 		}
 		catch (SolutionUnloadedException exception)
 		{
@@ -124,16 +121,28 @@ public sealed class WorkspaceHost(
 	/// the mutations do not, since status lists the reasons itself and a write's verdict comes from the
 	/// compile it ran.
 	/// </para>
+	/// <para>
+	/// The notice is written for the caller: what the broker sent with the call about the reasons the person
+	/// accepted and the ones this session acknowledged (<see cref="HeardReasons"/>) is left out or said in the
+	/// person's words, kind by kind and project by project, so a reason nobody accepted still leads it.
+	/// </para>
 	/// </summary>
 	public async Task<WorkspaceSnapshot> ReadAsync(CancellationToken cancellationToken)
 	{
 		var session = await StartedAsync();
 		var snapshot = await session.ReadAsync(cancellationToken);
 
-		return snapshot.Noting(WorkspaceStatusReporter.DegradedNotice(ReasonsToDistrust(session.Load)));
+		return snapshot.Noting(WorkspaceStatusReporter.DegradedNotice(ReasonsToDistrust(session.Load), HeardReasons.Current));
 	}
 
 	public async Task<WorkspaceSession> SessionAsync() => await StartedAsync();
+
+	/// <summary>
+	/// The analyzer assemblies this worker's reads have found rebuilt since it loaded them, or none while the
+	/// solution is still loading or failed to. Never waits for the load or for the writer.
+	/// </summary>
+	public IReadOnlyList<string> RebuiltAnalyzerPaths =>
+		_start is { IsCompletedSuccessfully: true } started ? started.Result.RebuiltAnalyzerPaths : [];
 
 	/// <summary>
 	/// Remembers that a tool call failed to load an assembly, so every status from here on is
@@ -177,15 +186,15 @@ public sealed class WorkspaceHost(
 	/// the load, the load's own otherwise -- and every assembly a tool call failed to load, which belongs to the
 	/// process and is current to the last call.
 	/// </summary>
-	private IReadOnlyList<string> ReasonsToDistrust(LoadOutcome load)
+	private IReadOnlyList<WorkspaceReason> ReasonsToDistrust(LoadOutcome load)
 	{
-		var described = _described is { } last && ReferenceEquals(last.Load, load) ? last.Reasons : load.DegradedReasons;
+		var described = _described is { } last && ReferenceEquals(last.Load, load) ? last.Reasons : load.Reasons;
 
-		return WorkspaceStatusReporter.AssemblyLoadReason(AssemblyLoadFaults) is { } faults ? [.. described, faults] : described;
+		return WorkspaceStatusReporter.AssemblyLoadHealth(AssemblyLoadFaults) is { } faults ? [.. described, faults] : described;
 	}
 
-	/// <summary>What a status call's description of one load called degraded, before the process's own faults are added.</summary>
-	private sealed record DescribedLoad(LoadOutcome Load, IReadOnlyList<string> Reasons);
+	/// <summary>What a status call's description of one load found, before the process's own faults are added.</summary>
+	private sealed record DescribedLoad(LoadOutcome Load, IReadOnlyList<WorkspaceReason> Reasons);
 
 	private async Task<WorkspaceSession> StartSessionAsync()
 	{
@@ -214,26 +223,40 @@ public sealed class WorkspaceHost(
 		logger.LogWarning("{Message} Shutting this worker down.", exception.Message);
 		lifetime.StopApplication();
 
-		return new WorkspaceStatusReport
+		var report = new WorkspaceStatusReport
 		{
 			SolutionPath = options.SolutionPath,
 			State = WorkspaceState.Unloaded,
 			Revision = 0,
 			Projects = [],
 			LoadDiagnostics = [],
-			DegradedReasons = [exception.Message],
+			DegradedReasons = [],
 		};
+
+		var reason = WorkspaceReason.Of(ReasonKinds.SolutionUnloaded, HealthEffect.BlocksAnswers, exception.Message);
+
+		return WorkspaceStatusReporter.WithReasons(report, [reason], []) with { State = WorkspaceState.Unloaded };
 	}
 
-	private WorkspaceStatusReport Fault(Exception exception) => new()
+	private WorkspaceStatusReport Fault(Exception exception)
 	{
-		SolutionPath = options.SolutionPath,
-		State = WorkspaceState.Faulted,
-		Revision = 0,
-		Projects = [],
-		LoadDiagnostics = [],
-		DegradedReasons = [$"Loading the solution failed: {exception.Message}"],
-	};
+		var report = new WorkspaceStatusReport
+		{
+			SolutionPath = options.SolutionPath,
+			State = WorkspaceState.Faulted,
+			Revision = 0,
+			Projects = [],
+			LoadDiagnostics = [],
+			DegradedReasons = [],
+		};
+
+		var reason = WorkspaceReason.Of(
+			ReasonKinds.LoadFailed,
+			HealthEffect.BlocksAnswers,
+			$"Loading the solution failed: {exception.Message}");
+
+		return WorkspaceStatusReporter.WithReasons(report, [reason], []) with { State = WorkspaceState.Faulted };
+	}
 
 	public async ValueTask DisposeAsync()
 	{

@@ -76,10 +76,30 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
 - **`promote` builds the whole tree before it stops anything.** Every publish, and every native
   provider, goes into `artifacts/promote/<rid>` while the running instance keeps serving; only then
   are the inspector, tray and stdio servers stopped, the stage copied over the install, and the tray
-  restarted. Stopping first means Rose is gone for the length of a build, and a build that fails
+  restarted. The relays are the exception, below. Stopping first means Rose is gone for the length of a build, and a build that fails
   partway leaves nothing running and a half-written install that may not start. Keep anything that
   can fail -- a publish, a provider build, a layout check -- ahead of the first `Stop-*` call; after
   it, the only work is a copy.
+- **The relay's folder is the one part of an install a deploy leaves running, and only a change of
+  relay protocol replaces it.** Every installer -- a promote, `install.ps1`, the Inno script -- copies a
+  payload with `Copy-InstallPayload` or an `Excludes` of the relay folder, never over it, and lays the
+  relay down with `Install-Relay` only where `Test-RelayCurrent` says the installed one is not this
+  one: its executable missing, or its marker naming another protocol. Stopping and clearing take
+  `-KeepCurrentRelay`, which leaves a current relay's folder and processes alone and stops the rest of
+  the install's servers with `Get-InstalledProcess -Except`; a stale relay is stopped and counted on
+  its own, because its session needs `/mcp` for a different reason. The marker is written when the
+  relay is published, so every installer carries the same one, and deduplication hoists it into
+  `shared/` whenever more than one architecture is packaged. The Inno installer decides
+  `RelayIsStale` once, in `PrepareToInstall`, before any file is laid down, because the marker that
+  decides it is one of the files. Removing an install passes no switch and stops every relay with
+  everything else, reading no layout, since the uninstaller runs the script with none beside it.
+  After restarting the tray, a deploy waits, bounded, for the relays still running from the install
+  to be named at `/admin/relays` and says how many reconnected. It matches process ids
+  (`relayProcesses`, which each relay sends with its watch) against `Get-RelayProcess`, never the
+  broker's bare count, which takes in every relay on the port -- a build output's, another
+  install's -- and reads "2 of 2" too early or "3 of 2". Sessions it had to stop -- registered with the root's
+  server, relaying to a child broker, or on a relay of another protocol -- it names as needing `/mcp`.
+  See [the decision](../decisions/a-deploy-replaces-the-relay-only-when-its-protocol-changes.md).
 - **Where anything sits in an install is written once, in `tools/published-layout.json`, and every
   other party reads that file or is tested against it.** Five parties have to agree: `deploy.ps1`
   publishes the layout, `build-installer.ps1` checks a stage of it, `install.ps1` and `rosemcp.iss`
@@ -97,9 +117,10 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   The file travels with the scripts that read it: it is in the package's own script list, copied to
   the root of the archive beside `install.ps1` and `RoseMcp.Deploy.ps1`, and `Assert-WindowsPackage`
   refuses a package without it. It is read when first asked for rather than when `RoseMcp.Deploy.ps1`
-  is dot-sourced, because the Inno installer runs that script alone out of a temporary folder to stop
-  and clear an install, which needs no layout -- loading it eagerly would break the one path that has
-  no copy of it. And it is plain ASCII JSON with no comments, because `install.ps1` is run by
+  is dot-sourced, because the Inno uninstaller runs that script alone out of the install to stop and
+  clear it, which needs no layout -- loading it eagerly would break the one path that has no copy of
+  it. Installing does need it, to decide whether the relay stays, so the Inno installer extracts it to
+  its temporary folder beside the script. And it is plain ASCII JSON with no comments, because `install.ps1` is run by
   whichever shell somebody has: Windows PowerShell 5.1's `ConvertFrom-Json` refuses a comment, and
   its `Get-Content` reads a file with no byte-order mark as the machine's ANSI code page.
   <br>
@@ -107,3 +128,17 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   `shared/` -- two images for different machines are never byte-identical. `Assert-PackagedRuntime`
   therefore looks for each only in its own architecture's folder and checks its PE machine, and
   reports one found in `shared/` as deduplication matching something it should not have.
+- **A build is named by its commit, and every handshake compares commits.** Each host sends
+  `BuildIdentity.ToHandshake()` as its `ServerInfo.Version` -- the version with the commit as build
+  metadata, and `.dirty` after a dirty build's commit -- and each party that receives one compares it
+  with `BuildIdentity`: the broker against its workers and live-app hosts (`ChildHostVersion`), the
+  relay against the tray, the inspector against `/operator/hello`. Two local builds of different code
+  share a MinVer version, so a version compare passes a stale `bin` as the same build. A new host
+  sends the handshake; a new hop that starts one compares it, and says a mismatch naming both
+  commits rather than refusing. The stamps come from `Directory.Build.props`, and every one degrades
+  to absent rather than failing a build -- an archive with no `.git`, a machine with no git. Nothing
+  that changes without a commit is an attribute: the build time and the dirty flag are an embedded
+  resource written only when the project compiles, because as attributes they would recompile every
+  project whenever the time or the tree's state moved. So the dirty flag is the assembly's as of its
+  last compile, and is shown, never compared. See
+  [the decision](../decisions/a-build-is-named-by-its-commit.md).

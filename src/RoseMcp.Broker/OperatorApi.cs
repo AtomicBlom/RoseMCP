@@ -1,14 +1,22 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using RoseMcp.Contracts;
 using RoseMcp.Logging;
 
 namespace RoseMcp.Broker;
 
 /// <summary>
-/// The http surface a person's tools read a broker through: every debug session on the machine, and
-/// everything one can be asked, behind a bearer token.
+/// The http surface a person's tools read a broker through, behind a bearer token: who is connected, which
+/// workspaces are loaded, what every client did, every debug session on the machine and everything one can be
+/// asked, and what all of it holds in memory. A window reads nothing of the broker's any other way, so it can run
+/// in a process of its own and a test can drive it.
+/// <para>
+/// A view that changes is kept current by a long poll rather than by asking every second: its answer carries a
+/// version, and the same read with that version as <c>after</c> and a <c>waitSeconds</c> is answered when the view
+/// holds something else. See <see cref="LongPoll"/>.
+/// </para>
 /// <para>
 /// It exists because the MCP surface cannot serve it. Every agent-facing debug tool resolves a
 /// session through <see cref="LiveAppSessionManager.Find"/>, which serves a client only the sessions
@@ -74,17 +82,84 @@ public static class OperatorApi
 			})
 			.AddEndpointFilter(new Failures());
 
+		MapHello(operators);
 		MapSessions(operators);
+		MapClients(operators);
+		MapWorkspaces(operators);
+		MapActivity(operators);
+		MapMemory(operators);
 		MapDebugging(operators);
 		MapXaml(operators);
+		MapHealth(operators);
+
+		// This host now has somewhere a person decides what agents propose, so proposing is worth allowing.
+		app.Services.GetRequiredService<WorkspaceHealth>().OfferToThePerson();
 
 		return operators;
 	}
 
-	/// <summary>Which sessions there are, and ending one.</summary>
+	/// <summary>
+	/// Which build the broker is, and how far its checkout has moved on: the first thing a window
+	/// asks, so it can say which build it talks to and whether that is its own.
+	/// </summary>
+	private static void MapHello(RouteGroupBuilder operators) =>
+		operators.MapGet(
+			"/hello",
+			async (CheckoutDistanceReader distances, HttpContext context) => Json(new OperatorHello
+			{
+				Build = distances.Build,
+				Checkout = await distances.ReadAsync(context.RequestAborted),
+			}));
+
+	/// <summary>
+	/// The person's side of a workspace's health: accepting a reason and choosing what agents read about it,
+	/// stopping, and deciding what agents proposed.
+	/// <para>
+	/// Here and not on the MCP surface, because an acceptance outlives the session that makes it and changes
+	/// what every agent reads: an agent able to make one, or to confirm its own proposal, could silence a
+	/// reason for every other agent on the machine. The token is what says the person is the one asking.
+	/// </para>
+	/// </summary>
+	private static void MapHealth(RouteGroupBuilder operators)
+	{
+		var routes = operators.MapGroup("/health");
+
+		routes.MapGet("/accepted", (string workspace, WorkspaceHealth health) => Json(health.Accepted(workspace)));
+
+		routes.MapPost(
+			"/accept",
+			(AcceptReasonRequest body, WorkspaceHealth health) =>
+				Json(health.Accept(body.Workspace, body.Kind, body.Projects, body.AgentsRead, body.Note, body.Subjects)));
+
+		routes.MapPost(
+			"/stop-accepting",
+			(StopAcceptingRequest body, WorkspaceHealth health) =>
+				Json(health.StopAccepting(body.Workspace, body.Kind, body.Projects, body.Subjects)));
+
+		routes.MapGet("/proposals", (WorkspaceHealth health) => Json(health.Proposals()));
+
+		// The body is optional: confirming as proposed is the common case and needs nothing said.
+		routes.MapPost(
+			"/proposals/{proposalId}/confirm",
+			(string proposalId, WorkspaceHealth health, ConfirmProposalRequest? body) =>
+				Json(health.Confirm(proposalId, body?.AgentsRead, body?.Note)));
+
+		routes.MapPost(
+			"/proposals/{proposalId}/reject",
+			(string proposalId, WorkspaceHealth health) => Json(health.Reject(proposalId)));
+	}
+
+	/// <summary>
+	/// Which sessions there are, with the version a window passes back as <c>after</c>, with <c>waitSeconds</c>, to be
+	/// answered when one starts, ends or changes state; one session; and ending one.
+	/// </summary>
 	private static void MapSessions(RouteGroupBuilder operators)
 	{
-		operators.MapGet("/sessions", (LiveAppSessionManager sessions) => Json(sessions.Describe()));
+		operators.MapGet(
+			"/sessions",
+			async (OperatorViews views, LongPoll poll, HttpContext context, string? after = null, int waitSeconds = 0) =>
+				Json(await poll.WaitAsync(
+					views.Sessions, list => list.Version, after, waitSeconds, views.ActivityChanged, context.RequestAborted)));
 
 		operators.MapGet(
 			"/sessions/{sessionId}",
@@ -101,6 +176,118 @@ public static class OperatorApi
 				return Json(new LiveSessionClosed { Closed = closed, DetachFailure = session.DetachFailure });
 			});
 	}
+
+	/// <summary>
+	/// Which clients are connected: each agent session behind a relay, named by what its relay said of it, and
+	/// the clients that reached the broker without one. The same table <c>GET /admin/clients</c> reads, with the
+	/// version a window passes back as <c>after</c>, with <c>waitSeconds</c>, to be answered when the table changes.
+	/// </summary>
+	private static void MapClients(RouteGroupBuilder operators) =>
+		operators.MapGet(
+			"/clients",
+			async (OperatorViews views, LongPoll poll, HttpContext context, string? after = null, int waitSeconds = 0) =>
+				Json(await poll.WaitAsync(
+					views.Clients, list => list.Version, after, waitSeconds, views.ClientsChanged, context.RequestAborted)));
+
+	/// <summary>
+	/// The activity record: the newest entries for a client, a workspace, a debug session or a tool in a window of
+	/// time, only the failures or only those naming some text where asked, a page at a time, without their bodies
+	/// unless asked; and one entry by its id with them. Under the operator token rather than on the unauthenticated
+	/// admin routes, since an entry carries what an agent sent and was answered, source included. Reading it is not
+	/// recorded: these are not MCP calls.
+	/// <para>
+	/// A page's <c>next</c> passed back as <c>before</c> reads the page after it. Its <c>version</c> passed back as
+	/// <c>after</c>, with <c>waitSeconds</c> and the same filters, answers when a call matching them starts or ends.
+	/// The wait compares pages read without their bodies, which leave the version unchanged, so a window holding a
+	/// page of bodies open does not read fifty bodies back from disk every second.
+	/// </para>
+	/// </summary>
+	private static void MapActivity(RouteGroupBuilder operators)
+	{
+		operators.MapGet(
+			"/activity",
+			async (
+				OperatorViews views,
+				LongPoll poll,
+				HttpContext context,
+				string? client,
+				string? workspace,
+				string? session,
+				string? tool,
+				DateTimeOffset? since,
+				DateTimeOffset? until,
+				int? limit,
+				bool? bodies,
+				bool? failures,
+				string? text,
+				string? before,
+				string? after,
+				int? waitSeconds) =>
+			{
+				var query = new ActivityQuery
+				{
+					Client = client,
+					Workspace = workspace,
+					DebugSession = session,
+					Tool = tool,
+					Since = since,
+					Until = until,
+					Limit = limit ?? ActivityQuery.DefaultLimit,
+					Bodies = bodies ?? false,
+					Failures = failures ?? false,
+					Text = text,
+					Before = before,
+				};
+
+				var waited = await poll.WaitAsync(
+					() => views.Activity(OperatorViews.WithoutBodies(query)),
+					page => page.Version,
+					after,
+					waitSeconds ?? 0,
+					views.ActivityChanged,
+					context.RequestAborted);
+
+				return Json(query.Bodies ? views.Activity(query) : waited);
+			});
+
+		operators.MapGet(
+			"/activity/{id}",
+			(ActivityRecord record, string id) => Json(record.Find(id) ?? throw new KeyNotFoundException(
+				$"The activity record has no entry {id}. It keeps an entry for {record.Retention.TotalDays:0.#} day(s).")));
+	}
+
+	/// <summary>
+	/// Which workspaces are loaded: each worker's row as the tray reads it, with its folder, what it was loaded under,
+	/// its idle time and when it will close, and the version a window passes back as <c>after</c>, with
+	/// <c>waitSeconds</c>, to be answered when a row changes. Read from the broker alone, so it never waits on a
+	/// load and never counts as using a workspace. The wait reads the rows without their memory, which the version
+	/// leaves out, and the answer samples it once.
+	/// </summary>
+	private static void MapWorkspaces(RouteGroupBuilder operators) =>
+		operators.MapGet(
+			"/workspaces",
+			async (OperatorViews views, LongPoll poll, HttpContext context, string? after = null, int waitSeconds = 0) =>
+			{
+				// Calls are what change a workspace -- its running work, its last use, the status a call brings back --
+				// so the activity record's pulse is the one to wake on.
+				await poll.WaitAsync(
+					() => views.Workspaces(sampleMemory: false),
+					list => list.Version,
+					after,
+					waitSeconds,
+					views.ActivityChanged,
+					context.RequestAborted);
+
+				return Json(views.Workspaces());
+			});
+
+	/// <summary>
+	/// What Rose holds in memory -- the broker, each worker and each live-app host -- what each debugged app holds
+	/// apart from it, and the machine's own. Sampled when asked and never waited on: every figure differs from one
+	/// read to the next, so a window reads it on a timer.
+	/// </summary>
+	private static void MapMemory(RouteGroupBuilder operators) =>
+		operators.MapGet("/memory", (OperatorViews views) => Json(views.Memory()));
 
 	/// <summary>Watching a target and steering it.</summary>
 	private static void MapDebugging(RouteGroupBuilder operators)

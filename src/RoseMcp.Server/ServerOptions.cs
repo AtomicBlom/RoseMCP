@@ -17,6 +17,13 @@ public sealed record ServerOptions
 
 	public bool NoRestore { get; init; }
 
+	/// <summary>
+	/// Host the broker in this process whatever else is running: never relay to a tray, and never hand
+	/// the session to another broker. What an installed relay starts its child broker with, so the
+	/// child cannot relay in turn.
+	/// </summary>
+	public bool NoRelay { get; init; }
+
 	public static ServerOptions Parse(string[] args)
 	{
 		var useHttp = false;
@@ -24,6 +31,7 @@ public sealed record ServerOptions
 		var port = 5077;
 		string? workerPath = null;
 		var noRestore = false;
+		var noRelay = false;
 
 		for (var i = 0; i < args.Length; i++)
 		{
@@ -57,6 +65,10 @@ public sealed record ServerOptions
 					noRestore = true;
 					break;
 
+				case "--no-relay":
+					noRelay = true;
+					break;
+
 				default:
 					throw new ArgumentException($"Unrecognised argument '{args[i]}'.");
 			}
@@ -69,10 +81,25 @@ public sealed record ServerOptions
 			Port = port,
 			WorkerPath = workerPath,
 			NoRestore = noRestore,
+			NoRelay = noRelay,
 		};
 
 		options.Validate();
 		return options;
+	}
+
+	/// <summary>
+	/// What a relay starts the install's broker with when no tray is running: this session's own
+	/// settings, and <c>--no-relay</c> so the child hosts the broker rather than looking for a tray.
+	/// </summary>
+	public IReadOnlyList<string> ChildBrokerArguments()
+	{
+		var arguments = new List<string> { "--no-relay", "--host", Host, "--port", Port.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+
+		if (WorkerPath is not null) arguments.AddRange(["--worker", WorkerPath]);
+		if (NoRestore) arguments.Add("--no-restore");
+
+		return arguments;
 	}
 
 	private void Validate()

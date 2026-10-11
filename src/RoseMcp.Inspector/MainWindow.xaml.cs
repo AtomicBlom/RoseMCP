@@ -111,6 +111,7 @@ public sealed partial class MainWindow : Window
 
 		ShowEmpty(InspectorText.NoSessions, string.Empty);
 		_sessionPoll.Start();
+		_ = CheckBrokerBuildAsync();
 
 		AppWindow.Closing += OnWindowClosing;
 
@@ -128,6 +129,32 @@ public sealed partial class MainWindow : Window
 
 			_client.Dispose();
 		};
+	}
+
+	/// <summary>
+	/// Asks the broker which build it is, once, and warns where it is not this inspector's build.
+	/// <para>
+	/// Once, because the inspector is launched by the tray it talks to, and a broker that changes
+	/// build underneath a window has restarted, which the session poll already reports. A broker that
+	/// cannot be reached says nothing here: the poll says that too, and in more useful words.
+	/// </para>
+	/// </summary>
+	private async Task CheckBrokerBuildAsync()
+	{
+		try
+		{
+			var hello = await _client.HelloAsync(CancellationToken.None);
+			var warning = InspectorText.AnotherBuild(hello.Build, BuildIdentity.Of(typeof(MainWindow).Assembly));
+
+			// Not over a notice already showing, which is about the command line this window was
+			// started with and matters more.
+			if (warning is not null && !Notice.IsOpen) ShowNotice(warning, InfoBarSeverity.Warning);
+		}
+		catch (Exception exception) when (exception is OperatorException or ObjectDisposedException)
+		{
+			// Unreachable, or the window closed first; the session poll says the first, and nobody
+			// is left to read the second.
+		}
 	}
 
 	/// <summary>

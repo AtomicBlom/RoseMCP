@@ -56,7 +56,7 @@ internal static class Program
 			.AddMcpServer(server => server.ServerInfo = new()
 			{
 				Name = "rose-mcp-worker",
-				Version = HostVersion.Of(typeof(Program).Assembly),
+				Version = BuildIdentity.Of(typeof(Program).Assembly).ToHandshake(),
 			})
 			.WithStdioServerTransport()
 			.WithToolsFromAssembly(typeof(Program).Assembly, ToolJson.Readable(McpJsonUtilities.DefaultOptions))
@@ -66,6 +66,10 @@ internal static class Program
 			.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
 			{
 				using var correlation = CallCorrelation.Begin(context.Params?.Meta);
+
+				// Beside it, and for the same reason: the broker sends what it alone knows with the call, and
+				// a read's degraded notice is written for whoever is asking.
+				using var heard = HeardReasons.Begin(context.Params?.Meta);
 
 				return await next(context, cancellationToken);
 			}))

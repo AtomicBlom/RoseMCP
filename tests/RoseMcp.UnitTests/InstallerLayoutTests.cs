@@ -76,14 +76,59 @@ public sealed partial class InstallerLayoutTests
 	}
 
 	/// <summary>
+	/// The relay's folder is never copied with the rest of a payload. An install keeps it, with the
+	/// relays running from it, while it holds the relay this package carries; copying over it would
+	/// fail on a file a running relay holds, or replace a relay a session is connected through.
+	/// </summary>
+	[Test]
+	public void Leaves_the_relay_out_of_every_payload_copy()
+	{
+		var payloads = Layout.Runtimes.Select(runtime => PublishedLayout.Expand(Layout.Package.Runtime, rid: runtime.Rid))
+			.Append(Layout.Package.Shared);
+
+		foreach (var payload in payloads)
+		{
+			EntryFor(payload).Excludes.ShouldBe(@"\" + Inno(Layout.Relay.Folder), $"the copy of {payload} takes the relay with it");
+		}
+	}
+
+	/// <summary>
+	/// The relay is laid down into its own folder, from the shared payload and from each architecture's
+	/// own on its own machine, and only where the relay installed is not this one -- which is decided
+	/// before any file goes down, since the marker that decides it is one of them.
+	/// </summary>
+	[Test]
+	public void Lays_down_the_relay_only_where_the_installed_one_is_another()
+	{
+		var shared = EntryFor($"{Layout.Package.Shared}/{Layout.Relay.Folder}");
+		shared.DestDir.ShouldBe(App(Layout.Relay.Folder));
+		shared.Check.ShouldBe("RelayIsStale");
+
+		foreach (var runtime in Layout.Runtimes)
+		{
+			var entry = EntryFor($"{PublishedLayout.Expand(Layout.Package.Runtime, rid: runtime.Rid)}/{Layout.Relay.Folder}");
+
+			entry.DestDir.ShouldBe(App(Layout.Relay.Folder));
+			entry.Check.ShouldBe($"{runtime.InnoCheck} and RelayIsStale");
+		}
+
+		Script.ShouldContain("function RelayIsStale: Boolean;", Case.Sensitive);
+		Script.ShouldContain("-KeepCurrentRelay", Case.Sensitive);
+	}
+
+	/// <summary>
 	/// Nothing from the package that the layout does not describe. A folder the layout dropped would
 	/// fail the compile, or lay down a host no install is meant to have.
 	/// </summary>
 	[Test]
 	public void Takes_nothing_from_the_payload_the_layout_does_not_describe()
 	{
-		var described = Layout.Runtimes.Select(runtime => PublishedLayout.Expand(Layout.Package.Runtime, rid: runtime.Rid))
+		var payloads = Layout.Runtimes.Select(runtime => PublishedLayout.Expand(Layout.Package.Runtime, rid: runtime.Rid))
 			.Append(Layout.Package.Shared)
+			.ToList();
+
+		var described = payloads
+			.Concat(payloads.Select(payload => $"{payload}/{Layout.Relay.Folder}"))
 			.Concat(Layout.AllLiveAppHosts.Select(host => PublishedLayout.Expand(Layout.Package.LiveAppHost, host: host)))
 			.Select(folder => Staged(folder) + @"\*")
 			.ToHashSet(StringComparer.Ordinal);
@@ -127,6 +172,7 @@ public sealed partial class InstallerLayoutTests
 		var named = InstalledExecutable().Matches(Script).Select(match => match.Groups["path"].Value).Distinct().ToList();
 		var laidDown = Layout.Components
 			.Select(component => Inno(string.Join('/', new[] { component.Folder, component.Executable + ".exe" }.Where(part => part.Length > 0))))
+			.Append(Inno($"{Layout.Relay.Folder}/{Layout.Relay.Executable}.exe"))
 			.ToList();
 
 		named.ShouldNotBeEmpty();
@@ -152,7 +198,7 @@ public sealed partial class InstallerLayoutTests
 	}
 
 	/// <summary>One [Files] line, continuation lines joined, with the parts this suite reads.</summary>
-	private sealed record FilesEntry(string Source, string? DestDir, string? Check);
+	private sealed record FilesEntry(string Source, string? DestDir, string? Check, string? Excludes);
 
 	private static FilesEntry EntryFor(string packageFolder)
 	{
@@ -208,11 +254,13 @@ public sealed partial class InstallerLayoutTests
 
 			var destDir = DestDirParameter().Match(entry);
 			var check = CheckParameter().Match(entry);
+			var excludes = ExcludesParameter().Match(entry);
 
 			entries.Add(new FilesEntry(
 				source.Groups["value"].Value,
 				destDir.Success ? destDir.Groups["value"].Value : null,
-				check.Success ? check.Groups["value"].Value.Trim() : null));
+				check.Success ? check.Groups["value"].Value.Trim() : null,
+				excludes.Success ? excludes.Groups["value"].Value : null));
 		}
 
 		return entries;
@@ -226,6 +274,9 @@ public sealed partial class InstallerLayoutTests
 
 	[GeneratedRegex(@"\bCheck:\s*(?<value>[^;]+)")]
 	private static partial Regex CheckParameter();
+
+	[GeneratedRegex(@"\bExcludes:\s*""(?<value>[^""]*)""")]
+	private static partial Regex ExcludesParameter();
 
 	[GeneratedRegex(@"\{app\}\\(?<path>[^""\s]+?\.exe)")]
 	private static partial Regex InstalledExecutable();

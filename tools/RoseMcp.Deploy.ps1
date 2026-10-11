@@ -217,18 +217,220 @@ function Get-InstalledProcess
         against has been normalised to the long one. The prefix then fails to match, nothing is found
         to stop, and the install proceeds to fail partway through the copy on a file the tray still
         holds open. Canonicalising only one side is what makes that silent rather than loud.
+
+        -Except leaves out the processes under any folder it names, which is how a relay the deploy
+        is keeping is told apart from the servers it has to stop: both are RoseMcp.Server under the
+        same root.
     #>
     param(
         [Parameter(Mandatory)][string] $Name,
-        [Parameter(Mandatory)][string] $Root
+        [Parameter(Mandatory)][string] $Root,
+        [string[]] $Except = @()
     )
 
     $full = [System.IO.Path]::GetFullPath($Root).TrimEnd('\') + '\'
+    $excluded = @($Except | Where-Object { $_ } | ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\') + '\' })
 
     return @(Get-Process -Name $Name -ErrorAction SilentlyContinue |
         Where-Object {
-            $_.Path -and [System.IO.Path]::GetFullPath($_.Path).StartsWith($full, [System.StringComparison]::OrdinalIgnoreCase)
+            if (-not $_.Path) { return $false }
+
+            $path = [System.IO.Path]::GetFullPath($_.Path)
+            if (-not $path.StartsWith($full, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+
+            foreach ($folder in $excluded)
+            {
+                if ($path.StartsWith($folder, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+            }
+
+            return $true
         })
+}
+
+<#
+    The relay a client registers lives in a folder of its own under the install root, and a deploy
+    leaves that folder -- and every relay running from it -- alone while the relay it would install
+    speaks the protocol the installed one does. That is what lets a session keep its connection
+    across a deploy: the relay reconnects to the new tray by itself, and its client is told the tools
+    changed only if they did. The folder holds a marker naming its protocol, written when the relay is
+    published, so the installed relay's protocol is read off a file rather than out of an assembly
+    Windows PowerShell 5.1 cannot load.
+
+    Each of these reads the published layout, so none of them is reached by the Inno installer's
+    uninstall, which runs this script from the install with no layout beside it: removing an install
+    stops every relay with everything else and needs to know nothing about them.
+#>
+
+function Get-RelayFolder
+{
+    <# Where an install under $Root keeps the relay. #>
+    param([Parameter(Mandatory)][string] $Root)
+
+    return Join-LayoutPath $Root, (Get-PublishedLayout).relay.folder
+}
+
+function Get-RelayExecutable
+{
+    <# The installed relay's executable under $Root, the file a client registers. #>
+    param([Parameter(Mandatory)][string] $Root)
+
+    $relay = (Get-PublishedLayout).relay
+
+    return Join-LayoutPath (Get-RelayFolder -Root $Root), "$($relay.executable).exe"
+}
+
+function Test-RelayCurrent
+{
+    <#
+        Whether the relay installed under $Root is the one this layout would install: its executable is
+        there and its marker names the same protocol. Anything else -- no relay, no marker, another
+        protocol -- is a relay to replace.
+    #>
+    param([Parameter(Mandatory)][string] $Root)
+
+    $relay = (Get-PublishedLayout).relay
+    $marker = Join-LayoutPath (Get-RelayFolder -Root $Root), $relay.marker
+
+    if (-not (Test-Path -LiteralPath (Get-RelayExecutable -Root $Root))) { return $false }
+    if (-not (Test-Path -LiteralPath $marker)) { return $false }
+
+    return ((Get-Content -LiteralPath $marker -Raw).Trim() -eq [string] $relay.protocol)
+}
+
+function Get-RelayProcess
+{
+    <# The relays running out of the install under $Root. #>
+    param([Parameter(Mandatory)][string] $Root)
+
+    return Get-InstalledProcess -Name (Get-PublishedLayout).relay.executable -Root (Get-RelayFolder -Root $Root)
+}
+
+function Stop-Relay
+{
+    <#
+        Stops the relays running from an install whose relay is being replaced, and returns how many.
+        Their sessions lose their connection, which is why it happens only when the relay protocol
+        changes: a relay speaking the old protocol to a broker speaking the new one would misread it.
+    #>
+    param([Parameter(Mandatory)][string] $Root)
+
+    $running = Get-RelayProcess -Root $Root
+    if ($running.Count -eq 0) { return 0 }
+
+    Write-Host "  stopping $($running.Count) relay(s) of an older relay protocol (pid $($running.Id -join ', '))"
+    Stop-TrackedProcess -Process $running
+
+    return $running.Count
+}
+
+function Copy-InstallPayload
+{
+    <#
+        Copies a payload into an install, everything but the relay's folder, which is laid down by
+        Install-Relay or kept. Used for a promote's stage and for each folder of a package alike, so
+        no installer can copy over a relay that is running.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $From,
+        [Parameter(Mandatory)][string] $To
+    )
+
+    if (-not (Test-Path -LiteralPath $From)) { return }
+
+    $relayFolder = (Get-PublishedLayout).relay.folder
+
+    Get-ChildItem -LiteralPath $From |
+        Where-Object { $_.Name -ne $relayFolder } |
+        Copy-Item -Destination $To -Recurse -Force
+}
+
+function Install-Relay
+{
+    <#
+        Replaces the relay under $Root with the one in $From -- each folder that exists, in order, so a
+        package's shared files go down before an architecture's own. The old folder is removed first,
+        because a file that has left the relay would otherwise stay and be loaded by a version that
+        never shipped it. Only called once the relays running from it are stopped.
+    #>
+    param(
+        [Parameter(Mandatory)][string[]] $From,
+        [Parameter(Mandatory)][string] $Root
+    )
+
+    $folder = Get-RelayFolder -Root $Root
+    if (Test-Path -LiteralPath $folder) { Remove-Item -LiteralPath $folder -Recurse -Force }
+
+    New-Item -ItemType Directory -Force -Path $folder | Out-Null
+
+    foreach ($source in $From)
+    {
+        if (Test-Path -LiteralPath $source) { Copy-Item -Path "$source/*" -Destination $folder -Recurse -Force }
+    }
+
+    Write-Host "  installed the relay (protocol $((Get-PublishedLayout).relay.protocol)) in $folder"
+}
+
+function Wait-RelayReconnect
+{
+    <#
+        Waits, bounded, for the relays running from an install to reconnect to the tray just started,
+        and returns how many did and how many there are.
+
+        The count is the broker's, by process: /admin/relays names the process of each relay while it
+        holds the watch it opens once it has reconnected and read what the new broker offers, so a
+        relay named is a session that will hear nothing more about the deploy than one line on its
+        next result. Only the relays running from this install are counted. Every relay on the port
+        watches the same broker -- one run from a build output, or from another install -- and counting
+        those as well says "2 of 2" while one of this install's is still on its way back, or "3 of 2".
+        The relays running are read again on every pass, because a relay that ran its own broker for
+        want of a tray ends when the deploy stops that broker, a moment after the deploy has counted it.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $Root,
+        [int] $Port = 5077,
+        [int] $TimeoutSeconds = 20
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $connected = 0
+    $expected = 0
+
+    while ($true)
+    {
+        $running = @(Get-RelayProcess -Root $Root | ForEach-Object { $_.Id })
+        $expected = $running.Count
+
+        try
+        {
+            $hello = Invoke-RestMethod "http://127.0.0.1:$Port/admin/relays" -TimeoutSec 2
+            $connected = Measure-ReconnectedRelay -Running $running -Watching $hello.relayProcesses
+        }
+        catch { }
+
+        if ($connected -ge $expected -or [DateTime]::UtcNow -ge $deadline) { break }
+
+        Start-Sleep -Milliseconds 500
+    }
+
+    return [PSCustomObject]@{ Connected = $connected; Expected = $expected }
+}
+
+function Measure-ReconnectedRelay
+{
+    <#
+        How many of the relay process ids in $Running the broker names in $Watching, its
+        relayProcesses. Either may be empty or absent: no relays running, or a broker that names none.
+        Compared as numbers, since Windows PowerShell 5.1 reads a JSON number as Int32 and PowerShell 7
+        as Int64.
+    #>
+    param(
+        [object[]] $Running = @(),
+        [object[]] $Watching = @()
+    )
+
+    $named = @($Watching | Where-Object { $null -ne $_ } | ForEach-Object { [long] $_ })
+
+    return @($Running | Where-Object { $null -ne $_ -and $named -contains [long] $_ }).Count
 }
 
 function Stop-TrackedProcess
@@ -329,22 +531,26 @@ function Wait-Worker
 function Stop-Server
 {
     <#
-        Stdio servers -- one per editor session, registered from the install -- hold its shared
-        assemblies open, so copying over them fails on the first DLL. Only the ones under this root: a
-        server running from some other install is not in the way. Their clients start a fresh one on
-        the next call or on /mcp, and the tray they relay to is being replaced anyway.
+        Stdio servers running from the install root hold its shared assemblies open, so copying over
+        them fails on the first DLL. Only the ones under this root, and none under a folder in -Except:
+        a server running from some other install is not in the way, and a relay being kept holds only
+        its own folder. Each was a session registered with the root's server rather than the relay, or
+        the broker a relay started for want of a tray; either way its client has to reconnect.
 
-        Returns whether any were stopped, so a caller can tell the user to reconnect.
+        Returns how many were stopped.
     #>
-    param([Parameter(Mandatory)][string] $Root)
+    param(
+        [Parameter(Mandatory)][string] $Root,
+        [string[]] $Except = @()
+    )
 
-    $running = Get-InstalledProcess -Name 'RoseMcp.Server' -Root $Root
-    if ($running.Count -eq 0) { return $false }
+    $running = Get-InstalledProcess -Name 'RoseMcp.Server' -Root $Root -Except $Except
+    if ($running.Count -eq 0) { return 0 }
 
     Write-Host "  stopping $($running.Count) stdio server(s) running from the install (pid $($running.Id -join ', '))"
     Stop-TrackedProcess -Process $running
 
-    return $true
+    return $running.Count
 }
 
 function Stop-Install
@@ -354,28 +560,56 @@ function Stop-Install
         inspector first because nothing waits on it, then the tray, then the workers it owned, then
         any stdio server holding the same assemblies.
 
-        Returns what was stopped, so the caller can restart the tray only if there was one and can say
-        whether MCP clients need reconnecting.
+        -KeepCurrentRelay is for installing over an install: the relays are left running if the relay
+        installed is the one this layout would install, and stopped as part of replacing it if not.
+        Without it every relay is stopped too, which is what removing an install wants -- and that path
+        reads no published layout, since the uninstaller runs this script where there is none.
+
+        Returns what was stopped and kept, so the caller can restart the tray only if there was one and
+        say which sessions reconnect by themselves and which need /mcp.
     #>
     param(
         [Parameter(Mandatory)][string] $Root,
-        [int] $DrainSeconds = 15
+        [int] $DrainSeconds = 15,
+        [switch] $KeepCurrentRelay
     )
 
     if (-not (Test-OnWindows) -or -not (Test-Path $Root))
     {
-        return [PSCustomObject]@{ TrayWasRunning = $false; ServersStopped = $false }
+        return [PSCustomObject]@{ TrayWasRunning = $false; ServersStopped = 0; RelaysStopped = 0; RelaysKept = 0 }
+    }
+
+    $relayFolder = $null
+    $relayIsCurrent = $false
+    $relaysKept = 0
+    $relaysStopped = 0
+
+    if ($KeepCurrentRelay)
+    {
+        $relayFolder = Get-RelayFolder -Root $Root
+        $relayIsCurrent = Test-RelayCurrent -Root $Root
+        if ($relayIsCurrent) { $relaysKept = (Get-RelayProcess -Root $Root).Count }
     }
 
     Stop-Inspector -Root $Root
     $trayWasRunning = Stop-Tray -Root $Root -DrainSeconds $DrainSeconds
-    $serversStopped = Stop-Server -Root $Root
+
+    # A relay of another protocol goes before the servers, counted on its own: its session needs /mcp
+    # because the relay changed, not because of how it was registered.
+    if ($KeepCurrentRelay -and -not $relayIsCurrent) { $relaysStopped = Stop-Relay -Root $Root }
+
+    $serversStopped = Stop-Server -Root $Root -Except @($relayFolder | Where-Object { $_ })
 
     # A tray that was never running may still have left workers behind -- a stdio server owns its own
     # when no tray is there to relay to, and those hold the same worker exe.
     if (-not $trayWasRunning) { Wait-Worker -Root $Root -TimeoutSeconds $DrainSeconds }
 
-    return [PSCustomObject]@{ TrayWasRunning = $trayWasRunning; ServersStopped = $serversStopped }
+    return [PSCustomObject]@{
+        TrayWasRunning = $trayWasRunning
+        ServersStopped = $serversStopped
+        RelaysStopped = $relaysStopped
+        RelaysKept = $relaysKept
+    }
 }
 
 function Start-Tray
@@ -482,13 +716,24 @@ function Clear-InstallPayload
 
         Logs/ is the one directory that is not payload. Everything else at the root -- the satellite
         assembly folders, tray/, inspector/, live-app/ -- came from a publish and goes.
+
+        -KeepCurrentRelay keeps the relay's folder where the relay in it is the one this layout would
+        install, because its relays are still running and holding it; a relay of another protocol goes
+        with the rest, its relays having been stopped. Without it the folder goes too, and nothing here
+        reads the layout -- removing an install has none.
     #>
-    param([Parameter(Mandatory)][string] $Root)
+    param(
+        [Parameter(Mandatory)][string] $Root,
+        [switch] $KeepCurrentRelay
+    )
 
     if (-not (Test-Path $Root)) { return }
 
+    $kept = @('Logs')
+    if ($KeepCurrentRelay -and (Test-RelayCurrent -Root $Root)) { $kept += (Get-PublishedLayout).relay.folder }
+
     Get-ChildItem -LiteralPath $Root -Directory |
-        Where-Object { $_.Name -ne 'Logs' } |
+        Where-Object { $kept -notcontains $_.Name } |
         Remove-Item -Recurse -Force
 
     Get-ChildItem -LiteralPath $Root -File |
@@ -609,6 +854,25 @@ function Assert-PackagedRuntime
         }
 
         Assert-PackagedImage -Path $exe -Rid $Rid -What "$Rid $($component.executable)"
+    }
+
+    # The relay, an executable like any other, and its marker -- which deduplication hoists into
+    # shared/ whenever more than one architecture is packaged, since every one writes the same bytes.
+    # Without the marker an install would take the relay for another protocol on every deploy and stop
+    # every session.
+    $relay = $layout.relay
+    Assert-PackagedImage -Path (Join-LayoutPath $payload, $relay.folder, (Get-ExecutableName $relay.executable -Rid $Rid)) `
+        -Rid $Rid -What "$Rid relay"
+
+    $markers = @(@((Join-LayoutPath $payload, $relay.folder, $relay.marker), (Join-LayoutPath $shared, $relay.folder, $relay.marker)) |
+        Where-Object { Test-Path -LiteralPath $_ })
+
+    if ($markers.Count -eq 0) { throw "the package has no $($relay.marker) in its $Rid relay, so an install could not tell which relay protocol it carries." }
+
+    $packaged = (Get-Content -LiteralPath $markers[0] -Raw).Trim()
+    if ($packaged -ne [string] $relay.protocol)
+    {
+        throw "the package's $Rid relay says relay protocol $packaged, where the layout installs $($relay.protocol)."
     }
 
     $providers = $layout.liveAppHost.xamlProviders

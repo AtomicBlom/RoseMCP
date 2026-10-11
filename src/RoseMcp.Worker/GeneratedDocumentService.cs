@@ -108,6 +108,7 @@ public static class GeneratedDocumentService
 					Project = project.Name,
 					HintName = document.HintName,
 					Text = (await document.GetTextAsync(cancellationToken)).ToString(),
+					Notices = snapshot.Notices,
 				};
 			}
 		}

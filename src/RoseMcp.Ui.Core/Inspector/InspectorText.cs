@@ -1,3 +1,5 @@
+using RoseMcp.Contracts;
+
 namespace RoseMcp.Ui.Core.Inspector;
 
 /// <summary>
@@ -19,6 +21,20 @@ public static class InspectorText
 	public static string NoTray(Uri baseAddress) =>
 		$"No tray is listening on {baseAddress.GetLeftPart(UriPartial.Authority)}. Start RoseMCP.Tray and "
 			+ "open the inspector from it. This window keeps trying, and fills in when the tray answers.";
+
+	/// <summary>
+	/// What to say when the broker is another build than this inspector, naming both commits, or
+	/// null where they match. A warning rather than a refusal: the inspector usually still works, and
+	/// what this explains is the field it shows empty or the action the broker does not know.
+	/// </summary>
+	public static string? AnotherBuild(BuildIdentity broker, BuildIdentity inspector)
+	{
+		var mismatch = BuildIdentity.Mismatch("The broker", broker, inspector);
+		if (mismatch is null) return null;
+
+		return $"{mismatch} If something here is missing or refused, that difference is the likelier "
+			+ "cause; open the inspector from the tray to get the one built with it.";
+	}
 
 	/// <summary>
 	/// The token is wrong. Almost always because the tray restarted: it mints a new one per run, so

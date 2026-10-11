@@ -70,6 +70,13 @@ public sealed record WorkspaceSummary : WorkspaceScopedResult
 	public IReadOnlyList<string> Notices { get; init; } = [];
 
 	/// <summary>
+	/// The degraded reasons and the structured notices with a shape, as <see cref="WorkspaceStatusReport.Health"/>
+	/// carries them, from the last status report: what a window shows in one line per workspace, and what
+	/// a person accepts.
+	/// </summary>
+	public IReadOnlyList<HealthReason> Health { get; init; } = [];
+
+	/// <summary>
 	/// How long the initial load took, from the worker connecting to its first status answer. Null
 	/// while it is still going, and if it never finished.
 	/// </summary>

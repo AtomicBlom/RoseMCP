@@ -46,7 +46,7 @@ internal static class Program
 			.AddMcpServer(server => server.ServerInfo = new()
 			{
 				Name = "rose-mcp-live-app",
-				Version = HostVersion.Of(typeof(Program).Assembly),
+				Version = BuildIdentity.Of(typeof(Program).Assembly).ToHandshake(),
 			})
 			.WithStdioServerTransport()
 			.WithToolsFromAssembly(typeof(Program).Assembly, ToolJson.Readable(McpJsonUtilities.DefaultOptions))

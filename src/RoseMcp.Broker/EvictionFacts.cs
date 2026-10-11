@@ -9,10 +9,15 @@ namespace RoseMcp.Broker;
 /// <param name="LastUsedUtc">When a tool call last finished with it, or when its load did if none has.</param>
 /// <param name="StoppedUtc">When it stopped serving, for a worker that has.</param>
 /// <param name="SolutionMissingSinceUtc">When its solution file was first seen missing, if it is.</param>
+/// <param name="RebuiltAnalyzersSinceUtc">
+/// When the broker first heard that the worker's reads found an analyzer assembly rebuilt since it was loaded,
+/// if they have.
+/// </param>
 public readonly record struct EvictionFacts(
 	bool Alive,
 	bool Loading,
 	bool Busy,
 	DateTime LastUsedUtc,
 	DateTime? StoppedUtc,
-	DateTime? SolutionMissingSinceUtc);
+	DateTime? SolutionMissingSinceUtc,
+	DateTime? RebuiltAnalyzersSinceUtc = null);

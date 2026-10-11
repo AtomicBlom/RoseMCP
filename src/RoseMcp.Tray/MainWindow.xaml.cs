@@ -103,7 +103,8 @@ public sealed partial class MainWindow : Window
 
 		_endpoint = $"http://{_app.Options.Host}:{_app.Options.Port}";
 		EndpointText.Text = _endpoint;
-		RegistrationText.Text = RegistrationCommand(_endpoint);
+		RegistrationText.Text = RelayRegistration.Command(
+			RelayRegistration.RelayFor(AppContext.BaseDirectory), _app.Options.Host, _app.Options.Port);
 		Workspaces.ItemsSource = _rows;
 		Sessions.ItemsSource = _sessionRows;
 
@@ -175,6 +176,7 @@ public sealed partial class MainWindow : Window
 		Wire(TrayOpenInspector, OnOpenInspector);
 		Wire(TrayShowInspectorOnAttach, OnToggleShowInspectorOnAttach);
 		Wire(TrayCopyInspectorCommand, OnCopyInspectorCommand);
+		Wire(TrayReloadRebuiltAnalyzers, OnToggleReloadRebuiltAnalyzers);
 		Wire(TrayOpenLogs, OnOpenLogs);
 		Wire(TrayCloseAll, OnCloseAll);
 		Wire(TrayExit, OnExit);
@@ -229,6 +231,13 @@ public sealed partial class MainWindow : Window
 	private void ApplySize() =>
 		WindowChrome.ApplySize(this, InitialWidth, InitialHeight, MinimumWidth, MinimumHeight);
 
+	/// <summary>
+	/// This build, named on the icon. The tray's own assembly rather than the broker's, because the
+	/// tray is what a person launched; they ship together, and the broker's children are compared
+	/// against the broker by the handshake.
+	/// </summary>
+	private static readonly BuildIdentity Build = BuildIdentity.Of(typeof(MainWindow).Assembly);
+
 	private void Refresh()
 	{
 		var workspaces = Manager.Describe();
@@ -240,7 +249,7 @@ public sealed partial class MainWindow : Window
 		var running = workspaces.Sum(summary => summary.Running.Count) + sessions.Sum(summary => summary.Running.Count);
 		Headline.Text = TraySummary.Headline(workspaces, sessions);
 		Subtitle.Text = TraySummary.Subtitle(workspaces, sessions, running);
-		Tray.ToolTipText = TraySummary.Tooltip(workspaces, sessions.Count, running);
+		Tray.ToolTipText = TraySummary.Tooltip(Build, workspaces, sessions.Count, running);
 
 		// Empty only when there is neither kind of thing. A machine with a debug session and no
 		// loaded solution is not idle, and telling it how to register an endpoint would be answering
@@ -497,9 +506,6 @@ public sealed partial class MainWindow : Window
 		}
 	}
 
-	/// <summary>How a Claude Code user points their agent at this broker over http.</summary>
-	public static string RegistrationCommand(string endpoint) => $"claude mcp add --transport http rose {endpoint}";
-
 	private static bool Same(string left, string right) =>
 		string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
@@ -626,6 +632,35 @@ public sealed partial class MainWindow : Window
 
 			item.IsChecked = onAttach;
 			item.IsEnabled = installed;
+		}
+
+		var reloadsRebuilt = RoseSettingsFile.Read().ReloadRebuiltAnalyzersWhenIdle;
+
+		foreach (var item in (ToggleMenuFlyoutItem?[])[TrayReloadRebuiltAnalyzers, WindowReloadRebuiltAnalyzers])
+		{
+			if (item is not null) item.IsChecked = reloadsRebuilt;
+		}
+	}
+
+	/// <summary>
+	/// Turns the "reload a workspace once it is idle after its analyzers are rebuilt" preference on or off,
+	/// for every host on this machine. Put back to what the file says, and flipped from the file rather than
+	/// the item, for the reasons <see cref="OnToggleShowInspectorOnAttach"/> gives.
+	/// </summary>
+	private void OnToggleReloadRebuiltAnalyzers(object sender, RoutedEventArgs e)
+	{
+		var wanted = !RoseSettingsFile.Read().ReloadRebuiltAnalyzersWhenIdle;
+
+		if (!RoseSettingsFile.Write(RoseSettingsFile.Read() with { ReloadRebuiltAnalyzersWhenIdle = wanted }))
+		{
+			ShowNotice($"Could not write {RoseSettingsFile.PathFor()}, so that preference is unchanged.");
+		}
+
+		var settled = RoseSettingsFile.Read().ReloadRebuiltAnalyzersWhenIdle;
+
+		foreach (var item in (ToggleMenuFlyoutItem?[])[TrayReloadRebuiltAnalyzers, WindowReloadRebuiltAnalyzers])
+		{
+			if (item is not null) item.IsChecked = settled;
 		}
 	}
 

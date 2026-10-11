@@ -69,8 +69,14 @@ public sealed class ToolBudgetTests
 	/// rose_workspace_list costs about 550 more, the price of a session being able to see what is
 	/// loaded without loading it.
 	/// </para>
+	/// <para>
+	/// rose_workspace_acknowledge and the sentence on status naming health cost about 1,200 more. That is the
+	/// price of a session being able to stop a reason it has read and judged irrelevant from riding on every
+	/// later answer -- the volume that teaches a caller to read past the notice channel -- and of an agent
+	/// being able to ask the person to accept one rather than leaving it to be noticed.
+	/// </para>
 	/// </summary>
-	private const int ModelFacing = 83200;
+	private const int ModelFacing = 84500;
 
 	[Test]
 	public void No_description_is_longer_than_its_ceiling()

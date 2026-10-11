@@ -35,6 +35,23 @@ public static class WorkerEviction
 	}
 
 	/// <summary>
+	/// About when the sweep stops this worker if nothing uses it first: the moment <see cref="Decide"/> would start
+	/// answering an eviction, which the next sweep after it acts on. Null for a worker that has stopped, and for one
+	/// in use or loading, which nothing closes. Read from the same facts so the two cannot disagree.
+	/// </summary>
+	public static DateTime? ClosesAt(EvictionFacts facts, TimeSpan idleAfter, TimeSpan solutionGoneGrace)
+	{
+		var closable = facts.Alive && !facts.Busy && !facts.Loading;
+		if (!closable) return null;
+
+		var idle = facts.LastUsedUtc + idleAfter;
+		if (facts.SolutionMissingSinceUtc is not { } missing) return idle;
+
+		var gone = missing + solutionGoneGrace;
+		return gone < idle ? gone : idle;
+	}
+
+	/// <summary>
 	/// Why a worker was evicted, for the activity log. Written for the person who finds the workspace
 	/// cold later, so it says what the next call will do as well as what happened.
 	/// </summary>

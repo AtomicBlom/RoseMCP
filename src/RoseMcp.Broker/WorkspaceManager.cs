@@ -21,6 +21,7 @@ namespace RoseMcp.Broker;
 public sealed class WorkspaceManager(
 	IOptions<BrokerOptions> options,
 	CallerPaths paths,
+	WorkspaceHealth health,
 	ILoggerFactory loggerFactory,
 	ILogger<WorkspaceManager> logger) : IAsyncDisposable
 {
@@ -73,7 +74,18 @@ public sealed class WorkspaceManager(
 	/// the tray window and GET /admin/workspaces, so the UI can never show something the API disagrees
 	/// with. A stopped row says so in <see cref="Contracts.WorkspaceSummary.Alive"/>.
 	/// </summary>
-	public IReadOnlyList<Contracts.WorkspaceSummary> Describe() => [.. Workers.Select(worker => worker.Describe())];
+	public IReadOnlyList<Contracts.WorkspaceSummary> Describe() => [.. Workers.Select(worker => Describe(worker))];
+
+	/// <summary>
+	/// One worker's row, with what the broker remembers about its health stamped on: when each reason was first
+	/// seen, and which the person has accepted. <paramref name="sampleMemory"/> false leaves the memory out.
+	/// </summary>
+	public Contracts.WorkspaceSummary Describe(WorkspaceWorker worker, bool sampleMemory = true)
+	{
+		var summary = worker.Describe(sampleMemory);
+
+		return summary with { Health = health.Describe(worker.SolutionPath, summary.Health) };
+	}
 
 	/// <summary>
 	/// Every workspace this broker holds a worker for, as <c>rose_workspace_list</c> answers. Read
@@ -249,7 +261,9 @@ public sealed class WorkspaceManager(
 		{
 			try
 			{
-				return Attribute(await worker.CallAsync<T>(tool, arguments, cancellationToken, progress), worker);
+				return Attribute(
+					await worker.CallAsync<T>(tool, arguments, cancellationToken, progress, heard: health.HeardFor(worker.SolutionPath)),
+					worker);
 			}
 			catch (WorkerUnavailableException) when (retryIfWorkerDied)
 			{
@@ -267,7 +281,9 @@ public sealed class WorkspaceManager(
 				using (replacementHold)
 				{
 					return Attribute(
-						await replacement.CallAsync<T>(tool, arguments, cancellationToken, progress), replacement);
+						await replacement.CallAsync<T>(
+							tool, arguments, cancellationToken, progress, heard: health.HeardFor(replacement.SolutionPath)),
+						replacement);
 				}
 			}
 		}
@@ -304,6 +320,17 @@ public sealed class WorkspaceManager(
 		WorkspaceScopedResult scoped = result;
 
 		var attributed = scoped with { Workspace = worker.SolutionPath, WorkspaceKey = worker.Key };
+
+		// A status report's reasons are dated, and marked accepted or acknowledged, here for the reason the
+		// workspace is named here: whatever answers a status, it passes this step.
+		if (attributed is Contracts.WorkspaceStatusReport status)
+		{
+			attributed = status with { Health = health.Describe(worker.SolutionPath, status.Health) };
+		}
+
+		// A write's files and diffs are kept for the activity record here, as the worker gave them: absolute, and
+		// before the broker leaves the diff off for the caller, which every write passes this step to have done.
+		if (attributed is WorkspaceMutationResult written) CallRecording.Current?.Wrote(written);
 
 		return (T)(object)(attributed is WorkspaceMutationResult mutation
 			? WritePaths.Relative(
@@ -400,10 +427,16 @@ public sealed class WorkspaceManager(
 		WorkspaceHints hints,
 		CancellationToken cancellationToken,
 		IProgress<ProgressNotificationValue>? progress = null,
+		bool includeProjects = false) =>
+		await StatusResolvedAsync(WorkspaceFor(hints), cancellationToken, progress, includeProjects);
+
+	/// <summary>Status for a solution path already decided on, as <see cref="StatusAsync"/> gives it.</summary>
+	private async Task<Contracts.WorkspaceStatusReport> StatusResolvedAsync(
+		string solutionPath,
+		CancellationToken cancellationToken,
+		IProgress<ProgressNotificationValue>? progress = null,
 		bool includeProjects = false)
 	{
-		var solutionPath = WorkspaceFor(hints);
-
 		WorkspaceWorker worker;
 		IDisposable hold;
 
@@ -425,6 +458,133 @@ public sealed class WorkspaceManager(
 		{
 			return await StatusOfAsync(worker, cancellationToken, progress, includeProjects);
 		}
+	}
+
+	/// <summary>
+	/// What <c>rose_workspace_acknowledge</c> does with each reason it is given, by the id status gave it: the
+	/// calling session stops hearing it on reads, or the person is asked to accept it.
+	/// <para>
+	/// The ids are looked up in the last status the broker holds, which is the one the caller most likely read
+	/// them from, and only where one is not there is a fresh status asked for -- a reload can have renamed the
+	/// set. A stopped workspace is answered from its stopped row, as status is, and nothing is started for it.
+	/// </para>
+	/// </summary>
+	/// <exception cref="ArgumentException">No reasons were named.</exception>
+	/// <exception cref="InvalidOperationException">
+	/// An acknowledgement on a call carrying no session this broker can tell apart from its other clients'.
+	/// </exception>
+	public async Task<Contracts.ReasonsAcknowledged> AcknowledgeAsync(
+		WorkspaceHints hints,
+		IReadOnlyList<string> reasons,
+		bool propose,
+		string? note,
+		CancellationToken cancellationToken)
+	{
+		// Routed first, so a call naming its workspace twice is refused for that whatever else is wrong with it.
+		var solutionPath = WorkspaceFor(hints);
+
+		var named = reasons.Where(reason => !string.IsNullOrWhiteSpace(reason)).Select(reason => reason.Trim()).ToArray();
+		if (named.Length == 0)
+		{
+			throw new ArgumentException(
+				"Name at least one reason, by the id rose_workspace_status gives it in health.", nameof(reasons));
+		}
+		var report = LastHealth(solutionPath) ?? await StatusResolvedAsync(solutionPath, cancellationToken);
+
+		if (named.Any(id => Find(report, id) is null) && LastHealth(solutionPath) is not null)
+		{
+			report = await StatusResolvedAsync(solutionPath, cancellationToken);
+		}
+
+		return new Contracts.ReasonsAcknowledged
+		{
+			Workspace = solutionPath,
+			WorkspaceKey = Solutions.WorkspaceKey.For(solutionPath),
+			Revision = report.Revision,
+			Reasons = [.. named.Select(id => Acknowledge(solutionPath, report, id, propose, note))],
+		};
+	}
+
+	/// <summary>The last status the broker holds for a solution without asking its worker, or a stopped row's; null where it holds none.</summary>
+	private Contracts.WorkspaceStatusReport? LastHealth(string solutionPath)
+	{
+		if (!_workers.TryGetValue(solutionPath, out var worker)) return null;
+
+		return worker.IsAlive ? worker.LastStatus : worker.StoppedStatus();
+	}
+
+	/// <summary>The reason in <paramref name="report"/>'s health with this id, matched exactly and then ignoring case.</summary>
+	private static Contracts.HealthReason? Find(Contracts.WorkspaceStatusReport report, string id) =>
+		report.Health.FirstOrDefault(reason => string.Equals(reason.Id, id, StringComparison.Ordinal))
+		?? report.Health.FirstOrDefault(reason => string.Equals(reason.Id, id, StringComparison.OrdinalIgnoreCase));
+
+	/// <summary>One reason's acknowledgement or proposal, or why there was neither.</summary>
+	private Contracts.ReasonAcknowledgement Acknowledge(
+		string solutionPath,
+		Contracts.WorkspaceStatusReport report,
+		string id,
+		bool propose,
+		string? note)
+	{
+		var reason = Find(report, id);
+
+		if (reason is null)
+		{
+			return new Contracts.ReasonAcknowledgement
+			{
+				Reason = id,
+				Status = Contracts.AcknowledgementOutcome.NotFound,
+				Detail = report.Health.Count == 0
+					? "The workspace reports no reasons at all."
+					: $"No reason in the workspace's health has that id. The ids there are: {string.Join(", ", report.Health.Select(candidate => candidate.Id))}.",
+			};
+		}
+
+		if (!propose)
+		{
+			health.Acknowledge(solutionPath, reason);
+
+			return new Contracts.ReasonAcknowledgement
+			{
+				Reason = id,
+				Status = Contracts.AcknowledgementOutcome.Acknowledged,
+				Kind = reason.Kind,
+				Projects = reason.Projects,
+				Subjects = reason.Subjects,
+			};
+		}
+
+		if (health.Describe(solutionPath, [reason])[0].Accepted is { } accepted)
+		{
+			return new Contracts.ReasonAcknowledgement
+			{
+				Reason = id,
+				Status = Contracts.AcknowledgementOutcome.AlreadyAccepted,
+				Kind = reason.Kind,
+				Projects = reason.Projects,
+				Subjects = reason.Subjects,
+				Detail = $"The person accepted it on {accepted.AcceptedUtc:yyyy-MM-dd}, and agents read {Describe(accepted.AgentsRead)} about it.",
+			};
+		}
+
+		var proposal = health.Propose(solutionPath, reason, note);
+
+		return new Contracts.ReasonAcknowledgement
+		{
+			Reason = id,
+			Status = Contracts.AcknowledgementOutcome.Proposed,
+			Kind = reason.Kind,
+			Projects = reason.Projects,
+			Subjects = reason.Subjects,
+			ProposalId = proposal.Id,
+		};
+
+		static string Describe(Contracts.AgentsRead read) => read switch
+		{
+			Contracts.AgentsRead.Note => "the person's note",
+			Contracts.AgentsRead.Nothing => "nothing",
+			_ => "Rose's line",
+		};
 	}
 
 	/// <summary>
@@ -845,21 +1005,22 @@ public sealed class WorkspaceManager(
 	public const string EvictOperation = "evict worker";
 
 	/// <summary>
-	/// Starts the eviction sweep, when eviction is on and it is not already running. Only call while
-	/// holding <see cref="_gate"/>, which is what makes the check and the start one step.
+	/// Starts the sweep, when it is not already running. Only call while holding <see cref="_gate"/>, which is
+	/// what makes the check and the start one step.
 	/// <para>
 	/// Started by the first worker rather than by the constructor, so a broker that never opens a
 	/// solution -- every unit test that builds the registration, and a tray nobody has used yet -- runs
-	/// no timer at all.
+	/// no timer at all. Started whether or not eviction is on, because the idle reload of a rebuilt analyzer
+	/// is a person's setting, read when a worker needs it, and can be turned on in any host while it runs.
 	/// </para>
 	/// </summary>
 	private void EnsureSweeping()
 	{
-		if (_sweeping is not null || _options.IdleEvictionAfter is not { } idleAfter) return;
+		if (_sweeping is not null) return;
 
 		// Read here rather than inside the task, so the loop holds the token it was started with.
 		var stopping = _stopping.Token;
-		_sweeping = Detached.Run(() => SweepLoopAsync(idleAfter, stopping));
+		_sweeping = Detached.Run(() => SweepLoopAsync(stopping));
 	}
 
 	/// <summary>
@@ -870,7 +1031,7 @@ public sealed class WorkspaceManager(
 	/// its life, which is the failure this exists to prevent.
 	/// </para>
 	/// </summary>
-	private async Task SweepLoopAsync(TimeSpan idleAfter, CancellationToken cancellationToken)
+	private async Task SweepLoopAsync(CancellationToken cancellationToken)
 	{
 		using var timer = new PeriodicTimer(_options.EvictionSweepInterval, _options.TimeProvider);
 
@@ -880,15 +1041,18 @@ public sealed class WorkspaceManager(
 			{
 				try
 				{
-					await SweepAsync(idleAfter, cancellationToken);
+					await SweepAsync(cancellationToken);
 				}
-				catch (Exception exception) when (exception is not OperationCanceledException)
+				catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
 				{
-					logger.LogWarning(exception, "The eviction sweep failed; the next one is in {Interval}.", _options.EvictionSweepInterval);
+					// Decided by the token rather than the exception's type: the sweep starts workers, and a start that
+					// gives up can surface as a cancellation of its own. Ending the loop over one would stop eviction
+					// and the idle reload for the life of the broker, with nothing to say so.
+					logger.LogWarning(exception, "The sweep failed; the next one is in {Interval}.", _options.EvictionSweepInterval);
 				}
 			}
 		}
-		catch (OperationCanceledException)
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{
 			// The manager is going away, and its workers with it.
 		}
@@ -898,19 +1062,37 @@ public sealed class WorkspaceManager(
 	/// One pass over the registry. Deciding needs a file check per worker, so it is done outside the
 	/// gate, and only a worker the decision would act on waits for it -- where it is decided again,
 	/// because a call may have taken the worker in the meantime.
+	/// <para>
+	/// Eviction is decided first: an evicted worker is replaced by the next call, which loads the rebuilt
+	/// analyzer as surely as a reload would, and costs nothing until somebody wants it. The settings file is
+	/// read only for a worker the idle reload would act on, so a sweep with nothing rebuilt reads no file.
+	/// </para>
 	/// </summary>
-	private async Task SweepAsync(TimeSpan idleAfter, CancellationToken cancellationToken)
+	private async Task SweepAsync(CancellationToken cancellationToken)
 	{
 		var now = UtcNow;
+		bool? reloadsRebuilt = null;
 
 		foreach (var worker in Workers)
 		{
-			worker.ObserveSolution(File.Exists(worker.SolutionPath), now);
+			if (_options.IdleEvictionAfter is { } idleAfter)
+			{
+				worker.ObserveSolution(File.Exists(worker.SolutionPath), now);
 
-			var verdict = WorkerEviction.Decide(worker.EvictionFacts(), idleAfter, _options.SolutionGoneGrace, now);
-			if (verdict == EvictionVerdict.Keep) continue;
+				var verdict = WorkerEviction.Decide(worker.EvictionFacts(), idleAfter, _options.SolutionGoneGrace, now);
+				if (verdict != EvictionVerdict.Keep)
+				{
+					await EvictAsync(worker, idleAfter, cancellationToken);
+					continue;
+				}
+			}
 
-			await EvictAsync(worker, idleAfter, cancellationToken);
+			if (!RebuiltAnalyzerReload.Due(worker.EvictionFacts(), _options.RebuiltAnalyzerReloadAfter, now)) continue;
+
+			reloadsRebuilt ??= _options.ReloadsRebuiltAnalyzersWhenIdle();
+			if (reloadsRebuilt != true) continue;
+
+			await ReloadRebuiltAsync(worker, cancellationToken);
 		}
 	}
 
@@ -973,6 +1155,69 @@ public sealed class WorkspaceManager(
 				worker.Key,
 				WorkerEviction.Duration(now - facts.LastUsedUtc),
 				reason);
+		}
+		finally
+		{
+			_gate.Release();
+		}
+	}
+
+	/// <summary>How an idle reload for a rebuilt analyzer is labelled in the activity log of the worker it starts.</summary>
+	public const string ReloadRebuiltOperation = "reload for rebuilt analyzer";
+
+	/// <summary>
+	/// Replaces a worker holding a rebuilt analyzer with a fresh one, under the gate every call takes its
+	/// worker under, as <c>rose_workspace_reload</c> would. A new process rather than a reload inside the old
+	/// one, because an assembly once loaded cannot be unloaded and the old process would load the same copy.
+	/// <para>
+	/// Everything is read again here, the way an eviction reads it: a worker somebody took since the sweep
+	/// looked is held and left alone, one already replaced is not the one registered and is left too, and one
+	/// whose solution file has gone is left to the eviction sweep rather than restarted onto nothing. The
+	/// replacement keeps the build properties the solution was asked to load under, and its activity history
+	/// begins with why it was started, so a person who finds the workspace loading with nobody having asked
+	/// can read the reason.
+	/// </para>
+	/// </summary>
+	private async Task ReloadRebuiltAsync(WorkspaceWorker worker, CancellationToken cancellationToken)
+	{
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			var stillRegistered = _workers.TryGetValue(worker.SolutionPath, out var current) && ReferenceEquals(current, worker);
+			if (!stillRegistered) return;
+
+			var now = UtcNow;
+			var facts = worker.EvictionFacts();
+
+			if (!RebuiltAnalyzerReload.Due(facts, _options.RebuiltAnalyzerReloadAfter, now)) return;
+			if (!File.Exists(worker.SolutionPath)) return;
+
+			var reason = RebuiltAnalyzerReload.Explain(worker.RebuiltAnalyzersNotice, facts, now);
+
+			_workers.TryRemove(new KeyValuePair<string, WorkspaceWorker>(worker.SolutionPath, worker));
+			await worker.DisposeAsync();
+			Activities.Forget(worker.SolutionPath);
+
+			logger.LogInformation(
+				"Reloading {SolutionPath} ({WorkspaceKey}) with a fresh worker: {Reason}",
+				worker.SolutionPath,
+				worker.Key,
+				reason);
+
+			try
+			{
+				await GetOrStartUnderGateAsync(worker.SolutionPath, cancellationToken);
+				Activities.Note(worker.SolutionPath, ReloadRebuiltOperation, reason);
+			}
+			catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+			{
+				// The old worker is already gone, so the workspace is closed rather than stale, and the next call
+				// on it starts a worker the way it would after a close.
+				logger.LogWarning(
+					exception,
+					"Could not start a fresh worker for {SolutionPath} after its analyzer was rebuilt; the next call on it starts one.",
+					worker.SolutionPath);
+			}
 		}
 		finally
 		{

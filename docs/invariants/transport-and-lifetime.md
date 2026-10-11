@@ -52,12 +52,54 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   of twenty. See [the decision](../decisions/a-call-is-traced-by-an-id-minted-where-it-enters-rose.md).
 - **A stdio session relays to a tray when one is running.** `TrayRelay` forwards both listing and
   calling, declaring no tools of its own, so the surface cannot drift from the tray's. It sends the
-  directory its client started it in as `_meta["rosemcp/originDirectory"]` and changes nothing else.
+  directory its client started it in as `_meta["rosemcp/originDirectory"]`, and an id it mints for its own
+  life as `_meta["rosemcp/session"]`, and changes nothing else. The id is what tells relayed clients apart:
+  the http transport serves each request without a session, so without it every relayed client is the same
+  caller, and one agent's acknowledgement is every agent's. It scopes acknowledgements alone: debug-session
+  ownership reads only the transport's session, and so is unscoped over stateless http even though this id
+  reaches the broker with every relayed call.
+  It sends the same id with its own listings and reads, so the broker never takes them for an unnamed
+  client, and marks its own reads `_meta["rosemcp/relayRead"]` so they are not counted as the session's
+  calls. Once its client has made a request it also tells the broker whom it serves, at
+  `/admin/relays/client` -- folder, roots, branch, process, `clientInfo`, `ROSE_AGENT_LABEL`, and whether
+  the client holds the broker's tools -- detached from the request, bounded by a budget and the relay's
+  lifetime, and never failing anything; again after every reconnect, since a restarted broker remembers
+  nothing; and whenever any of it changes. See
+  [the decision](../decisions/a-relay-names-its-session-to-the-broker.md).
   An http broker serves every repository on the machine and, with two solutions open, cannot know
   which one a bare call means; a stdio process cannot not know. Relaying buys both that and one warm
   worker per solution shared across sessions, and it keeps the tray's window reading a live
-  `WorkspaceManager` rather than a pushed copy that could drift. With no tray, the same process owns
-  its workers as before.
+  `WorkspaceManager` rather than a pushed copy that could drift. With no tray, a relay running from an
+  install's relay folder starts the install root's server as a child with `--no-relay` and relays to
+  it, rather than hosting a broker from its own assemblies, which are as old as the last relay
+  protocol change; it ends when that child does, which a deploy makes happen, rather than starting
+  another while the deploy may still be copying over its files. An installed relay never hosts the
+  broker, whatever fails: `RelayInstall.RoutesFor` sends a tray that refuses the session on to the
+  child broker, and where that will not start the relay ends with the reason on stderr. A relay that
+  hosted would hold workers a deploy waits for while keeping the relay running, and the deploy would
+  abort. Anywhere else -- a build output, a Linux install -- the process owns its workers as before.
+- **A relay outlives the broker it forwards to, and tells its client only what changed.** It holds
+  `/admin/relays/watch` open, which a killed broker ends at once, and reconnects by itself, so an idle
+  session hears of a deploy without making a call. A watch ending is a reason to look, not proof: the
+  broker is asked first -- any answer counts, since the 2026-07-28 revision has no `ping` -- because
+  reconnecting to a live broker opens a new MCP session, and the debug sessions belong to the old one.
+  A watch that reached another broker instance is the exception, and `WatchEnd` says which ended it:
+  the old connection reaches the new broker too, which answers it, so asking would keep the relay
+  there for good, and that watch reconnects without asking. Calls and the watch reconnect through one gate, and the comparison of the new broker's tools and
+  instructions with what the client last listed happens inside it, so one restart is one comparison
+  and at most one `notifications/tools/list_changed`. That notification goes through `ToolListSignal`,
+  the SDK's fan-out for a changed collection, never by hand: a 2026-07-28 client asks for it on a
+  `subscriptions/listen` stream and must get it tagged with that subscription. The relay advertises
+  `tools.listChanged` itself and gives the broker's instructions as its own, because the client never
+  sees the broker's handshake. The restart line is claimed from `PendingNotice` only once a result is
+  in hand, so exactly one result carries it and a failed call leaves it for the next. A reconnect
+  publishes the new connection before it has read the broker behind it, so calls wait on that reading
+  (`_adopted`) before taking the connection: one answered in between would carry no line, and the
+  client would have an answer from a broker it was not told had restarted. The broker's
+  instance id, not its build, says whether it restarted. The watch and the reconnect loop are
+  `Detached`, bounded by the relay's lifetime, and disposing the relay cancels them and waits for them
+  before closing the connection -- which, for a child broker, ends the child and its workers. See
+  [the decision](../decisions/a-deploy-replaces-the-relay-only-when-its-protocol-changes.md).
 - **The relay contributes a fact, never a conclusion.** It used to resolve that directory to a
   solution and write the answer into the `workspace` argument, which failed three ways at once. It
   matched the argument by name, and `rose_workspace_open` alone called its own `path` -- so an
@@ -111,8 +153,9 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
 - **Every stdio process dies with its client, and takes what it owns.** A worker, a live-app host
   and a stdio `RoseMcp.Server` all exit when their stdin closes, and the rule is the same one three
   times: whatever the process owns goes with it, because nothing else knows it is there. A server
-  ends its workers, and a host ends a target it *launched* -- never one it attached to, and never
-  after a detach, which is the request to leave the app running. Orphaned Roslyn hosts holding a
+  ends its workers, a relay ends a broker it started as its child, and a host ends a target it
+  *launched* -- never one it attached to, and never after a detach, which is the request to leave the
+  app running. Orphaned Roslyn hosts holding a
   solution in memory are invisible until the machine is out of RAM; an orphaned probe app is worse
   than invisible, because the probe is single-instance and the next run finds an app it did not
   launch and treats it as its own.
@@ -145,10 +188,64 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   registry. A stopped row reports no memory figures either: Windows hands a dead process's id to
   the next process it starts, so sampling it would show somebody else's memory as the solution's.
   The manager stops the sweep, and waits for it, before it disposes the gate the sweep
-  takes. The same holds for a key: `workspaceKey` still names a stopped row, whose path is known,
+  takes. The sweep runs in every host once a worker has started, eviction or not, because it also
+  replaces a worker holding a rebuilt analyzer when a person has asked for that -- a setting read
+  when some worker holds one, so a sweep with nothing rebuilt reads no file. That reload follows the
+  eviction's rules: decided again under the gate, never for a worker held, busy or loading, only
+  once it has gone a minute unused since both its last call and the broker hearing of the rebuild,
+  and never for a worker already replaced or whose solution file has gone. Eviction is decided
+  first, since the call after an eviction starts a worker on the new build anyway. Only the manager
+  stopping ends the sweep, decided by its token rather than by the exception's type: the sweep starts
+  workers, a start that gives up can surface as a cancellation of its own, and a loop ended by one
+  would stop eviction and the idle reload for the life of the broker with nothing to say so. The broker hears
+  of a rebuild from the worker's info, refreshed after every call, and a call ending while a refresh
+  is in flight asks for one more rather than being dropped, or a rebuild found by that call would
+  never reach the sweep. The same holds for a key: `workspaceKey` still names a stopped row, whose path is known,
   but a refusal naming the workspace a key belongs to calls it loaded only while its worker serves,
   and promises a reload only while its solution file exists -- a removed worktree's row outlives
   the file, and loading it again would only fail.
+- **What the broker holds for an agent session goes when the session does.** The broker outlives every
+  client, so anything it keeps per session -- `WorkspaceHealth`'s acknowledgements and the proposals waiting
+  for the person -- is a leak unless something ends it. Nothing tells an http broker a client has gone, so a
+  session is taken to have ended when it has made no call for the MCP transport's own idle limit, two
+  hours, and a host that does learn of an end calls `ForgetSession`. A relayed client is a session by the id
+  its relay sends (`CallSession.Of`). A call with no session id is the one client of a stdio broker, whose
+  session is the process's and never goes quiet; on a broker serving several it is any of them, and session
+  state taken from it would be every client's, so it is refused rather than shared. `ConnectedClients`, the
+  table of who is connected, holds a row per client under the same rule with a sooner end where the broker
+  knows one: a relayed client's row stays while its relay holds the watch and goes two minutes after the
+  later of the client's last word and the relay letting go -- counted from the stop, so a quiet session
+  whose relay is only re-opening its watch keeps its row -- an unnamed client's after the two idle hours, and the table is capped, since every row is
+  made at a client's say-so. Calls without a session share one unnamed row rather than being refused,
+  because a row says only that somebody called.
+- **Every tool call is recorded once, by the filter, and nothing else is.** `WithActivityRecord`, second
+  in the broker's pipeline after the correlation id, makes a `CallRecording` ambient for the call and
+  finishes it with the answer the client was given, the failure in the caller's words, or a
+  cancellation; disposing an unfinished one records it as cancelled, so no path leaves a call listed as
+  running. The routing adds to it only through `CallRecording.Current` -- a worker's call, a live-app
+  session's call, the start of a debug session, and `WorkspaceManager.Attribute`, the one step every
+  write's whole diff passes -- so whatever runs outside a call records nothing: an operator route, a poll,
+  a sweep, a loop a call started, whose inherited recording ends when the call does. A relay's read
+  marked `rosemcp/relayRead` is not recorded. Recording never fails a call and never waits on the disk:
+  an entry goes to a bounded queue, dropped and logged where it is full, written by a `Detached` loop
+  whose every disk step catches what it throws, since a loop that ended would leave every flush waiting
+  for the life of the broker. A failed write appends to the same file on the next batch rather than
+  starting another, or a full disk leaves an empty file per batch. Disposing the record completes the queue and waits, bounded, for the loop
+  to write it; the host stopping flushes it first, for a host that stops without disposing its services.
+  Each broker run writes files of its own, so brokers sharing the folder never share a file or a lock.
+  See [the decision](../decisions/every-call-an-agent-makes-is-recorded-and-kept-on-disk.md).
+- **A window's long poll holds nothing past its request, and never holds up a stop.** The operator views
+  a window reads -- clients, workspaces, activity, sessions -- answer `after=<version>&waitSeconds=N` by
+  `LongPoll` reading the view again every second, and on the activity record's or the client table's
+  `ChangeSignal`, until its version differs. A wait is the request's own linked token, a timer and a
+  reference to the signal's current task, so it holds nothing on a singleton once the request ends.
+  `IHostApplicationLifetime.ApplicationStopping` is linked into every wait and answers it with the view as
+  it is, or a window's open poll would hold a deploy for the rest of its minute; the reader going away
+  cancels it, and the operator filter answers nobody. A view's read stays broker-side -- no worker or
+  live-app host is called, no load waited on, no workspace's idle clock touched -- because it runs every
+  second for as long as a window is open. Every view goes inside the `/operator` group, where the token
+  and the call id apply, and none on `/admin`, which nothing gates: memory and process ids included.
+  See [the decision](../decisions/a-window-reads-the-broker-over-the-operator-api-and-waits-on-what-a-view-holds.md).
 - **A live-app session whose host has died is dropped by the session manager, and only that one.**
   A poll that finds the host's transport gone marks the session ended; nothing else would ever
   remove it -- no caller closes a session it can no longer reach -- so the registry would carry it
@@ -164,3 +261,15 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   runs on the poll loop itself, before the tick's polls start, so a dropped session is never polled
   again by the tick that dropped it, and disposing the manager waits for a drop in progress. This
   applies over stdio as well as http: a dead host has nothing to read in either.
+- **The one git the broker runs is bounded, contained and off every agent's path.**
+  `CheckoutDistanceReader` counts how far a local build's checkout has moved on, for
+  `/operator/hello` and nothing else. `GitCommand` redirects the child's output, so a stdio broker's
+  stdout carries nothing of it; closes its stdin and turns prompting off, so it cannot wait for
+  credentials; and kills it with its process tree when its budget runs out or its caller gives up.
+  The count belongs to the reader rather than to the request that started it: a request that gives
+  up stops waiting, and a read waits a couple of seconds at most before answering that the count is
+  still running, so hello always answers inside a window's read budget. Disposing the reader, which
+  the host does as it stops, cancels a git still running and waits, bounded, until it is gone, so a
+  host exiting straight after does not orphan it. A failure is a sentence in the answer, never an
+  exception. See
+  [the decision](../decisions/a-build-is-named-by-its-commit.md).

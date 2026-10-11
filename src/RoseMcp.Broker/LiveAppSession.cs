@@ -787,9 +787,14 @@ public sealed class LiveAppSession : IAsyncDisposable
 		// Recorded the way a worker's calls are, so a status view can show what a debug session is
 		// doing rather than only what it is. The self-report is the one exception: it is the poll that
 		// keeps a summary fresh, so recording it would fill the recent list with the act of looking.
-		using var activity = tool == ToolNames.LiveAppInfo
-			? null
-			: _activities.Begin(SessionId, tool, DescribeTarget(arguments));
+		var isSelfReport = tool == ToolNames.LiveAppInfo;
+		var target = isSelfReport ? null : DescribeTarget(arguments);
+
+		// A client's tool call being recorded learns which debug session serves it. An operator route forwarding an
+		// inspector's step here has no recording, so a person's own actions are not filed as an agent's.
+		if (!isSelfReport) CallRecording.Current?.Routed(debugSession: SessionId, target: target);
+
+		using var activity = isSelfReport ? null : _activities.Begin(SessionId, tool, target);
 
 		try
 		{

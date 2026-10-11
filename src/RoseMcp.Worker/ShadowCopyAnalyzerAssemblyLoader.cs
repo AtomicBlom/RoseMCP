@@ -40,6 +40,7 @@ public sealed class ShadowCopyAnalyzerAssemblyLoader : IAnalyzerAssemblyLoader, 
 	private readonly ConcurrentDictionary<string, string> _shadowByOriginal = new(StringComparer.OrdinalIgnoreCase);
 	private readonly ConcurrentDictionary<string, AnalyzerLoadContext> _contexts = new(StringComparer.OrdinalIgnoreCase);
 	private readonly ConcurrentDictionary<string, AssemblyName?> _identities = new(StringComparer.OrdinalIgnoreCase);
+	private readonly ConcurrentDictionary<string, FileStamp> _copiedStamps = new(StringComparer.OrdinalIgnoreCase);
 	private readonly ILogger _logger;
 	private readonly string _root;
 	private readonly List<AnalyzerLoadFailure> _failures = [];
@@ -92,6 +93,18 @@ public sealed class ShadowCopyAnalyzerAssemblyLoader : IAnalyzerAssemblyLoader, 
 
 	/// <summary>Where the copies live. Exposed so a test can prove the originals are not what got loaded.</summary>
 	public string ShadowDirectory => _root;
+
+	/// <summary>
+	/// The write time and length <paramref name="originalPath"/> had when it was copied, which is the build
+	/// this process loads from it for as long as it lives, or null where it has not been copied.
+	/// <para>
+	/// The copy is made once per path and process, so a file rebuilt after it goes on loading from the first
+	/// copy, a reload of the solution included. Comparing disk with this rather than with a stamp taken at
+	/// the end of the load is what keeps a rebuild landing between the copy and that moment from passing unseen.
+	/// </para>
+	/// </summary>
+	public FileStamp? CopiedStamp(string originalPath) =>
+		_copiedStamps.TryGetValue(originalPath, out var stamp) ? stamp : null;
 
 	public void AddDependencyLocation(string fullPath)
 	{
@@ -260,6 +273,7 @@ public sealed class ShadowCopyAnalyzerAssemblyLoader : IAnalyzerAssemblyLoader, 
 				File.Copy(fullPath, shadow, overwrite: true);
 			}
 
+			_copiedStamps.TryAdd(fullPath, new FileStamp(file.LastWriteTimeUtc, file.Length));
 			_shadowByOriginal[fullPath] = shadow;
 
 			return shadow;

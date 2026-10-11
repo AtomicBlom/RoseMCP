@@ -138,6 +138,84 @@ public sealed class TrayNotificationTests
 		memory.LastCommitOf($"D:/worktree-{TrayMemory.InstallsKept + 4}/RoseMcp.Tray.exe").ShouldBe($"commit{TrayMemory.InstallsKept + 4}");
 	}
 
+	/// <summary>
+	/// A notification raised before Windows has added the icon is held, and shown once, when the icon exists;
+	/// each is said once, so one dropped for want of an icon would never be said at all.
+	/// </summary>
+	[Test]
+	public void A_notification_raised_before_the_icon_is_shown_once_it_exists()
+	{
+		var pending = new PendingNotification();
+		var failed = TrayNotification.Failure("the disk is full.");
+
+		pending.Raise(failed, iconCreated: false).ShouldBeNull();
+		pending.IsHolding.ShouldBeTrue();
+
+		pending.IconCreated().ShouldBe(failed);
+		pending.IconCreated().ShouldBeNull();
+		pending.IsHolding.ShouldBeFalse();
+	}
+
+	/// <summary>With the icon there, a notification goes straight out; while it is not, the newest replaces the one held.</summary>
+	[Test]
+	public void The_newest_notification_is_the_one_held()
+	{
+		var pending = new PendingNotification();
+		var release = TrayNotification.Release("1.5.0");
+		var failed = TrayNotification.Failure("the disk is full.");
+
+		pending.Raise(release, iconCreated: true).ShouldBe(release);
+		pending.IsHolding.ShouldBeFalse();
+
+		pending.Raise(release, iconCreated: false);
+		pending.Raise(failed, iconCreated: false);
+		pending.IconCreated().ShouldBe(failed);
+	}
+
+	/// <summary>
+	/// A release is not claimed while there is no icon to announce it from, since a claim tells every tray on the
+	/// machine the person was told; with the icon it is, once per run.
+	/// </summary>
+	[Test]
+	public void A_release_is_not_claimed_while_the_icon_is_missing()
+	{
+		PendingNotification.ShouldClaimRelease(available: true, "1.5.0", announcedThisRun: null, iconCreated: false).ShouldBeFalse();
+		PendingNotification.ShouldClaimRelease(available: true, "1.5.0", announcedThisRun: null, iconCreated: true).ShouldBeTrue();
+		PendingNotification.ShouldClaimRelease(available: true, "1.5.0", announcedThisRun: "1.5.0", iconCreated: true).ShouldBeFalse();
+		PendingNotification.ShouldClaimRelease(available: false, "1.5.0", announcedThisRun: null, iconCreated: true).ShouldBeFalse();
+	}
+
+	/// <summary>
+	/// A memory file that is there but held by something else is left alone rather than written over with an
+	/// empty memory, which would lose the other installs' builds and the release already announced.
+	/// </summary>
+	[Test]
+	public void A_memory_that_cannot_be_read_for_now_is_not_written_over()
+	{
+		var folder = Directory.CreateTempSubdirectory("rosemcp-tray-");
+
+		try
+		{
+			var path = TrayMemoryFile.PathIn(folder.FullName);
+			TrayMemoryFile.Remember(path, memory => memory.WithLastBuild("D:/a/RoseMcp.Tray.exe", "abc", DateTimeOffset.UtcNow)).ShouldBeTrue();
+			TrayMemoryFile.ClaimRelease(path, "1.5.0", out _).ShouldBeTrue();
+			var before = File.ReadAllText(path);
+
+			using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+			{
+				TrayMemoryFile.Remember(path, memory => memory.WithLastBuild("D:/b/RoseMcp.Tray.exe", "def", DateTimeOffset.UtcNow)).ShouldBeFalse();
+				TrayMemoryFile.ClaimRelease(path, "1.6.0", out var remembered).ShouldBeFalse();
+				remembered.ShouldBeFalse();
+			}
+
+			File.ReadAllText(path).ShouldBe(before);
+		}
+		finally
+		{
+			folder.Delete(recursive: true);
+		}
+	}
+
 	/// <summary>A handler failing on every poll is one notification, not one every two seconds.</summary>
 	[Test]
 	public void A_failure_is_announced_once()

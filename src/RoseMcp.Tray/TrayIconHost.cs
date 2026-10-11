@@ -134,6 +134,15 @@ internal sealed class TrayIconHost : IDisposable
 	private int _debuggedApps;
 	private DateTimeOffset _lastOpened = DateTimeOffset.MinValue;
 	private TrayAction? _balloonAction;
+
+	/// <summary>A notification raised while there was no icon to raise it from.</summary>
+	private readonly PendingNotification _pending = new();
+
+	/// <summary>The icon's Created event, which delivers what <see cref="_pending"/> holds.</summary>
+	private readonly IDisposable _created;
+
+	/// <summary>Whether a newer release went unclaimed for want of an icon, to be checked again once there is one.</summary>
+	private bool _releaseWaitingForIcon;
 	private TrayIconState? _shownState;
 	private string? _shownTooltip;
 	private bool _stopped;
@@ -178,8 +187,10 @@ internal sealed class TrayIconHost : IDisposable
 
 		// Windows refuses to add an icon while there is no notification area to add it to -- at sign-in before
 		// Explorer is up, or while it restarts -- and that clears by itself, so it is no reason for the broker
-		// not to serve. The icon is tried again on a timer, and H.NotifyIcon adds it itself when the taskbar
-		// announces it has started.
+		// not to serve. The icon is tried again on a timer. H.NotifyIcon may add it first: its message window is
+		// made before the refused add, and on the taskbar's TaskbarCreated broadcast it runs the whole add again.
+		// Whichever adds it, the icon's Created event is what delivers a notification held meanwhile.
+		_created = _icon.TrayIcon.SubscribeToCreated((_, _) => _queue.TryEnqueue(OnIconCreated));
 		_iconRetry = _queue.CreateTimer();
 		_iconRetry.Interval = IconRetryInterval;
 		_iconRetry.Tick += (_, _) => RetryIcon();
@@ -320,6 +331,7 @@ internal sealed class TrayIconHost : IDisposable
 			_disposed = true;
 
 			_clicks.Dispose();
+			_created.Dispose();
 			_updates?.Dispose();
 
 			try
@@ -347,13 +359,6 @@ internal sealed class TrayIconHost : IDisposable
 			// Efficiency mode off: it is meant for an app that hides in the tray doing nothing, and this process
 			// is the broker every agent's calls go through. Throttled, every one of them would be slower.
 			_icon.ForceCreate(enablesEfficiencyMode: false);
-
-			if (_iconProblem is not null)
-			{
-				_logger.LogInformation("The tray icon has been added, after: {Problem}", _iconProblem);
-				_iconProblem = null;
-			}
-
 			return true;
 		}
 		catch (InvalidOperationException exception)
@@ -369,6 +374,32 @@ internal sealed class TrayIconHost : IDisposable
 	{
 		var done = _disposed || _icon.IsCreated || TryCreateIcon();
 		if (done) _iconRetry.Stop();
+	}
+
+	/// <summary>
+	/// The icon has been added, by the retry or by H.NotifyIcon on the taskbar starting, and again after each
+	/// time Explorer restarts. Shows what was held for it, once, and checks again for a release that went
+	/// unclaimed for want of it.
+	/// </summary>
+	private void OnIconCreated()
+	{
+		if (_disposed) return;
+
+		_iconRetry.Stop();
+
+		if (_iconProblem is { } problem)
+		{
+			_logger.LogInformation("The tray icon has been added, after: {Problem}", problem);
+			_iconProblem = null;
+		}
+
+		if (_pending.IconCreated() is { } held) ShowBalloon(held);
+
+		if (_releaseWaitingForIcon)
+		{
+			_releaseWaitingForIcon = false;
+			CheckForUpdate();
+		}
 	}
 
 	/// <summary>Says, once there is somewhere to say it, that the icon is not up yet.</summary>
@@ -537,9 +568,14 @@ internal sealed class TrayIconHost : IDisposable
 				status.IsUpdateAvailable);
 		}
 
-		var newer = status.IsUpdateAvailable && status.LatestVersion is { Length: > 0 } && !string.Equals(status.LatestVersion, _announcedRelease, StringComparison.OrdinalIgnoreCase);
+		var newer = PendingNotification.ShouldClaimRelease(status.IsUpdateAvailable, status.LatestVersion, _announcedRelease, iconCreated: true);
+		var canAnnounce = PendingNotification.ShouldClaimRelease(status.IsUpdateAvailable, status.LatestVersion, _announcedRelease, _icon.IsCreated);
 
-		if (!newer)
+		// Not claimed with no icon to announce it from: the claim tells every tray the person was told. The icon
+		// being added checks again.
+		_releaseWaitingForIcon = newer && !canAnnounce;
+
+		if (!canAnnounce)
 		{
 			Show();
 			return;
@@ -582,13 +618,26 @@ internal sealed class TrayIconHost : IDisposable
 	}
 
 	/// <summary>
-	/// Shows a notification, and remembers what clicking it does. One at a time: a later one replaces an
-	/// earlier one on screen, and so does what a click does.
+	/// Shows a notification, or holds it until there is an icon to show it from: each is said once, so one
+	/// dropped for want of an icon would never be said. One at a time: a later one replaces an earlier one on
+	/// screen, and so does what a click does.
 	/// </summary>
 	private void Notify(TrayNotification notification)
 	{
 		if (_disposed) return;
 
+		if (_pending.Raise(notification, _icon.IsCreated) is { } now)
+		{
+			ShowBalloon(now);
+			return;
+		}
+
+		_logger.LogInformation("Holding a notification until the tray icon exists: {Title}. {Body}", notification.Title, notification.Body);
+	}
+
+	/// <summary>Puts a notification on screen from the icon, and remembers what clicking it does.</summary>
+	private void ShowBalloon(TrayNotification notification)
+	{
 		_logger.LogInformation("Notifying: {Title}. {Body}", notification.Title, notification.Body);
 		_balloonAction = notification.Action;
 

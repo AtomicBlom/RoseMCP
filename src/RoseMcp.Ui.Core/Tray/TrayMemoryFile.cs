@@ -46,6 +46,39 @@ public static class TrayMemoryFile
 	}
 
 	/// <summary>
+	/// The memory to change, or false where the file is there and could not be read for a reason that passes --
+	/// a scanner or another process holding it. Writing an empty memory back over that would lose every other
+	/// install's last build and let a release be announced again. A file that reads but is not a memory is
+	/// taken as an empty one, since nothing is lost by replacing it.
+	/// </summary>
+	private static bool TryReadForChange(string path, out TrayMemory memory)
+	{
+		memory = new TrayMemory();
+
+		try
+		{
+			if (!File.Exists(path)) return true;
+
+			var text = File.ReadAllText(path);
+
+			try
+			{
+				memory = JsonSerializer.Deserialize<TrayMemory>(text, Options) ?? new TrayMemory();
+			}
+			catch (JsonException)
+			{
+				// Not a memory; replacing it costs nothing.
+			}
+
+			return true;
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			return false;
+		}
+	}
+
+	/// <summary>
 	/// Applies <paramref name="change"/> to the memory as the file holds it now and writes the result, reporting
 	/// whether it landed.
 	/// </summary>
@@ -53,7 +86,7 @@ public static class TrayMemoryFile
 	{
 		using var gate = Lock(path);
 
-		return Write(path, change(Read(path)));
+		return TryReadForChange(path, out var memory) && Write(path, change(memory));
 	}
 
 	/// <summary>
@@ -68,7 +101,13 @@ public static class TrayMemoryFile
 	{
 		using var gate = Lock(path);
 
-		var memory = Read(path);
+		// A file held by something else is not claimed, so not announced; the next check asks again.
+		if (!TryReadForChange(path, out var memory))
+		{
+			remembered = false;
+			return false;
+		}
+
 		if (!memory.IsNewRelease(available: true, version))
 		{
 			remembered = true;

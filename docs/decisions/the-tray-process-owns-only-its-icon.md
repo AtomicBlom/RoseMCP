@@ -30,8 +30,10 @@ with it.
 
 **An icon Windows will not add yet is not a failure.** At sign-in the notification area may not exist
 when the tray starts, and it goes while Explorer restarts. The broker serves regardless, and the icon is
-tried again every few seconds and when the taskbar announces it has started. Only a failure that
-waiting cannot clear ends the process, before the broker holds anything.
+tried again every few seconds and when the taskbar announces it has started. A notification raised
+meanwhile is held and shown once the icon exists, since each is said only once, and a release is not
+claimed until it can be shown. Only a failure that waiting cannot clear ends the process, before the
+broker holds anything.
 
 **A start that fails leaves the icon up.** Exiting would leave a person with no word at all about
 why RoseMCP is not there after sign-in. The icon stays, not serving, with the reason, one

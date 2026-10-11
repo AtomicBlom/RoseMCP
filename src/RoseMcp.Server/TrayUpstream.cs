@@ -12,7 +12,8 @@ namespace RoseMcp.Server;
 /// The tray's broker, over http: the upstream a relay reconnects to after a deploy restarts it.
 /// <para>
 /// Every request names the relay, with an id minted once per relay and kept across reconnects, and
-/// the relay protocol it speaks. The watch is a request the broker holds open for its whole life, so
+/// the relay protocol it speaks and its process, which is how a deploy tells its own relays from
+/// any other watching the same port. The watch is a request the broker holds open for its whole life, so
 /// a killed tray -- which is what a deploy does -- ends it the moment the process goes, and the
 /// relay reconnects without waiting for a call, which is what lets an idle session hear that its
 /// tools changed.
@@ -52,6 +53,7 @@ public sealed class TrayUpstream : RelayUpstream
 		{
 			[RelayProtocol.RelayHeader] = RelayId,
 			[RelayProtocol.VersionHeader] = RelayProtocol.Version.ToString(CultureInfo.InvariantCulture),
+			[RelayProtocol.ProcessHeader] = Environment.ProcessId.ToString(CultureInfo.InvariantCulture),
 		};
 	}
 

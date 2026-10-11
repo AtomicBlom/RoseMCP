@@ -69,7 +69,8 @@ public static class AdminApi
 			return;
 		}
 
-		using var watching = relays.Watch(relayId);
+		var processId = RelayConnections.ParseProcessId(context.Request.Headers[RelayProtocol.ProcessHeader].ToString());
+		using var watching = relays.Watch(relayId, processId);
 		using var ended = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, lifetime.ApplicationStopping);
 
 		try

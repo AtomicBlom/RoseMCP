@@ -1,3 +1,4 @@
+using System.Globalization;
 using RoseMcp.Contracts;
 
 namespace RoseMcp.Broker;
@@ -12,13 +13,15 @@ namespace RoseMcp.Broker;
 /// </para>
 /// <para>
 /// Counted by the relay's own id rather than by watch, so a relay re-opening its watch while the
-/// old one is still being torn down is one relay rather than two.
+/// old one is still being torn down is one relay rather than two. Each relay's process id is kept
+/// beside it, because the count is every relay on the port and a deploy wants only its own: it
+/// matches these ids against the relay processes running from the install it replaced.
 /// </para>
 /// </summary>
 public sealed class RelayConnections
 {
 	private readonly Lock _gate = new();
-	private readonly Dictionary<string, int> _watches = new(StringComparer.Ordinal);
+	private readonly Dictionary<string, Watcher> _watches = new(StringComparer.Ordinal);
 
 	/// <summary>Minted once per broker start, which is what a relay compares to tell a restart from a reconnect.</summary>
 	public string Instance { get; } = Guid.NewGuid().ToString("N");
@@ -42,11 +45,24 @@ public sealed class RelayConnections
 	}
 
 	/// <summary>
+	/// The process id in a <see cref="RelayProtocol.ProcessHeader"/>, or null where there is none or it
+	/// is not a positive decimal number. A relay without one is still counted, just not as any process.
+	/// </summary>
+	public static int? ParseProcessId(string? value)
+	{
+		var parsed = int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var processId);
+
+		return parsed && processId > 0 ? processId : null;
+	}
+
+	/// <summary>
 	/// Counts <paramref name="relayId"/> as connected until the returned scope is disposed, which the
 	/// watch route does when its request ends for any reason.
 	/// </summary>
+	/// <param name="relayId">The id the relay minted, the same on every watch it opens.</param>
+	/// <param name="processId">The relay's process, where it said; the latest watch's word stands.</param>
 	/// <exception cref="ArgumentException">The id is not in the shape a relay mints.</exception>
-	public IDisposable Watch(string relayId)
+	public IDisposable Watch(string relayId, int? processId = null)
 	{
 		if (!RelayProtocol.IsRelayId(relayId))
 		{
@@ -57,32 +73,43 @@ public sealed class RelayConnections
 
 		lock (_gate)
 		{
-			_watches[relayId] = _watches.GetValueOrDefault(relayId) + 1;
+			var open = _watches.TryGetValue(relayId, out var watcher) ? watcher.Open : 0;
+			_watches[relayId] = new Watcher(open + 1, processId ?? watcher?.ProcessId);
 		}
 
 		return new Watching(this, relayId);
 	}
 
 	/// <summary>What a relay is told about this broker.</summary>
-	public RelayHello Hello(BuildIdentity build) => new()
+	public RelayHello Hello(BuildIdentity build)
 	{
-		Instance = Instance,
-		StartedUtc = StartedUtc,
-		Build = build,
-		RelayProtocol = RelayProtocol.Version,
-		Relays = Count,
-	};
+		lock (_gate)
+		{
+			return new RelayHello
+			{
+				Instance = Instance,
+				StartedUtc = StartedUtc,
+				Build = build,
+				RelayProtocol = RelayProtocol.Version,
+				Relays = _watches.Count,
+				RelayProcesses = [.. _watches.Values.Select(watcher => watcher.ProcessId).OfType<int>().Distinct().Order()],
+			};
+		}
+	}
 
 	private void Release(string relayId)
 	{
 		lock (_gate)
 		{
-			if (!_watches.TryGetValue(relayId, out var open)) return;
+			if (!_watches.TryGetValue(relayId, out var watcher)) return;
 
-			if (open <= 1) _watches.Remove(relayId);
-			else _watches[relayId] = open - 1;
+			if (watcher.Open <= 1) _watches.Remove(relayId);
+			else _watches[relayId] = watcher with { Open = watcher.Open - 1 };
 		}
 	}
+
+	/// <summary>One relay's open watches, and the process it said it is.</summary>
+	private sealed record Watcher(int Open, int? ProcessId);
 
 	/// <summary>One open watch. Disposing it twice releases it once.</summary>
 	private sealed class Watching(RelayConnections owner, string relayId) : IDisposable

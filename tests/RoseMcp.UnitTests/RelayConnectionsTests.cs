@@ -69,6 +69,48 @@ public sealed class RelayConnectionsTests
 	}
 
 	/// <summary>
+	/// The reply names the processes of the relays watching, so a deploy counts only the relays of the
+	/// install it replaced: every relay on the port is in the count, one from a build output included.
+	/// A relay that sent no process is counted and named as none, and one that leaves takes its id with it.
+	/// </summary>
+	[Test]
+	public void Names_the_processes_of_the_relays_watching()
+	{
+		var relays = new RelayConnections();
+		var build = new BuildIdentity { Version = "1.3.0", Commit = new string('e', 40) };
+		var one = RelayProtocol.NewRelayId();
+
+		var first = relays.Watch(one, 4200);
+		var again = relays.Watch(one, processId: null);
+		var other = relays.Watch(RelayProtocol.NewRelayId(), 310);
+		using var silent = relays.Watch(RelayProtocol.NewRelayId());
+
+		var hello = relays.Hello(build);
+		hello.Relays.ShouldBe(3);
+		hello.RelayProcesses.ShouldBe([310, 4200], "ascending, a re-opened watch keeping the process the relay said");
+
+		first.Dispose();
+		relays.Hello(build).RelayProcesses.ShouldBe([310, 4200], "the relay still holds a watch");
+
+		again.Dispose();
+		other.Dispose();
+		relays.Hello(build).RelayProcesses.ShouldBeEmpty();
+		relays.Hello(build).Relays.ShouldBe(1);
+	}
+
+	[Test]
+	[Arguments("4200", 4200)]
+	[Arguments("", null)]
+	[Arguments(null, null)]
+	[Arguments("0", null)]
+	[Arguments("-12", null)]
+	[Arguments(" 12", null)]
+	[Arguments("12a", null)]
+	[Arguments("99999999999", null)]
+	public void Reads_a_relay_process_only_as_a_positive_decimal(string? header, int? expected) =>
+		RelayConnections.ParseProcessId(header).ShouldBe(expected);
+
+	/// <summary>
 	/// A relay with no tray starts the install's broker with <c>--no-relay</c>, so the child hosts
 	/// the broker rather than looking for a tray to relay to, and with the session's own settings.
 	/// </summary>

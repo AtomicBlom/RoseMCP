@@ -93,8 +93,11 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   `RelayIsStale` once, in `PrepareToInstall`, before any file is laid down, because the marker that
   decides it is one of the files. Removing an install passes no switch and stops every relay with
   everything else, reading no layout, since the uninstaller runs the script with none beside it.
-  After restarting the tray, a deploy waits, bounded, for the relays still running to be counted at
-  `/admin/relays` and says how many reconnected; sessions it had to stop -- registered with the root's
+  After restarting the tray, a deploy waits, bounded, for the relays still running from the install
+  to be named at `/admin/relays` and says how many reconnected. It matches process ids
+  (`relayProcesses`, which each relay sends with its watch) against `Get-RelayProcess`, never the
+  broker's bare count, which takes in every relay on the port -- a build output's, another
+  install's -- and reads "2 of 2" too early or "3 of 2". Sessions it had to stop -- registered with the root's
   server, relaying to a child broker, or on a relay of another protocol -- it names as needing `/mcp`.
   See [the decision](../decisions/a-deploy-replaces-the-relay-only-when-its-protocol-changes.md).
 - **Where anything sits in an install is written once, in `tools/published-layout.json`, and every

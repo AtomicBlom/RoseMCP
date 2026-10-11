@@ -36,8 +36,16 @@ public static class RelayProtocol
 	public const string VersionHeader = "Rose-Relay-Protocol";
 
 	/// <summary>
+	/// The request header a relay sends its process id in, so a deploy can tell the relays of the
+	/// install it replaced from every other relay watching the same port: one run from a build output
+	/// or another install is counted by the broker all the same.
+	/// </summary>
+	public const string ProcessHeader = "Rose-Relay-Process";
+
+	/// <summary>
 	/// Where a broker says who it is to a relay: its instance, its build, the relay protocol it
-	/// speaks and how many relays are watching it. Answers a <see cref="RelayHello"/>.
+	/// speaks, and how many relays are watching it and from which processes. Answers a
+	/// <see cref="RelayHello"/>.
 	/// </summary>
 	public const string HelloRoute = "/admin/relays";
 

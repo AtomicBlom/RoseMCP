@@ -28,4 +28,11 @@ public sealed record RelayHello
 	/// holds. After a deploy this is how many sessions found their way back.
 	/// </summary>
 	public required int Relays { get; init; }
+
+	/// <summary>
+	/// The process ids of the relays watching, in ascending order, from each relay that sent one. A
+	/// deploy counts only the ids of the relays it kept running, since every relay on the port is in
+	/// <see cref="Relays"/> -- one from a build output or another install included.
+	/// </summary>
+	public IReadOnlyList<int> RelayProcesses { get; init; } = [];
 }

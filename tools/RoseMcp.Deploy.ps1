@@ -376,11 +376,14 @@ function Wait-RelayReconnect
         Waits, bounded, for the relays running from an install to reconnect to the tray just started,
         and returns how many did and how many there are.
 
-        The count is the broker's: a relay is counted while it holds the watch it opens once it has
-        reconnected and read what the new broker offers, so a relay counted is a session that will
-        hear nothing more about the deploy than one line on its next result. The expected number is
-        read again on every pass, because a relay that ran its own broker for want of a tray ends when
-        the deploy stops that broker, a moment after the deploy has counted it.
+        The count is the broker's, by process: /admin/relays names the process of each relay while it
+        holds the watch it opens once it has reconnected and read what the new broker offers, so a
+        relay named is a session that will hear nothing more about the deploy than one line on its
+        next result. Only the relays running from this install are counted. Every relay on the port
+        watches the same broker -- one run from a build output, or from another install -- and counting
+        those as well says "2 of 2" while one of this install's is still on its way back, or "3 of 2".
+        The relays running are read again on every pass, because a relay that ran its own broker for
+        want of a tray ends when the deploy stops that broker, a moment after the deploy has counted it.
     #>
     param(
         [Parameter(Mandatory)][string] $Root,
@@ -394,12 +397,13 @@ function Wait-RelayReconnect
 
     while ($true)
     {
-        $expected = (Get-RelayProcess -Root $Root).Count
+        $running = @(Get-RelayProcess -Root $Root | ForEach-Object { $_.Id })
+        $expected = $running.Count
 
         try
         {
             $hello = Invoke-RestMethod "http://127.0.0.1:$Port/admin/relays" -TimeoutSec 2
-            $connected = [int] $hello.relays
+            $connected = Measure-ReconnectedRelay -Running $running -Watching $hello.relayProcesses
         }
         catch { }
 
@@ -409,6 +413,24 @@ function Wait-RelayReconnect
     }
 
     return [PSCustomObject]@{ Connected = $connected; Expected = $expected }
+}
+
+function Measure-ReconnectedRelay
+{
+    <#
+        How many of the relay process ids in $Running the broker names in $Watching, its
+        relayProcesses. Either may be empty or absent: no relays running, or a broker that names none.
+        Compared as numbers, since Windows PowerShell 5.1 reads a JSON number as Int32 and PowerShell 7
+        as Int64.
+    #>
+    param(
+        [object[]] $Running = @(),
+        [object[]] $Watching = @()
+    )
+
+    $named = @($Watching | Where-Object { $null -ne $_ } | ForEach-Object { [long] $_ })
+
+    return @($Running | Where-Object { $null -ne $_ -and $named -contains [long] $_ }).Count
 }
 
 function Stop-TrackedProcess

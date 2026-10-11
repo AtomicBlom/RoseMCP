@@ -23,7 +23,7 @@ public sealed partial class CodePane : UserControl
 	private OperatorClient? _client;
 	private Action<Exception>? _report;
 	private Action<NoteSubject, FrameworkElement>? _ask;
-	private Action<NoteSubject?>? _regard;
+	private Action<Func<NoteSubject?>>? _regard;
 	private Action<string>? _located;
 
 	private InspectedSession? _session;
@@ -52,7 +52,7 @@ public sealed partial class CodePane : UserControl
 		OperatorClient client,
 		Action<Exception> report,
 		Action<NoteSubject, FrameworkElement> ask,
-		Action<NoteSubject?> regard,
+		Action<Func<NoteSubject?>> regard,
 		Action<string> located)
 	{
 		_client = client;
@@ -306,7 +306,7 @@ public sealed partial class CodePane : UserControl
 		if (_client is not { } client || _inspection is not { } inspection || _reads is not { } reads) return;
 		if (ThreadRows.SelectedItem is not ThreadRow thread) return;
 
-		_regard?.Invoke(Subject(thread));
+		_regard?.Invoke(() => Subject(thread));
 
 		if (inspection.IsOver || !inspection.Choose(thread)) return;
 
@@ -335,7 +335,7 @@ public sealed partial class CodePane : UserControl
 		if (_inspection is not { Stack: { } stop } inspection) return;
 		if (FrameRows.SelectedItem is not FrameRow frame) return;
 
-		_regard?.Invoke(Subject(frame));
+		_regard?.Invoke(() => Subject(frame));
 
 		if (ReferenceEquals(frame, stop.Selected) || inspection.IsOver || _reads is not { } reads) return;
 
@@ -394,12 +394,12 @@ public sealed partial class CodePane : UserControl
 			_ => null,
 		};
 
-		if (node is not null) _regard?.Invoke(Subject(node));
+		if (node is not null) _regard?.Invoke(() => Subject(node));
 	}
 
 	private void OnWatchChosen(object sender, SelectionChangedEventArgs args)
 	{
-		if (WatchRows.SelectedItem is WatchRow watch) _regard?.Invoke(watch.Subject);
+		if (WatchRows.SelectedItem is WatchRow watch) _regard?.Invoke(() => watch.Subject);
 	}
 
 	/// <summary>Adds a watch on Enter, and reads it at once where the target is stopped.</summary>

@@ -32,7 +32,7 @@ public sealed partial class StreamPane : UserControl
 	private OperatorClient? _client;
 	private Action<Exception>? _report;
 	private Action<NoteSubject, FrameworkElement>? _ask;
-	private Action<NoteSubject?>? _regard;
+	private Action<Func<NoteSubject?>>? _regard;
 
 	private SessionStream? _stream;
 	private ViewWatch<LiveDebugEventPage>? _events;
@@ -45,7 +45,7 @@ public sealed partial class StreamPane : UserControl
 		OperatorClient client,
 		Action<Exception> report,
 		Action<NoteSubject, FrameworkElement> ask,
-		Action<NoteSubject?> regard)
+		Action<Func<NoteSubject?>> regard)
 	{
 		_client = client;
 		_report = report;
@@ -192,7 +192,7 @@ public sealed partial class StreamPane : UserControl
 
 	private void OnRowTapped(object sender, TappedRoutedEventArgs args)
 	{
-		if (sender is FrameworkElement { Tag: StreamRow row }) _regard?.Invoke(row.Subject);
+		if (sender is FrameworkElement { Tag: StreamRow row }) _regard?.Invoke(() => row.Subject);
 	}
 
 	private void OnAskRow(object sender, RoutedEventArgs args)

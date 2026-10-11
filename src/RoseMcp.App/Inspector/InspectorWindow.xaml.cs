@@ -108,7 +108,7 @@ public sealed partial class InspectorWindow : Window
 	private bool _detaching;
 
 	/// <summary>The row last selected anywhere in the window, which the shortcut asks about.</summary>
-	private NoteSubject? _regarded;
+	private readonly RegardedRow _regarded = new();
 
 	/// <summary>The agent session whose solution the header names, so it is read once per agent rather than per poll.</summary>
 	private string? _solutionOf;
@@ -379,7 +379,7 @@ public sealed partial class InspectorWindow : Window
 			_row = new SessionRow(summary);
 			_inspected = new InspectedSession(summary.SessionId);
 			_ended = false;
-			_regarded = null;
+			_regarded.Forget();
 			_solutionOf = null;
 
 			// One keeper per session, because a hold is about a target: carrying one across would let the bar give back
@@ -451,6 +451,7 @@ public sealed partial class InspectorWindow : Window
 		_ended = true;
 		_sessionId = null;
 		_detaching = false;
+		_regarded.Forget();
 		var noticed = DateTimeOffset.UtcNow;
 		var row = _row;
 
@@ -483,6 +484,9 @@ public sealed partial class InspectorWindow : Window
 		}
 
 		var exited = await Stream.FinishAsync(_lifetime.Token);
+
+		// The window closed while the tail was read; nothing is left to say it on.
+		if (_lifetime.IsCancellationRequested) return;
 
 		// Still the same ended session: a new one may have been opened in this window while the tail was read.
 		if (_ended && ReferenceEquals(row, _row)) EndedTitle.Text = InspectorText.Ended(exited, noticed);
@@ -640,12 +644,7 @@ public sealed partial class InspectorWindow : Window
 	/// </summary>
 	private void StreamFailed(Exception exception)
 	{
-		var brokerGone = exception is OperatorException
-		{
-			Failure: OperatorFailure.Unreachable or OperatorFailure.Unauthorized or OperatorFailure.TimedOut,
-		};
-
-		if (brokerGone) Offline((OperatorException)exception);
+		if (OperatorException.IsBrokerGone(exception)) Offline((OperatorException)exception);
 		else Report(exception);
 	}
 
@@ -708,7 +707,7 @@ public sealed partial class InspectorWindow : Window
 	}
 
 	/// <summary>Notes the row last selected, which the shortcut asks about.</summary>
-	private void Regard(NoteSubject? subject) => _regarded = subject;
+	private void Regard(Func<NoteSubject?> subject) => _regarded.Regard(subject);
 
 	/// <summary>
 	/// Opens the window's composer about <paramref name="subject"/>, beside <paramref name="anchor"/>, offering the
@@ -752,14 +751,14 @@ public sealed partial class InspectorWindow : Window
 	{
 		args.Handled = true;
 
-		if (_regarded is { } subject)
+		if (_regarded.Subject() is { } subject)
 		{
 			Ask(subject, Views);
 			return;
 		}
 
 		ShowNotice(
-			$"Select a thread, a frame, a value, a watch or a row of the stream first, then press {AskAgent.Shortcut} to ask an agent about it.",
+			$"Select a thread, a frame, a value, a watch or a row of the stream at the stop on screen, then press {AskAgent.Shortcut} to ask an agent about it.",
 			InfoBarSeverity.Informational);
 	}
 

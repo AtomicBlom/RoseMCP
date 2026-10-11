@@ -195,6 +195,51 @@ public sealed class InspectorLayoutTests
 	}
 
 	/// <summary>
+	/// The shortcut asks about the row selected last as it stands when the shortcut fires: a row selected at one stop
+	/// asks about nothing once the target has stopped somewhere else, or the stop is over.
+	/// </summary>
+	[Test]
+	public void The_row_selected_last_is_asked_about_as_it_stands_now()
+	{
+		var regarded = new RegardedRow();
+		regarded.Subject().ShouldBeNull("nothing selected yet");
+
+		var stop = new CodeInspection("s1", stopSequence: 77, stoppedThreadId: 9);
+		stop.Take(Threads(77, (9, true)));
+		var thread = stop.Threads[0];
+		var current = stop;
+		regarded.Regard(() => current.SubjectOf(thread));
+
+		regarded.Subject().ShouldNotBeNull().ThreadId.ShouldBe(9);
+
+		current = new CodeInspection("s1", stopSequence: 78, stoppedThreadId: 9);
+		current.Take(Threads(78, (9, true)));
+		regarded.Subject().ShouldBeNull("the target stopped somewhere else since it was selected");
+
+		current = stop;
+		stop.End();
+		regarded.Subject().ShouldBeNull("the stop it was selected at is over");
+
+		regarded.Regard(() => new NoteSubject { Kind = NoteSubjectKind.Thread, Readable = "t", Session = "s1", ThreadId = 1 });
+		regarded.Forget();
+		regarded.Subject().ShouldBeNull();
+	}
+
+	/// <summary>
+	/// Only the broker not answering at all, or refusing the token, is said as the broker gone; a read that timed out
+	/// went through to a live-app host that may only be busy, and is reported as itself.
+	/// </summary>
+	[Test]
+	public void Only_a_broker_not_answering_is_said_as_the_broker_gone()
+	{
+		OperatorException.IsBrokerGone(new OperatorException(OperatorFailure.Unreachable, "refused")).ShouldBeTrue();
+		OperatorException.IsBrokerGone(new OperatorException(OperatorFailure.Unauthorized, "token")).ShouldBeTrue();
+		OperatorException.IsBrokerGone(new OperatorException(OperatorFailure.TimedOut, "slow host")).ShouldBeFalse();
+		OperatorException.IsBrokerGone(new OperatorException(OperatorFailure.Failed, "host faulted")).ShouldBeFalse();
+		OperatorException.IsBrokerGone(new InvalidOperationException("other")).ShouldBeFalse();
+	}
+
+	/// <summary>
 	/// An ended session says the app exited, at the time its session recorded it, only where one was recorded; a host that
 	/// died or a debugger detached elsewhere leaves the app running, so that is said as the session ending.
 	/// </summary>

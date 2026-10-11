@@ -729,17 +729,41 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// <summary>
 	/// Applies a XAML change to the live tree and returns each edit's outcome. Naming a file is the
 	/// continuous path (#12) -- the host diffs it against what it last sent -- and two versions of the
-	/// markup is for markup with no file behind it.
+	/// markup is for markup with no file behind it. Recorded in <see cref="XamlChanges"/> as made by the
+	/// caller whose MCP call is in flight.
 	/// </summary>
 	public Task<LiveXamlApplyResult> ApplyXamlAsync(
 		string? oldXaml,
 		string? newXaml,
 		string? filePath,
 		CancellationToken cancellationToken)
-		=> SendAsync<LiveXamlApplyResult>(
+		=> ApplyXamlAsync(oldXaml, newXaml, filePath, LiveAppActor.OfCaller(), cancellationToken);
+
+	/// <summary>
+	/// Applies a XAML change and records each edit that took against <paramref name="changedBy"/>, which is how a
+	/// window says who changed an element: the host that applies it never learns who asked.
+	/// </summary>
+	public async Task<LiveXamlApplyResult> ApplyXamlAsync(
+		string? oldXaml,
+		string? newXaml,
+		string? filePath,
+		LiveAppActor changedBy,
+		CancellationToken cancellationToken)
+	{
+		var result = await SendAsync<LiveXamlApplyResult>(
 			ToolNames.LiveAppXamlApply,
 			new Dictionary<string, object?> { ["filePath"] = filePath, ["oldXaml"] = oldXaml, ["newXaml"] = newXaml },
 			cancellationToken);
+
+		XamlChanges.Record(result, changedBy, filePath, DateTime.UtcNow);
+		return result;
+	}
+
+	/// <summary>
+	/// The live edits made to this session's app that took, with who made each. Lives as long as the session, and no
+	/// longer: a handle in it names an element of this run of the app and nothing else.
+	/// </summary>
+	public XamlChangeLog XamlChanges { get; } = new();
 
 	private Task<T> SendAsync<T>(string tool, CancellationToken cancellationToken)
 		=> SendAsync<T>(tool, EmptyArguments, cancellationToken);

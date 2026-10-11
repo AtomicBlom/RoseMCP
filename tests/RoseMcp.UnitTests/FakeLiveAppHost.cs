@@ -52,8 +52,16 @@ internal sealed class FakeLiveAppHost : IAsyncDisposable
 
 	private int _breakpoints;
 
+	/// <summary>What every host answers a live edit with, for a test of what the broker records of one.</summary>
+	public LiveXamlApplyResult ApplyAnswer { get; set; } = new();
+
 	private CallToolResult Answer(string tool, int processId)
 	{
+		if (tool == ToolNames.LiveAppXamlApply)
+		{
+			return new CallToolResult { Content = [], StructuredContent = JsonSerializer.SerializeToElement(ApplyAnswer, McpJsonUtilities.DefaultOptions) };
+		}
+
 		if (tool == ToolNames.LiveAppSetBreakpoint)
 		{
 			// One breakpoint set per call, numbered as a host numbers them, so a test can see who set which.

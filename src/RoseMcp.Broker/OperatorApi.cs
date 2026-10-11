@@ -580,6 +580,30 @@ public static class OperatorApi
 			async (string sessionId, XamlSelectModeRequest body, LiveAppSessionManager sessions, HttpContext context) =>
 				Json(await Require(sessions, sessionId).EnterXamlSelectModeAsync(
 					body.IncludeAllElements, body.JustMyXaml, body.Arm, context.RequestAborted)));
+
+		// The live edits made to the app, with who made each. Broker-side, like every view a window holds open: the
+		// record is the broker's, so waiting on it asks the app nothing, and an apply pulses it as it lands.
+		operators.MapGet(
+			"/sessions/{sessionId}/xaml/changes",
+			async (
+				string sessionId,
+				LiveAppSessionManager sessions,
+				OperatorViews views,
+				LongPoll poll,
+				HttpContext context,
+				string? after = null,
+				int waitSeconds = 0) =>
+			{
+				var session = Require(sessions, sessionId);
+
+				return Json(await poll.WaitAsync(
+					() => views.XamlChanges(session),
+					list => list.Version,
+					after,
+					waitSeconds,
+					session.XamlChanges.Changed,
+					context.RequestAborted));
+			});
 	}
 
 	/// <summary>

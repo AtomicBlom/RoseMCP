@@ -549,7 +549,7 @@ public sealed class LiveAppDebugTools(
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.ApplyXamlAsync(oldXaml, newXaml, paths.Of(filePath)?.Value, cancellationToken);
+		return await session.ApplyXamlAsync(oldXaml, newXaml, paths.Of(filePath)?.Value, LiveAppActor.OfCaller(), cancellationToken);
 	}
 
 	[McpServerTool(

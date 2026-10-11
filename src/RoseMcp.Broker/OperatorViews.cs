@@ -156,6 +156,36 @@ public sealed class OperatorViews(
 		};
 	}
 
+	/// <summary>The live edits made to <paramref name="session"/>'s app, each agent session named by its row in the client table now.</summary>
+	public LiveXamlChangeList XamlChanges(LiveAppSession session) =>
+		Changes(session.SessionId, session.XamlChanges, clients.ByKey());
+
+	/// <summary>
+	/// The changes <paramref name="log"/> holds, oldest first, each one an agent session made naming that session by
+	/// the row the client table files it under now, as <see cref="Named"/> names a session's parties.
+	/// </summary>
+	public static LiveXamlChangeList Changes(
+		string sessionId,
+		XamlChangeLog log,
+		IReadOnlyDictionary<string, ClientSummary> present)
+	{
+		ArgumentNullException.ThrowIfNull(log);
+		ArgumentNullException.ThrowIfNull(present);
+
+		var (recorded, dropped) = log.Snapshot();
+		var rows = recorded
+			.Select(entry => entry.Change with { Agent = entry.By.IsPerson ? null : AgentOf(entry.By.ClientKey, present) })
+			.ToList();
+
+		return new LiveXamlChangeList
+		{
+			SessionId = sessionId,
+			Changes = rows,
+			Dropped = dropped,
+			Version = ViewVersion.Of(new { Changes = rows, Dropped = dropped }),
+		};
+	}
+
 	/// <summary>
 	/// The agent session the client table files under <paramref name="clientKey"/>, by its row now; null where the table
 	/// lists none, since a row that has gone is no longer one a window can name or send a note to.

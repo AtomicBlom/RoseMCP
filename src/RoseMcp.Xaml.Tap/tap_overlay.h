@@ -270,6 +270,12 @@ public:
 	/// folder writes, so one parser on the host serves whichever channel carried them.
 	const std::string& SelectionRows() const override { return m_pick.Rows(); }
 	const std::wstring& GoneReason() const override { return m_pick.GoneReason(); }
+
+	void Changed(const std::vector<TapChange>&) override {}
+	bool ChangesShown() const override { return m_changesShown; }
+	void ShowChanges(bool shown) override { m_changesShown = shown; }
+	void ForgetChanges() override {}
+	void Relight() override { Chrome(); }
 	bool Selecting() const { return m_pointing == Pointing::Select; }
 	bool JustMyXaml() const override { return m_justMyXaml; }
 
@@ -1606,6 +1612,7 @@ private:
 	int m_traces = 0;
 	bool m_includeAllElements = false;
 	bool m_justMyXaml = true;
+	bool m_changesShown = true;
 	std::map<InstanceHandle, std::wstring> m_sources;
 
 	// The rulers mode's button. It arms a pointer mode, which is arbitration between modes, so it

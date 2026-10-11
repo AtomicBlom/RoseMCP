@@ -213,6 +213,10 @@ public:
 	void Bind(const std::wstring& slot, InstanceHandle handle) { m_slots[slot] = handle; }
 	void ClearSlots() { m_slots.clear(); }
 
+	// Whether a target names a slot rather than something in the tree. Spelled the way Resolve tells
+	// them apart, so the two cannot disagree about which is which.
+	static bool IsSlot(const std::wstring& target) { return !target.empty() && target[0] == L'$'; }
+
 private:
 	// The handles of our own toolbar's elements, empty whenever the layer is not enumerated at all.
 	// Enumeration is parent-before-child in practice, but this closes over the subtree rather than

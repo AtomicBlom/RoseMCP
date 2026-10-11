@@ -86,19 +86,48 @@ internal static class XamlProviderWire
 	/// the wrong half of the system.
 	/// </para>
 	/// </summary>
-	internal static string Outcome(List<string> keys, Dictionary<string, string> statuses)
+	internal static string Outcome(List<string> keys, Dictionary<string, XamlApplyRow> results)
 	{
 		if (keys.Count == 0) return "unsupported: this edit is not applied live yet";
 
 		foreach (var key in keys)
 		{
-			var status = statuses.GetValueOrDefault(key, "not reported");
+			var status = results.TryGetValue(key, out var row) ? row.Status : "not reported";
 			if (status == "applied") continue;
 
 			return keys.Count == 1 ? status : $"{status}, building it: {Describe(key)}";
 		}
 
 		return "applied";
+	}
+
+	/// <summary>
+	/// The element an edit landed on: the handle the provider reported for the first of its commands aimed at the
+	/// edit's own target. An addition is built in slots first and attached last, so its slot commands name elements
+	/// that were not in the app; the attach is aimed at the parent the edit named, and that is the element a
+	/// person finds it under.
+	/// </summary>
+	internal static ulong? HandleOf(List<string> keys, Dictionary<string, XamlApplyRow> results, string target)
+	{
+		foreach (var key in keys)
+		{
+			if (results.TryGetValue(key, out var row) && row.Target == target && row.Handle is { } handle) return handle;
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// What the property an edit changed said before it, for an edit that changes one property with one command.
+	/// Null for anything else: an addition's slot commands set properties on an element that did not exist a
+	/// moment before, so there is no before to speak of.
+	/// </summary>
+	internal static string? OldValueOf(XamlEditKind kind, List<string> keys, Dictionary<string, XamlApplyRow> results)
+	{
+		var changesOneProperty = kind is XamlEditKind.SetProperty or XamlEditKind.ClearProperty;
+		if (!changesOneProperty || keys.Count != 1) return null;
+
+		return results.TryGetValue(keys[0], out var row) && row.Status == "applied" ? row.Old : null;
 	}
 
 	/// <summary>
@@ -115,22 +144,19 @@ internal static class XamlProviderWire
 		return subject.Length > 0 ? $"{fields[0]} {subject} on {fields[1]}" : $"{fields[0]} on {fields[1]}";
 	}
 
-	internal static Dictionary<string, string> ParseApplyResults(IEnumerable<string> lines)
+	internal static Dictionary<string, XamlApplyRow> ParseApplyResults(IEnumerable<string> lines)
 	{
-		var statuses = new Dictionary<string, string>(StringComparer.Ordinal);
+		var results = new Dictionary<string, XamlApplyRow>(StringComparer.Ordinal);
 		foreach (var line in lines)
 		{
-			if (line.Length == 0) continue;
-
-			var fields = XamlWire.Fields(line);
-			if (fields.Length < 5) continue;
+			if (XamlWire.ReadApplyRow(line) is not { } row) continue;
 
 			// Keyed exactly the way the command was sent -- op, target, property, arg -- so each result can
 			// be found again. The status sits between the property and the arg.
-			statuses[Key(fields[0], fields[1], fields[2], fields[4])] = fields[3];
+			results[Key(row.Op, row.Target, row.Property, row.Arg)] = row;
 		}
 
-		return statuses;
+		return results;
 	}
 
 	internal static List<LiveXamlNode> ParseTree(IEnumerable<string> lines)

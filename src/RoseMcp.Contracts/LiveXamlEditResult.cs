@@ -19,4 +19,19 @@ public sealed record LiveXamlEditResult
 	public string? Value { get; init; }
 
 	public required string Status { get; init; }
+
+	/// <summary>
+	/// The handle of the element the edit landed on, as the visual tree lists it: the element a property
+	/// changed on, the parent an element was added under, the element removed. Null where the target did
+	/// not resolve to anything in the app.
+	/// </summary>
+	public ulong? Handle { get; init; }
+
+	/// <summary>
+	/// What the property said before the edit, rendered the way <c>rose_xaml_properties</c> renders a
+	/// value: a colour as <c>#AARRGGBB</c>, a thickness as four numbers. Read by the provider in the same
+	/// walk that finds the property to set, so it is the live value an instant before, not what the
+	/// markup said. Null for an edit that changes no property, and for one whose property was not found.
+	/// </summary>
+	public string? OldValue { get; init; }
 }

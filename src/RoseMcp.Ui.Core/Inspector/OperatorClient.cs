@@ -423,6 +423,17 @@ public sealed class OperatorClient : IDisposable
 		PostAsync<XamlSelectModeRequest, LiveXamlSelection>(
 			$"/operator/sessions/{sessionId}/xaml/select-mode", request, Xaml, cancellationToken);
 
+	/// <summary>
+	/// The live edits made to a session's app, with who made each, from the broker's own record: asking it asks the
+	/// app nothing. A long poll where <paramref name="after"/> and <paramref name="waitSeconds"/> say, answered when
+	/// another edit lands.
+	/// </summary>
+	public Task<LiveXamlChangeList> XamlChangesAsync(string sessionId, string? after, int waitSeconds, CancellationToken cancellationToken) =>
+		GetAsync<LiveXamlChangeList>(
+			Watched($"/operator/sessions/{sessionId}/xaml/changes", after, waitSeconds),
+			PollBudget(waitSeconds),
+			cancellationToken);
+
 	public Task<LiveSessionClosed> DetachAsync(string sessionId, CancellationToken cancellationToken) =>
 		PostAsync<object?, LiveSessionClosed>($"/operator/sessions/{sessionId}/detach", null, Quick, cancellationToken);
 

@@ -130,7 +130,7 @@ internal sealed class XamlApply(XamlProviderSession provider, ILogger logger)
 			plans.Add((edit, keys));
 		}
 
-		var statuses = new Dictionary<string, string>(StringComparer.Ordinal);
+		var outcomes = new Dictionary<string, XamlApplyRow>(StringComparer.Ordinal);
 		if (commands.Count > 0)
 		{
 			var (pipe, unready) = _provider.Connect(pid);
@@ -152,7 +152,7 @@ internal sealed class XamlApply(XamlProviderSession provider, ILogger logger)
 				};
 			}
 
-			statuses = XamlProviderWire.ParseApplyResults(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+			outcomes = XamlProviderWire.ParseApplyResults(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
 			logger.LogInformation("Applied {Count} XAML command(s) to pid {Pid} over the pipe.", commands.Count, pid);
 		}
 
@@ -170,7 +170,9 @@ internal sealed class XamlApply(XamlProviderSession provider, ILogger logger)
 				Target = edit.Target,
 				Property = edit.Property,
 				Value = edit.Value,
-				Status = XamlProviderWire.Outcome(keys, statuses),
+				Status = XamlProviderWire.Outcome(keys, outcomes),
+				Handle = XamlProviderWire.HandleOf(keys, outcomes, edit.Target),
+				OldValue = XamlProviderWire.OldValueOf(edit.Kind, keys, outcomes),
 			});
 		}
 

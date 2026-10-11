@@ -103,6 +103,30 @@ public sealed class CodeInspection : Observable
 	public void End() => IsOver = true;
 
 	/// <summary>
+	/// What a note about <paramref name="thread"/> is about, or null where it is not one of this stop's rows or the stop
+	/// is over: a row from an earlier stop names a thread at a place it no longer is.
+	/// </summary>
+	public NoteSubject? SubjectOf(ThreadRow thread) =>
+		!IsOver && Threads.Contains(thread) ? AskAgent.Thread(SessionId, thread) : null;
+
+	/// <summary>
+	/// What a note about <paramref name="frame"/> is about, or null where it is not a frame of the stack shown at this
+	/// stop: a frame index from an earlier stop or another thread names a different frame now.
+	/// </summary>
+	public NoteSubject? SubjectOf(FrameRow frame) =>
+		!IsOver && Stack is { } stack && stack.Frames.Contains(frame) ? AskAgent.Frame(SessionId, stack.ThreadId, frame) : null;
+
+	/// <summary>
+	/// What a note about <paramref name="value"/> is about, or null where it is not in the values of the frame shown at
+	/// this stop: a value path read in an earlier stop, or another frame, reads something else now.
+	/// </summary>
+	public NoteSubject? SubjectOf(VariableNode value) =>
+		!IsOver && Stack is { } stack && Holds(stack.Variables, value) ? AskAgent.Value(SessionId, stack.ThreadId, stack.Selected, value) : null;
+
+	private static bool Holds(IEnumerable<VariableNode> values, VariableNode value) =>
+		values.Any(candidate => ReferenceEquals(candidate, value) || Holds(candidate.Children, value));
+
+	/// <summary>
 	/// Takes the thread list read at this stop, choosing the thread already chosen where it is still there, else the
 	/// stopped one. An answer from another stop, or one saying the target is running, leaves the list as it was.
 	/// </summary>

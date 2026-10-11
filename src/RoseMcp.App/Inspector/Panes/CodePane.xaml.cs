@@ -117,6 +117,10 @@ public sealed partial class CodePane : UserControl
 
 		var inspection = new CodeInspection(session.SessionId, sequence, row.StopThreadId);
 		_inspection = inspection;
+
+		// Shown at once, empty, so the last stop's rows are never on screen as this one's while it is read -- and stay
+		// cleared if the read fails.
+		Show(inspection);
 		_reads = new CancellationTokenSource();
 
 		await ReadStopAsync(inspection, _reads.Token);
@@ -336,6 +340,10 @@ public sealed partial class CodePane : UserControl
 		if (ReferenceEquals(frame, stop.Selected) || inspection.IsOver || _reads is not { } reads) return;
 
 		stop.Selected = frame;
+
+		// The last frame's values go now: until this frame's are read they would be asked about as this frame's.
+		stop.ShowNoVariables(string.Empty);
+		ShowVariables(stop);
 		await ShowFrameAsync(inspection, stop, reads.Token);
 	}
 
@@ -464,14 +472,9 @@ public sealed partial class CodePane : UserControl
 	private const string AskOver =
 		"That row is from a stop that is over, so what it names is gone. Ask about it at the next stop, or about the event in the stream.";
 
-	private NoteSubject? Subject(ThreadRow thread) =>
-		_inspection is { IsOver: false } inspection ? AskAgent.Thread(inspection.SessionId, thread) : null;
+	private NoteSubject? Subject(ThreadRow thread) => _inspection?.SubjectOf(thread);
 
-	private NoteSubject? Subject(FrameRow frame) =>
-		_inspection is { IsOver: false, Stack: { } stop } inspection ? AskAgent.Frame(inspection.SessionId, stop.ThreadId, frame) : null;
+	private NoteSubject? Subject(FrameRow frame) => _inspection?.SubjectOf(frame);
 
-	private NoteSubject? Subject(VariableNode node) =>
-		_inspection is { IsOver: false, Stack: { } stop } inspection
-			? AskAgent.Value(inspection.SessionId, stop.ThreadId, stop.Selected, node)
-			: null;
+	private NoteSubject? Subject(VariableNode node) => _inspection?.SubjectOf(node);
 }

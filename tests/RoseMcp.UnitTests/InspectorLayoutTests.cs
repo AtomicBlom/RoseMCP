@@ -152,6 +152,64 @@ public sealed class InspectorLayoutTests
 		code.Threads.Count.ShouldBe(2);
 	}
 
+	/// <summary>
+	/// A row from an earlier stop cannot be asked about at the next one: its frame index, thread position and value path
+	/// name something else now, so the subject would send the agent to the wrong place. Neither can anything once the
+	/// stop is over.
+	/// </summary>
+	[Test]
+	public void A_row_from_an_earlier_stop_cannot_be_asked_about()
+	{
+		var earlier = new CodeInspection("s1", stopSequence: 77, stoppedThreadId: 9);
+		var oldStack = earlier.Take(Stack(77, 9, Frame(0, 9, "App.Worker.Apply", "Worker.cs", 88))).ShouldNotBeNull();
+		earlier.Take(Threads(77, (9, true)));
+		oldStack.Show(oldStack.Frames[0], new LiveFrameVariables
+		{
+			Execution = LiveExecutionState.StoppedAtBreakpoint,
+			Stop = StopAt(77),
+			FrameIndex = 0,
+			Variables = [new LiveVariable { Name = "value", Kind = "argument", Path = "arg:0", Value = "2.5", TypeName = "double", HasChildren = false }],
+			Symbols = LiveSymbolState.Resolved,
+			Truncated = false,
+		});
+		var oldThread = earlier.Threads[0];
+		var oldFrame = oldStack.Frames[0];
+		var oldValue = oldStack.Variables[0];
+
+		earlier.SubjectOf(oldThread).ShouldNotBeNull();
+		earlier.SubjectOf(oldFrame).ShouldNotBeNull();
+		earlier.SubjectOf(oldValue).ShouldNotBeNull().Path.ShouldBe("arg:0");
+
+		var current = new CodeInspection("s1", stopSequence: 78, stoppedThreadId: 9);
+		current.Take(Stack(78, 9, Frame(0, 9, "App.Worker.Apply", "Worker.cs", 89)));
+		current.Take(Threads(78, (9, true)));
+
+		current.SubjectOf(oldThread).ShouldBeNull("that thread row was read at the last stop");
+		current.SubjectOf(oldFrame).ShouldBeNull("that frame row was read at the last stop");
+		current.SubjectOf(oldValue).ShouldBeNull("that value was read at the last stop");
+		current.SubjectOf(current.Threads[0]).ShouldNotBeNull();
+
+		earlier.End();
+		earlier.SubjectOf(oldThread).ShouldBeNull("a stop that is over names nothing");
+		earlier.SubjectOf(oldFrame).ShouldBeNull();
+	}
+
+	/// <summary>
+	/// An ended session says the app exited, at the time its session recorded it, only where one was recorded; a host that
+	/// died or a debugger detached elsewhere leaves the app running, so that is said as the session ending.
+	/// </summary>
+	[Test]
+	public void An_ended_session_says_the_app_exited_only_where_it_did()
+	{
+		var exited = new DateTimeOffset(2026, 10, 12, 3, 4, 5, TimeSpan.Zero);
+		var noticed = exited.AddSeconds(2);
+
+		InspectorText.Ended(exited, noticed).ShouldBe($"The app exited at {exited.ToLocalTime():HH:mm:ss}");
+		InspectorText.Ended(null, noticed).ShouldBe($"The session ended at {noticed.ToLocalTime():HH:mm:ss}");
+		InspectorText.EndedLog(@"C:\logs\host.log").ShouldBe(@"Its log: C:\logs\host.log");
+		InspectorText.EndedLog(null).ShouldStartWith("Its host named no log");
+	}
+
 	/// <summary>A watch takes a value path and refuses anything else, saying why, since the host would refuse it at every stop.</summary>
 	[Test]
 	public void A_watch_takes_a_value_path_and_refuses_anything_else()

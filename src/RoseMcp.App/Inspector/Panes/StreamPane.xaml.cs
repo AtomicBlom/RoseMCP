@@ -5,7 +5,6 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 
 using RoseMcp.Contracts;
-using RoseMcp.Ui.Core;
 using RoseMcp.Ui.Core.Inspector;
 using RoseMcp.Ui.Core.Views;
 
@@ -24,9 +23,6 @@ namespace RoseMcp.App.Inspector.Panes;
 /// </summary>
 public sealed partial class StreamPane : UserControl
 {
-	/// <summary>How long an event read asks the host to hold. Long enough that an idle target costs two requests a minute.</summary>
-	private const int EventWaitSeconds = 30;
-
 	/// <summary>How much of the tail one read may bring back. A burst of a thousand events still pages.</summary>
 	private const int EventPage = 500;
 
@@ -39,15 +35,11 @@ public sealed partial class StreamPane : UserControl
 	private Action<NoteSubject?>? _regard;
 
 	private SessionStream? _stream;
-	private PollLoop? _events;
+	private ViewWatch<LiveDebugEventPage>? _events;
 	private ViewWatch<ActivityPage>? _calls;
 	private ViewWatch<NoteList>? _notes;
-	private bool _primed;
 
 	public StreamPane() => InitializeComponent();
-
-	/// <summary>Raised when the app's session records it exiting, so the header can say when.</summary>
-	public event EventHandler<DateTimeOffset>? Exited;
 
 	public void Attach(
 		OperatorClient client,
@@ -73,7 +65,6 @@ public sealed partial class StreamPane : UserControl
 
 		var stream = session.Stream;
 		_stream = stream;
-		_primed = false;
 		stream.Filter = FilterOf(FilterChoice.SelectedItem);
 		StreamRows.ItemsSource = stream.Rows;
 
@@ -88,7 +79,10 @@ public sealed partial class StreamPane : UserControl
 			notes => notes.Version,
 			notes => Took(() => stream.Absorb(notes)),
 			Failed);
-		_events = new PollLoop(ReadEventsAsync, TimeSpan.Zero, Failed);
+		_events = stream.Tail(
+			(after, wait, cancellationToken) => client.EventsAsync(stream.SessionId, after, kinds: null, EventPage, wait, cancellationToken),
+			page => Took(() => stream.Absorb(page)),
+			Failed);
 
 		_events.Start();
 		_calls.Start();
@@ -112,25 +106,29 @@ public sealed partial class StreamPane : UserControl
 	}
 
 	/// <summary>
-	/// One read of the tail. The first waits for nothing, so a pane bound to a session with a tail already buffered fills
-	/// at once rather than after the first long poll answers.
+	/// Stops every read, then reads what is left of the tail once, waiting for nothing, for a session that has ended:
+	/// the event saying the app exited can be in flight when the session poll sees the end first, and stopping the long
+	/// poll cancels that read.
 	/// </summary>
-	private async Task ReadEventsAsync(CancellationToken cancellationToken)
+	/// <returns>When the app's session recorded it exiting, or null where it recorded no exit.</returns>
+	public async Task<DateTimeOffset?> FinishAsync(CancellationToken cancellationToken)
 	{
-		if (_client is not { } client || _stream is not { } stream) return;
+		Stop();
 
-		var wait = _primed ? EventWaitSeconds : 0;
-		var page = await client.EventsAsync(stream.SessionId, stream.Cursor, kinds: null, EventPage, wait, cancellationToken);
+		if (_client is not { } client || _stream is not { } stream) return null;
+		if (stream.ExitedUtc is { } already) return already;
 
-		// Stopped while the read was out: this stream is no longer the one on screen, or nobody is reading it.
-		if (cancellationToken.IsCancellationRequested || !ReferenceEquals(stream, _stream)) return;
+		try
+		{
+			var page = await client.EventsAsync(stream.SessionId, stream.Cursor, kinds: null, EventPage, waitSeconds: 0, cancellationToken);
+			if (ReferenceEquals(stream, _stream)) Took(() => stream.Absorb(page));
+		}
+		catch (Exception exception) when (exception is OperatorException or OperationCanceledException)
+		{
+			// A host already gone answers nothing; the header then says the session ended rather than guessing why.
+		}
 
-		_primed = true;
-
-		var exited = stream.ExitedUtc;
-		Took(() => stream.Absorb(page));
-
-		if (exited is null && stream.ExitedUtc is { } now) Exited?.Invoke(this, now);
+		return stream.ExitedUtc;
 	}
 
 	/// <summary>Merges what a read brought, keeping a reader at the bottom where they were, and only then.</summary>

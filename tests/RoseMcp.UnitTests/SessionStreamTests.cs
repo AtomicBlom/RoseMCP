@@ -199,6 +199,91 @@ public sealed class SessionStreamTests
 		stream.Rows[1].Text.ShouldBe("Breakpoint hit on thread 7");
 	}
 
+	/// <summary>
+	/// The tail never spins on a broker that is not there: a read that fails pauses before the next, so a refused
+	/// connection answered at once is asked about again seconds later rather than in a tight loop.
+	/// </summary>
+	[Test]
+	public async Task The_tail_pauses_after_a_failed_read()
+	{
+		var stream = new SessionStream("s1");
+		var reads = 0;
+		var failures = 0;
+
+		var tail = stream.Tail(
+			(_, _, _) =>
+			{
+				Interlocked.Increment(ref reads);
+				throw new OperatorException(OperatorFailure.Unreachable, "gone", null);
+			},
+			_ => { },
+			_ => Interlocked.Increment(ref failures),
+			retryAfter: TimeSpan.FromSeconds(3));
+
+		tail.Start();
+		await Task.Delay(TimeSpan.FromMilliseconds(100));
+		tail.Stop();
+
+		Volatile.Read(ref reads).ShouldBeInRange(1, 2, "a failed read pauses before the next");
+		Volatile.Read(ref failures).ShouldBeInRange(1, 2);
+	}
+
+	/// <summary>The tail reads from the stream's cursor, so each page asks only for what is new.</summary>
+	[Test]
+	public async Task The_tail_reads_from_the_cursor()
+	{
+		var stream = new SessionStream("s1");
+		stream.Absorb(Page(1, 3, nextCursor: 9));
+		var asked = new TaskCompletionSource<(long After, int Wait)>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		var tail = stream.Tail(
+			async (after, wait, cancellationToken) =>
+			{
+				asked.TrySetResult((after, wait));
+				await Task.Delay(Timeout.Infinite, cancellationToken);
+				return Page(10, 1);
+			},
+			_ => { },
+			_ => { });
+
+		tail.Start();
+		var first = await asked.Task.WaitAsync(TimeSpan.FromSeconds(10));
+		tail.Stop();
+
+		first.ShouldBe((9L, 0), "from the cursor, and the first read waits for nothing");
+	}
+
+	/// <summary>
+	/// What the stream remembers is bounded however long it is watched: calls and notes trimmed from the list are
+	/// remembered only lately, enough that a read bringing the newest again does not take them back in.
+	/// </summary>
+	[Test]
+	public void What_the_stream_remembers_is_bounded()
+	{
+		var stream = new SessionStream("s1");
+		const int PageSize = 200;
+
+		for (var first = 0; first < 10_000; first += PageSize)
+		{
+			var page = Enumerable.Range(first, PageSize).Select(index => Call($"c{index}", At.AddSeconds(index))).ToArray();
+			stream.Absorb(Calls(page));
+		}
+
+		stream.Known.ShouldBeLessThanOrEqualTo(SessionStream.MaxRows + SessionStream.RememberedTrimmed);
+		stream.Rows.Count.ShouldBe(SessionStream.MaxRows);
+
+		// The newest page read again changes nothing, and neither does one just trimmed.
+		var newest = Enumerable.Range(10_000 - PageSize, PageSize).Select(index => Call($"c{index}", At.AddSeconds(index))).ToArray();
+		var trimmed = Enumerable.Range(10_000 - SessionStream.MaxRows - 50, 50).Select(index => Call($"c{index}", At.AddSeconds(index))).ToArray();
+		var notice = stream.Notice;
+		stream.Absorb(Calls(newest));
+		stream.Absorb(Calls(trimmed));
+
+		stream.Rows.Count.ShouldBe(SessionStream.MaxRows);
+		stream.Rows[0].Key.ShouldBe($"c:c{10_000 - SessionStream.MaxRows}");
+		stream.Notice.ShouldBe(notice, "nothing was taken back in and trimmed again");
+	}
+
 	private static List<string> Keys(SessionStream stream, StreamFilter filter)
 	{
 		stream.Filter = filter;

@@ -60,26 +60,27 @@ persisted, because a token that outlives the process is one that has to be revok
 window left open across a tray restart is refused, which it says in as many words, until the tray's
 next launch hands the running app the new run's token.
 
-**Why the panes are toggled rather than navigated.** A `Frame` recreates a page on every visit, and
-what that loses is the reader's place: the event tail, an open expander, the scroll position, a
+**Why the views are toggled rather than navigated.** A `Frame` recreates a page on every visit, and
+what that loses is the reader's place: the session stream, an open expander, the scroll position, a
 selected frame, an expanded value. Those are the whole state of looking at something.
 
 ## What the inspector must never do
 
 **Hold a target it is not showing.** A stop is on a timer whichever way it was taken, because an
-unattended stop wedges somebody's application. The window holds one only while a pane that reads a
-stop is visible, gives it back the moment the reader looks elsewhere, and waits for the release
-before it closes -- a hold that outlives the window is an app frozen for minutes with nothing on
+unattended stop wedges somebody's application. The window holds one only when the person asks -- Hold,
+beside the countdown it cancels, or Pause -- never because a view that reads a stop is on screen,
+since the code view always is; it gives the hold back when they continue or release it, and waits for
+the release before it closes -- a hold that outlives the window is an app frozen for minutes with nothing on
 screen to say why.
 
-**Answer about a target it has not asked.** Every pane reads through the same session poll and says
+**Answer about a target it has not asked.** Every view reads through the same session poll and says
 what it could not read rather than showing an empty list: frames from a stop that has ended stay
 under a banner, a tree the provider could not deliver says why, an element that has left the tree
 takes its properties with it. The failure this whole surface is built against is the confident wrong
 answer, not the missing one.
 
 **Serve XAML into a held target.** The provider answers on the app's own UI thread and the debugger
-is holding that thread, so the tab goes dead and says so rather than timing out. That is a limit of
+is holding that thread, so the XAML view goes dead and says so rather than timing out. That is a limit of
 the mechanism rather than a choice, and a reader is told which.
 
 ## What is deliberately absent
@@ -87,8 +88,9 @@ the mechanism rather than a choice, and a reader is told which.
 **A session list.** The RoseMCP window's Debugging view lists sessions; this window is about one process and says which in its
 own title. A window that could be re-pointed at another process while it shows one would make that title a lie.
 The start page lists running apps, not sessions, and a window leaves it only to become about the process
-picked there; it goes back to it when its session ends, still answering for that process, so detaching
-and attaching again reaches the same window.
+picked there. When its session ends it stays on it, saying the app exited and naming its log, until the
+person goes back to the start page or attaches again -- a session they detached here goes straight back --
+still answering for that process, so detaching and attaching again reaches the same window.
 
 **Adopting whichever session there is.** A window opened with no session could settle on the one
 session running, and refuse to guess between several. It asks instead: the start page is where a person

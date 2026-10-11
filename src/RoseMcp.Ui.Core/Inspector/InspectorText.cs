@@ -1,3 +1,4 @@
+using System.Globalization;
 using RoseMcp.Contracts;
 
 namespace RoseMcp.Ui.Core.Inspector;
@@ -74,6 +75,20 @@ public static class InspectorText
 	public const string SessionEnded =
 		"The session has ended. These are from the last place the app stopped, kept so they can still be read.";
 
+	/// <summary>
+	/// What the header says once a session has ended: that the app exited, at the time its session recorded it, where it
+	/// recorded one; otherwise that the session ended, at <paramref name="noticedUtc"/> -- a host that died or a
+	/// debugger detached elsewhere leaves the app running, and saying it exited would be a confident wrong answer.
+	/// </summary>
+	public static string Ended(DateTimeOffset? exitedUtc, DateTimeOffset noticedUtc) => exitedUtc is { } exited
+		? $"The app exited at {exited.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture)}"
+		: $"The session ended at {noticedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture)}";
+
+	/// <summary>Where an ended session's log is, named so it can be found without the window.</summary>
+	public static string EndedLog(string? hostLogPath) => hostLogPath is { Length: > 0 } log
+		? $"Its log: {log}"
+		: "Its host named no log. The live-app logs are in the folder Open its log shows.";
+
 
 	/// <summary>How many events the host dropped, which it does rather than growing without bound.</summary>
 	public static string DroppedEvents(long dropped) =>
@@ -124,13 +139,13 @@ public static class InspectorText
 		"Reading the visual tree. A busy or wedged app can take up to 30 seconds to answer.";
 
 	/// <summary>
-	/// Why the XAML tab does nothing while the debugger has the target stopped. Worth saying in full
-	/// rather than greying the buttons out: "it is stopped" explains it, and the fix is two clicks
-	/// away on another tab.
+	/// Why the XAML view does nothing while the debugger has the target stopped. Worth saying in full
+	/// rather than greying the buttons out: "it is stopped" explains it, and the fix is one press of
+	/// Continue in the header.
 	/// </summary>
 	public const string XamlNeedsARunningTarget =
 		"The target is stopped, so it cannot answer about its visual tree: the XAML provider runs on the "
-			+ "app's own UI thread and the debugger is holding it. Continue it from the Stack tab first.";
+			+ "app's own UI thread and the debugger is holding it. Continue it from the header first (F5).";
 
 	/// <summary>Nothing is selected, which is the state the pane opens in.</summary>
 	public const string NoElementSelected =

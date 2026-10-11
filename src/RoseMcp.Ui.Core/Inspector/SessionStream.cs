@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 
 using RoseMcp.Contracts;
+using RoseMcp.Ui.Core.Views;
 
 namespace RoseMcp.Ui.Core.Inspector;
 
@@ -26,6 +28,12 @@ public sealed class SessionStream : Observable
 
 	private readonly List<StreamRow> _all = [];
 	private readonly Dictionary<string, StreamRow> _byKey = new(StringComparer.Ordinal);
+
+	// The keys of calls, notes and answers trimmed lately, oldest first: a read can bring one again, and a key
+	// remembered is what stops it being taken back in as new. Bounded, since a session watched for a day trims tens of
+	// thousands, and a page brings at most the newest few hundred again.
+	private readonly Queue<string> _goneOrder = new();
+	private readonly HashSet<string> _gone = new(StringComparer.Ordinal);
 	private StreamFilter _filter;
 	private long _order;
 	private long _cursor;
@@ -102,6 +110,28 @@ public sealed class SessionStream : Observable
 	}
 
 	/// <summary>
+	/// A watch on this stream's event tail: each read asks from <see cref="Cursor"/>, the first waiting for nothing and the
+	/// rest held open by the host until an event lands. It is a <see cref="ViewWatch{T}"/> so a read that fails pauses
+	/// for <paramref name="retryAfter"/> before the next -- a broker that is not there refuses at once, and without the
+	/// pause a closed port is a core spinning for as long as the window stays open -- and a kick ends the pause.
+	/// </summary>
+	/// <param name="read">Reads a page of the tail: after a cursor, waiting up to so many seconds.</param>
+	/// <param name="onPage">Given each page read, on the context the watch was started from.</param>
+	/// <param name="onFailure">Given each read that failed, before the pause.</param>
+	/// <param name="retryAfter">How long a failed read pauses; <see cref="ViewWatch{T}.RetryAfter"/> where null.</param>
+	public ViewWatch<LiveDebugEventPage> Tail(
+		Func<long, int, CancellationToken, Task<LiveDebugEventPage>> read,
+		Action<LiveDebugEventPage> onPage,
+		Action<Exception> onFailure,
+		TimeSpan? retryAfter = null) =>
+		new(
+			(_, wait, cancellationToken) => read(Cursor, wait, cancellationToken),
+			page => page.NextCursor.ToString(CultureInfo.InvariantCulture),
+			onPage,
+			onFailure,
+			retryAfter);
+
+	/// <summary>
 	/// Takes a page of the event tail, advancing the cursor and counting what the host dropped between the last read
 	/// and this one.
 	/// </summary>
@@ -138,7 +168,7 @@ public sealed class SessionStream : Observable
 		foreach (var entry in calls)
 		{
 			if (_byKey.TryGetValue($"c:{entry.Id}", out var known)) known.Update(entry);
-			else Insert(StreamRow.Of(entry, ++_order));
+			else if (!_gone.Contains($"c:{entry.Id}")) Insert(StreamRow.Of(entry, ++_order));
 		}
 
 		Trim();
@@ -153,11 +183,12 @@ public sealed class SessionStream : Observable
 		foreach (var note in notes.Notes.Where(note => string.Equals(note.Subject.Session, SessionId, StringComparison.Ordinal)))
 		{
 			if (_byKey.TryGetValue($"n:{note.Id}", out var known)) known.Update(note);
-			else Insert(StreamRow.Of(note, ++_order));
+			else if (!_gone.Contains($"n:{note.Id}")) Insert(StreamRow.Of(note, ++_order));
 
 			for (var index = 0; index < note.Replies.Count; index++)
 			{
-				if (_byKey.ContainsKey($"n:{note.Id}:r:{index}")) continue;
+				var key = $"n:{note.Id}:r:{index}";
+				if (_byKey.ContainsKey(key) || _gone.Contains(key)) continue;
 
 				Insert(StreamRow.Of(note, note.Replies[index], index, ++_order));
 			}
@@ -202,9 +233,10 @@ public sealed class SessionStream : Observable
 			_all.RemoveAt(0);
 			Rows.Remove(oldest);
 
-			// An event is never read twice, the cursor having passed it, so its key can go. A call or a note can be in
-			// the next page read again, and a key kept is what stops it being taken back in as new and trimmed again.
-			if (oldest.Kind == StreamKind.Event) _byKey.Remove(oldest.Key);
+			_byKey.Remove(oldest.Key);
+
+			// An event is never read twice, the cursor having passed it. A call or a note can be in the next page again.
+			if (oldest.Kind != StreamKind.Event) Forget(oldest.Key);
 			_trimmed++;
 		}
 
@@ -214,5 +246,23 @@ public sealed class SessionStream : Observable
 
 		Notice = string.Join(" ", parts);
 		OnPropertyChanged(nameof(IsEmpty));
+	}
+
+	/// <summary>
+	/// How many trimmed calls, notes and answers the stream remembers so a read bringing one again does not take it back
+	/// in. More than a read of the record or the notes ever brings back at once.
+	/// </summary>
+	public const int RememberedTrimmed = 500;
+
+	/// <summary>How many rows the stream can tell it has seen: those it holds and the trimmed ones it remembers. Bounded.</summary>
+	public int Known => _byKey.Count + _gone.Count;
+
+	/// <summary>Remembers a trimmed row's key, forgetting the oldest past <see cref="RememberedTrimmed"/>.</summary>
+	private void Forget(string key)
+	{
+		if (!_gone.Add(key)) return;
+
+		_goneOrder.Enqueue(key);
+		while (_goneOrder.Count > RememberedTrimmed) _gone.Remove(_goneOrder.Dequeue());
 	}
 }

@@ -161,10 +161,10 @@ public sealed class HoldKeeper
 
 	private async Task SettleAsync()
 	{
-		// After the caller's own block, never inside it. Changing tab tells the arriving pane and the
-		// leaving one in one pass, and reconciling on the first of those would release the hold and take
-		// it again -- leaving the target free in between, long enough for its own safety timer to run the
-		// reader off the stop they were reading. A yield collapses a batch of readers into one decision
+		// After the caller's own block, never inside it. Two holders can speak in one pass, a pause landing
+		// while Hold is let go, and reconciling on the first of them would release the hold and take it
+		// again: the target free in between, long enough for its own safety timer to run the reader off
+		// the stop they were reading. A yield collapses a batch of readers into one decision
 		// whatever order they arrive in, which is a property no call site then has to remember.
 		await Task.Yield();
 

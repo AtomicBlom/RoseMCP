@@ -97,7 +97,7 @@ public sealed partial class XamlPane : UserControl
 
 	/// <summary>
 	/// A pane nobody can see asks the app nothing. The selection poll is the reason this matters:
-	/// it is a request into somebody's application twice a second, and a tab in the background has
+	/// it is a request into somebody's application twice a second, and a view in the background has
 	/// no one to show the answer to.
 	/// </summary>
 	public void Showing(bool visible)

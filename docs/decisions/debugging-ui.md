@@ -488,7 +488,8 @@ called Rose about is the honest version of the mock-up's "code from", and the he
 a session nobody's agent is in names none.
 
 **When the app exits.** The window stays on it: the header says it exited, when (from the event the
-host recorded), and names the session's log, and every read stops -- a session that has ended has
+host recorded, the tail read once more as the session ends, since the poll can see the end before the
+event arrives), and names the session's log, and every read stops -- a session that has ended has
 nothing more to say. The person goes to the start page from there, or attaches to the app again and the
 same window takes the new session. A session the person detached in this window goes straight to the
 start page, which is what detaching asked for.

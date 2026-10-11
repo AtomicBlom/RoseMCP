@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
@@ -108,9 +107,6 @@ public sealed partial class InspectorWindow : Window
 	/// <summary>Whether this window detached its own session, which goes back to the start page rather than saying it ended.</summary>
 	private bool _detaching;
 
-	/// <summary>When the app's session recorded it exiting, from the stream.</summary>
-	private DateTimeOffset? _exitedUtc;
-
 	/// <summary>The row last selected anywhere in the window, which the shortcut asks about.</summary>
 	private NoteSubject? _regarded;
 
@@ -152,8 +148,7 @@ public sealed partial class InspectorWindow : Window
 		AskComposer.Composer = _composer;
 
 		Code.Attach(_client, Report, Ask, Regard, location => Execution.Locate(location));
-		Stream.Attach(_client, Report, Ask, Regard);
-		Stream.Exited += (_, exited) => _exitedUtc = exited;
+		Stream.Attach(_client, StreamFailed, Ask, Regard);
 		Breakpoints.Attach(_client, Report, Ask);
 		Breakpoints.Counted += (_, count) => BreakpointsView.Text = count == 0 ? "Breakpoints" : $"Breakpoints ({count})";
 		Execution.Attach(_client, Report);
@@ -384,7 +379,6 @@ public sealed partial class InspectorWindow : Window
 			_row = new SessionRow(summary);
 			_inspected = new InspectedSession(summary.SessionId);
 			_ended = false;
-			_exitedUtc = null;
 			_regarded = null;
 			_solutionOf = null;
 
@@ -447,17 +441,19 @@ public sealed partial class InspectorWindow : Window
 	/// Says the session has ended and stops reading it, keeping what was read on screen: the header says the app
 	/// exited, or that the session ended, and names its log. Every read stops here -- the stream's polls, the stop's
 	/// reads, the breakpoint lists, the visual tree -- since a session that has ended has nothing more to say, and the
-	/// session poll stops asking about it.
+	/// session poll stops asking about it. The stream's tail is read once more first, waiting for nothing, since the
+	/// event saying the app exited can still be in flight when the poll sees the end.
 	/// </summary>
-	private void EnterEnded()
+	private async void EnterEnded()
 	{
 		if (_ended) return;
 
 		_ended = true;
 		_sessionId = null;
 		_detaching = false;
+		var noticed = DateTimeOffset.UtcNow;
+		var row = _row;
 
-		Stream.Stop();
 		Code.Stop(InspectorText.SessionEnded);
 		Breakpoints.Stop();
 		Breakpoints.Showing(false);
@@ -475,20 +471,21 @@ public sealed partial class InspectorWindow : Window
 		if (Views.SelectedItem == XamlView) CodeView.IsSelected = true;
 		ShowView();
 
-		var at = _exitedUtc ?? DateTimeOffset.UtcNow;
-		var clock = at.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
-		EndedTitle.Text = _exitedUtc is null ? $"The session ended at {clock}" : $"The app exited at {clock}";
-		EndedLog.Text = _row?.HostLogPath is { Length: > 0 } log
-			? $"Its log: {log}"
-			: "Its host named no log. The live-app logs are in the folder Open its log shows.";
+		EndedTitle.Text = InspectorText.Ended(null, noticed);
+		EndedLog.Text = InspectorText.EndedLog(row?.HostLogPath);
+		LiveText.Text = "Ended";
+		LiveDot.Fill = Brush("SystemFillColorNeutralBrush");
 
-		if (_row is { } row)
+		if (row is not null)
 		{
-			LiveText.Text = "Ended";
-			LiveDot.Fill = Brush("SystemFillColorNeutralBrush");
 			TitleText.Text = $"{row.DisplayName} (ended) — RoseMCP Inspector";
 			Title = TitleText.Text;
 		}
+
+		var exited = await Stream.FinishAsync(_lifetime.Token);
+
+		// Still the same ended session: a new one may have been opened in this window while the tail was read.
+		if (_ended && ReferenceEquals(row, _row)) EndedTitle.Text = InspectorText.Ended(exited, noticed);
 	}
 
 	private void OnViewChosen(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => ShowView();
@@ -635,6 +632,21 @@ public sealed partial class InspectorWindow : Window
 
 		if (Notice.IsOpen && Notice.Message == _offlineNotice) Notice.IsOpen = false;
 		_offlineNotice = null;
+	}
+
+	/// <summary>
+	/// A read of the stream that failed. A broker not answering is said the way the session poll says it, so the first
+	/// answer after takes it down; anything else is the stream's own failure, put in front of the reader.
+	/// </summary>
+	private void StreamFailed(Exception exception)
+	{
+		var brokerGone = exception is OperatorException
+		{
+			Failure: OperatorFailure.Unreachable or OperatorFailure.Unauthorized or OperatorFailure.TimedOut,
+		};
+
+		if (brokerGone) Offline((OperatorException)exception);
+		else Report(exception);
 	}
 
 	/// <summary>Shows a waiting or empty state in place of a session, stopping everything that read the last one.</summary>

@@ -633,7 +633,7 @@ public sealed class SessionRow : Observable
 	/// <para>
 	/// The reason travels because <see cref="XamlStack.Unknown"/> has two causes worth telling apart
 	/// -- modules that could not be read, and modules read and recognised as nothing -- and because a
-	/// reader told only "no XAML tab" about a WinUI app they can see on screen would reasonably
+	/// reader told only "no XAML view" about a WinUI app they can see on screen would reasonably
 	/// conclude the tool was broken.
 	/// </para>
 	/// </summary>

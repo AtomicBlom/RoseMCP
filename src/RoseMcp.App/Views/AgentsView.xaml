@@ -57,7 +57,7 @@
 									</ItemsRepeater.Layout>
 									<ItemsRepeater.ItemTemplate>
 										<DataTemplate x:DataType="core:UsingChip">
-											<Button Style="{StaticResource ChipButtonStyle}" Click="OnChip"
+											<Button Style="{StaticResource ChipButtonStyle}" Click="OnChip" Tag="{x:Bind}"
 												ToolTipService.ToolTip="{x:Bind Key}">
 												<TextBlock Text="{x:Bind Text}" Style="{StaticResource CaptionTextBlockStyle}" />
 											</Button>
@@ -79,7 +79,7 @@
 									</ItemsRepeater.ItemTemplate>
 								</ItemsRepeater>
 								<HyperlinkButton Content="{x:Bind More, Mode=OneWay}" Visibility="{x:Bind HasMore, Mode=OneWay}"
-									Click="OnMore" Padding="8,2" />
+									Click="OnMore" Tag="{x:Bind}" Padding="8,2" />
 							</StackPanel>
 						</Border>
 					</DataTemplate>

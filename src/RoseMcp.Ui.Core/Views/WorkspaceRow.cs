@@ -322,6 +322,22 @@ public sealed class WorkspaceRow : Observable
 		OnPropertyChanged(nameof(HasLoad));
 	}
 
+	/// <summary>
+	/// Shows the memory sample the window's timer read, in place of the figures the list carried when it was last
+	/// read: the list is answered only when a row changes in anything but its memory, so its own figures can be as
+	/// old as the last call into the workspace.
+	/// </summary>
+	public void ShowMemory(MemoryReport report)
+	{
+		if (!IsAlive) return;
+
+		var worker = report.Workers.FirstOrDefault(worker => PathCasing.Comparer.Equals(worker.Workspace, Path));
+		if (worker?.Process is not { } process) return;
+
+		Memory = Format.Bytes(process.WorkingSetBytes);
+		MemoryDetail = DescribeMemory(process.WorkingSetBytes, process.PrivateMemoryBytes, process.ManagedHeapBytes, process.ProcessId);
+	}
+
 	/// <summary>The state a workspace is in, in a word, for a chip that names it elsewhere.</summary>
 	public static string StateWord(OperatorWorkspace workspace) => workspace.Summary.Alive
 		? workspace.Summary.State switch
@@ -364,12 +380,17 @@ public sealed class WorkspaceRow : Observable
 
 	private static string DescribeMemory(WorkspaceSummary summary)
 	{
-		if (summary.WorkingSetBytes is null) return summary.Alive ? "Not sampled." : "The worker has stopped and holds nothing.";
+		if (summary.WorkingSetBytes is not { } workingSet) return summary.Alive ? "Not sampled." : "The worker has stopped and holds nothing.";
 
-		var facts = new List<string> { $"working set {Format.Bytes(summary.WorkingSetBytes.Value)}" };
-		if (summary.PrivateMemoryBytes is { } privateBytes) facts.Add($"private {Format.Bytes(privateBytes)}");
-		if (summary.ManagedHeapBytes is { } heap) facts.Add($"managed heap {Format.Bytes(heap)}");
-		if (summary.ProcessId is { } pid) facts.Add(Format.Pid(pid));
+		return DescribeMemory(workingSet, summary.PrivateMemoryBytes, summary.ManagedHeapBytes, summary.ProcessId);
+	}
+
+	private static string DescribeMemory(long workingSet, long? privateBytes, long? heap, int? processId)
+	{
+		var facts = new List<string> { $"working set {Format.Bytes(workingSet)}" };
+		if (privateBytes is { } bytes) facts.Add($"private {Format.Bytes(bytes)}");
+		if (heap is { } managed) facts.Add($"managed heap {Format.Bytes(managed)}");
+		if (processId is { } pid) facts.Add(Format.Pid(pid));
 
 		return string.Join(Format.Separator, facts);
 	}

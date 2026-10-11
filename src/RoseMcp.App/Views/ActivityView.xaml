@@ -20,8 +20,8 @@
 			<ComboBox x:Name="WorkspaceChoice" MinWidth="220" SelectionChanged="OnFilterChosen"
 				ToolTipService.ToolTip="Only the calls routed to one workspace" />
 			<ToggleButton x:Name="FailuresOnly" Content="Failures only" Click="OnFailuresToggled" />
-			<TextBox x:Name="Search" Width="260" PlaceholderText="Search tools, targets, errors" TextChanged="OnSearchChanged" />
-			<Button x:Name="OpenRecord" Content="Open the record's folder" Click="OnOpenRecord"
+			<TextBox x:Name="Search" Width="220" PlaceholderText="Search tools, targets, errors" TextChanged="OnSearchChanged" />
+			<Button x:Name="OpenRecord" Content="Record folder" ToolTipService.ToolTip="Open the folder the activity record is kept in" Click="OnOpenRecord"
 				Style="{StaticResource ChipButtonStyle}" />
 		</StackPanel>
 

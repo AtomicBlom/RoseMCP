@@ -103,6 +103,40 @@ public sealed class WorkspaceRowTests
 	}
 
 	/// <summary>
+	/// The list is answered only when a row changes in anything but its memory, so a row takes the memory the
+	/// window's timer sampled rather than keep the figure the list carried; a stopped row holds nothing to sample.
+	/// </summary>
+	[Test]
+	public void A_row_shows_the_timers_memory_sample()
+	{
+		var row = new WorkspaceRow(Workspace(Solution, WorkspaceState.Loaded), [], Noon);
+		row.Memory.ShouldBe("2.0 GB");
+
+		var report = new MemoryReport
+		{
+			SampledUtc = Noon,
+			Broker = new ProcessMemory { ProcessId = 1, WorkingSetBytes = 1, PrivateMemoryBytes = 1 },
+			Workers =
+			[
+				new WorkerMemory
+				{
+					Workspace = Solution,
+					WorkspaceKey = "Drawboard.All-1",
+					Process = new ProcessMemory { ProcessId = 77, WorkingSetBytes = 700L * 1024 * 1024, PrivateMemoryBytes = 650L * 1024 * 1024 },
+				},
+			],
+		};
+
+		row.ShowMemory(report);
+		row.Memory.ShouldBe("700 MB");
+		row.MemoryDetail.ShouldBe("working set 700 MB  ·  private 650 MB  ·  pid 77");
+
+		var stopped = new WorkspaceRow(Workspace(Solution, WorkspaceState.Unloaded, alive: false), [], Noon);
+		stopped.ShowMemory(report);
+		stopped.Memory.ShouldBe("—");
+	}
+
+	/// <summary>
 	/// A row is keyed by its path as the broker compares paths, so a list that spells the path another way updates
 	/// the row a reader opened rather than replacing it with its detail closed.
 	/// </summary>

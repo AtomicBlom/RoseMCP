@@ -50,7 +50,13 @@ public partial class App : Application
 		Options = Read(Environment.GetCommandLineArgs().Skip(1).ToArray(), out var problem);
 		OptionsProblem = problem;
 
-		CrashHandler.Attach(this, _logging.CreateLogger<App>());
+		var logger = _logging.CreateLogger<App>();
+		CrashHandler.Attach(this, logger);
+		logger.LogInformation(
+			"The RoseMCP app started against {Broker}, {Token}, for {Window}.",
+			Options.BaseAddress,
+			Options.Token is null ? "with no token" : "with a token",
+			Options.OpensInspector ? "an Inspector window" : "the RoseMCP window");
 
 		_client = new OperatorClient(Options.BaseAddress, Options.Token);
 
@@ -128,7 +134,14 @@ public partial class App : Application
 			var raw = args.Data is Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs launch
 				? launch.Arguments
 				: null;
-			var options = Read(CommandLine.Split(raw), out _);
+			var logger = _logging.CreateLogger<App>();
+			logger.LogInformation("A second launch was handed to this app, as {Kind}.", args.Kind);
+
+			var options = Read(CommandLine.Split(raw), out var problem);
+
+			// What was asked is logged and the token is not: the log is read by people the token is not for.
+			if (problem is not null) logger.LogWarning("A second launch's command line could not be read: {Problem}", problem);
+			else logger.LogInformation("A second launch asked for {Window}.", options.OpensInspector ? "an Inspector window" : "the RoseMCP window");
 
 			Queue.TryEnqueue(DispatcherQueuePriority.Normal, () =>
 			{

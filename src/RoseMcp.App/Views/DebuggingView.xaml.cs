@@ -77,13 +77,13 @@ public sealed partial class DebuggingView : UserControl
 
 	private void OnOpen(object sender, RoutedEventArgs args)
 	{
-		if (sender is FrameworkElement { DataContext: SessionRow row }) _window?.OpenSession(row.SessionId, row.TargetProcessId);
+		if (Bound.Item<SessionRow>(sender) is { } row) _window?.OpenSession(row.SessionId, row.TargetProcessId);
 	}
 
 	/// <summary>Opens the session's own host log, selected in Explorer: its file, not the folder of every host's logs.</summary>
 	private void OnOpenLog(object sender, RoutedEventArgs args)
 	{
-		if (sender is not FrameworkElement { DataContext: SessionRow row }) return;
+		if (Bound.Item<SessionRow>(sender) is not { } row) return;
 
 		try
 		{
@@ -106,7 +106,7 @@ public sealed partial class DebuggingView : UserControl
 
 	private async void OnDetach(object sender, RoutedEventArgs args)
 	{
-		if (sender is not FrameworkElement { DataContext: SessionRow row } || _client is not { } client) return;
+		if (Bound.Item<SessionRow>(sender) is not { } row || _client is not { } client) return;
 
 		var dialog = new ContentDialog
 		{

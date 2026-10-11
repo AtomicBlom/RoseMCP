@@ -420,7 +420,8 @@ public sealed class OperatorApiTests
 
 		(await broker.GetAsync<OperatorWorkspaceList>("/operator/workspaces", cancellationToken)).Workspaces.ShouldBeEmpty();
 
-		var activity = await broker.GetAsync<ActivityPage>("/operator/activity", cancellationToken);
+		// By workspace, because every broker the suite starts writes to the one record folder.
+		var activity = await broker.GetAsync<ActivityPage>($"/operator/activity?workspace={workspace}", cancellationToken);
 		activity.Entries.Where(entry => entry.Kind == ActivityEntryKind.Call).Select(entry => entry.Tool).ShouldBe([ToolNames.WorkspaceStatus]);
 	}
 

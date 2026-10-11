@@ -72,8 +72,14 @@ public sealed partial class WorkspacesView : UserControl
 		if (!_showing || _feed is not { } feed) return;
 
 		WorkspaceRow.Merge(_rows, feed.Workspaces.Workspaces, feed.Activity.Entries, DateTime.UtcNow);
+		if (feed.Memory is { } sample)
+		{
+			foreach (var row in _rows) row.ShowMemory(sample);
+		}
 
-		var memory = feed.Workspaces.Workspaces.Sum(workspace => workspace.Summary.WorkingSetBytes ?? 0);
+		var memory = feed.Memory is { } sampled
+			? sampled.Workers.Sum(worker => worker.Process?.WorkingSetBytes ?? 0)
+			: feed.Workspaces.Workspaces.Sum(workspace => workspace.Summary.WorkingSetBytes ?? 0);
 		var loaded = feed.Workspaces.Workspaces.Count(workspace => workspace.Summary.Alive);
 		var closes = feed.Workspaces.IdleEvictionAfter is { } after
 			? $"each closes after {Format.Uptime(after)} unused"
@@ -114,7 +120,7 @@ public sealed partial class WorkspacesView : UserControl
 
 	private async void OnAccept(object sender, RoutedEventArgs args)
 	{
-		if (sender is not FrameworkElement { DataContext: ReasonRow reason } || RowHolding(reason) is not { } row) return;
+		if (Bound.Item<ReasonRow>(sender) is not { } reason || RowHolding(reason) is not { } row) return;
 
 		await ActAsync(row, async client =>
 		{
@@ -125,7 +131,7 @@ public sealed partial class WorkspacesView : UserControl
 
 	private async void OnStopAccepting(object sender, RoutedEventArgs args)
 	{
-		if (sender is not FrameworkElement { DataContext: ReasonRow reason } || RowHolding(reason) is not { } row) return;
+		if (Bound.Item<ReasonRow>(sender) is not { } reason || RowHolding(reason) is not { } row) return;
 
 		await ActAsync(row, async client =>
 		{
@@ -136,7 +142,7 @@ public sealed partial class WorkspacesView : UserControl
 
 	private async void OnStopAcceptingAccepted(object sender, RoutedEventArgs args)
 	{
-		if (sender is not FrameworkElement { DataContext: AcceptedRow accepted }) return;
+		if (Bound.Item<AcceptedRow>(sender) is not { } accepted) return;
 
 		var row = _rows.FirstOrDefault(row => row.Accepted.Contains(accepted));
 		if (row is null) return;
@@ -150,7 +156,7 @@ public sealed partial class WorkspacesView : UserControl
 
 	private async void OnConfirm(object sender, RoutedEventArgs args)
 	{
-		if (sender is not FrameworkElement { DataContext: ProposalRow proposal }) return;
+		if (Bound.Item<ProposalRow>(sender) is not { } proposal) return;
 
 		var row = _rows.FirstOrDefault(row => row.Proposals.Contains(proposal));
 		if (row is null) return;
@@ -164,7 +170,7 @@ public sealed partial class WorkspacesView : UserControl
 
 	private async void OnReject(object sender, RoutedEventArgs args)
 	{
-		if (sender is not FrameworkElement { DataContext: ProposalRow proposal }) return;
+		if (Bound.Item<ProposalRow>(sender) is not { } proposal) return;
 
 		var row = _rows.FirstOrDefault(row => row.Proposals.Contains(proposal));
 		if (row is null) return;
@@ -298,7 +304,7 @@ public sealed partial class WorkspacesView : UserControl
 		}
 	}
 
-	private WorkspaceRow? RowOf(object sender) => sender is FrameworkElement { DataContext: WorkspaceRow row } ? row : null;
+	private static WorkspaceRow? RowOf(object sender) => Bound.Item<WorkspaceRow>(sender);
 
 	private WorkspaceRow? RowHolding(ReasonRow reason) => _rows.FirstOrDefault(row => row.Reasons.Contains(reason));
 }

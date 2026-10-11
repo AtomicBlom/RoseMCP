@@ -78,6 +78,9 @@ public sealed partial class InspectorWindow : Window
 	/// <summary>Whether the close has already run its release, so the second one goes through.</summary>
 	private bool _closing;
 
+	/// <summary>What the window said when the broker stopped answering, so the first answer after can take it down.</summary>
+	private string? _offlineNotice;
+
 	/// <param name="client">The app's client, shared by every window.</param>
 	/// <param name="sessionId">The session to open on, or null to settle on the one session there is.</param>
 	/// <param name="targetProcessId">The process the session debugs, where the launch named it.</param>
@@ -209,9 +212,14 @@ public sealed partial class InspectorWindow : Window
 	{
 		try
 		{
-			if (_sessionId is null && !await AdoptAsync(cancellationToken)) return;
+			if (_sessionId is null && !await AdoptAsync(cancellationToken))
+			{
+				Online();
+				return;
+			}
 
 			Show(await _client.SessionAsync(_sessionId!, cancellationToken));
+			Online();
 		}
 		catch (OperatorException failure) when (failure.Failure == OperatorFailure.NotFound)
 		{
@@ -220,6 +228,7 @@ public sealed partial class InspectorWindow : Window
 			_inspected = null;
 			_row = null;
 
+			Online();
 			ShowEmpty(InspectorText.SessionGone(gone ?? "?"), string.Empty);
 		}
 		catch (OperatorException failure)
@@ -422,6 +431,19 @@ public sealed partial class InspectorWindow : Window
 		};
 
 		ShowNotice(detail, InfoBarSeverity.Warning);
+		_offlineNotice = detail;
+	}
+
+	/// <summary>
+	/// Takes down what <see cref="Offline"/> said once the broker answers again -- after a restart, or once the app
+	/// has been handed the new run's token -- and only that: a notice about something else stays.
+	/// </summary>
+	private void Online()
+	{
+		if (_offlineNotice is null) return;
+
+		if (Notice.IsOpen && Notice.Message == _offlineNotice) Notice.IsOpen = false;
+		_offlineNotice = null;
 	}
 
 	private void ShowEmpty(string title, string detail)

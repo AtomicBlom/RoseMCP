@@ -96,7 +96,7 @@ public static class Program
 		});
 
 		var handle = handed.SafeWaitHandle.DangerousGetHandle();
-		_ = CoWaitForMultipleObjects(CoWaitAlertable | CoWaitInputAvailable, HandOverMilliseconds, 1, [handle], out _);
+		_ = CoWaitForMultipleObjects(CwmoDefault, HandOverMilliseconds, 1, [handle], out _);
 	}
 
 	/// <summary>
@@ -127,14 +127,19 @@ public static class Program
 	/// </summary>
 	private const uint HandOverMilliseconds = 5000;
 
-	private const uint CoWaitAlertable = 0x2;
-	private const uint CoWaitInputAvailable = 0x4;
+	/// <summary>
+	/// <c>CWMO_DEFAULT</c>: an STA wait that dispatches the COM call redirection completes through. The
+	/// <c>COWAIT_*</c> flags of <c>CoWaitForMultipleHandles</c> are not this function's: given those, it refuses
+	/// the flags and returns at once, and the second launch exits before its activation is handed over -- an icon
+	/// click that does nothing.
+	/// </summary>
+	private const uint CwmoDefault = 0;
 
 	[DllImport("ole32.dll")]
 	private static extern uint CoWaitForMultipleObjects(
 		uint flags,
 		uint timeout,
-		ulong count,
+		uint count,
 		nint[] handles,
 		out uint index);
 }

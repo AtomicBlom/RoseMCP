@@ -75,7 +75,7 @@ public sealed partial class AgentsView : UserControl
 
 	private void OnChip(object sender, RoutedEventArgs args)
 	{
-		if (sender is not FrameworkElement { DataContext: UsingChip chip } || _window is not { } window) return;
+		if (Bound.Item<UsingChip>(sender) is not { } chip || _window is not { } window) return;
 
 		if (chip.IsWorkspace) window.ShowWorkspace(chip.Key);
 		else window.OpenSession(chip.Key);
@@ -83,7 +83,7 @@ public sealed partial class AgentsView : UserControl
 
 	private void OnMore(object sender, RoutedEventArgs args)
 	{
-		if (sender is FrameworkElement { DataContext: AgentCard card }) _window?.ShowActivityOf(card.ActivityFilter, card.Title);
+		if (Bound.Item<AgentCard>(sender) is { } card) _window?.ShowActivityOf(card.ActivityFilter, card.Title);
 	}
 
 	private void OnDebugAnApp(object sender, RoutedEventArgs args) => _window?.DebugAnApp();

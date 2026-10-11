@@ -59,12 +59,12 @@
 									<TextBlock Grid.Column="0" Text="{x:Bind Solution, Mode=OneWay}" TextTrimming="CharacterEllipsis"
 										VerticalAlignment="Center" Style="{StaticResource BodyStrongTextBlockStyle}"
 										ToolTipService.ToolTip="{x:Bind Path}" />
-									<HyperlinkButton Grid.Column="1" Click="OnOpenFolder" Padding="0" VerticalAlignment="Center"
+									<HyperlinkButton Grid.Column="1" Click="OnOpenFolder" Tag="{x:Bind}" Padding="0" VerticalAlignment="Center"
 										ToolTipService.ToolTip="Open in Explorer">
-										<TextBlock Text="{x:Bind Folder, Mode=OneWay}" TextTrimming="CharacterEllipsis"
+										<TextBlock Text="{x:Bind Folder, Mode=OneWay}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
 											Style="{StaticResource MonoCaptionTextBlockStyle}" />
 									</HyperlinkButton>
-									<TextBlock Grid.Column="2" Text="{x:Bind UsedBy, Mode=OneWay}" TextTrimming="CharacterEllipsis"
+									<TextBlock Grid.Column="2" Text="{x:Bind UsedBy, Mode=OneWay}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
 										VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
 										ToolTipService.ToolTip="{x:Bind UsedByDetail, Mode=OneWay}" />
 									<TextBlock Grid.Column="3" Text="{x:Bind Configuration, Mode=OneWay}" VerticalAlignment="Center"
@@ -93,7 +93,7 @@
 										ToolTipService.ToolTip="{x:Bind MemoryDetail, Mode=OneWay}" />
 									<TextBlock Grid.Column="7" Text="{x:Bind Unused, Mode=OneWay}" VerticalAlignment="Center"
 										TextTrimming="CharacterEllipsis" Style="{StaticResource CaptionTextBlockStyle}" />
-									<Button Grid.Column="8" Click="OnToggle" Padding="0" Background="Transparent" BorderThickness="0"
+									<Button Grid.Column="8" Click="OnToggle" Tag="{x:Bind}" Padding="0" AutomationProperties.Name="Open or close the detail" Background="Transparent" BorderThickness="0"
 										VerticalAlignment="Center" ToolTipService.ToolTip="Detail">
 										<FontIcon Glyph="&#xE70D;" FontSize="11" />
 									</Button>
@@ -151,10 +151,10 @@
 																<x:String>Nothing</x:String>
 															</ComboBox>
 															<TextBox Text="{x:Bind Note, Mode=TwoWay}" Width="320" PlaceholderText="Your note, where agents read one" />
-															<Button Content="Accept" Click="OnAccept" />
+															<Button Content="Accept" Click="OnAccept" Tag="{x:Bind}" />
 														</StackPanel>
 														<StackPanel Orientation="Horizontal" Spacing="8">
-															<Button Content="Stop accepting" Click="OnStopAccepting" Visibility="{x:Bind IsAccepted, Mode=OneWay}" />
+															<Button Content="Stop accepting" Click="OnStopAccepting" Tag="{x:Bind}" Visibility="{x:Bind IsAccepted, Mode=OneWay}" />
 															<Button Content="Ask an agent why">
 																<Button.Flyout>
 																	<Flyout>
@@ -190,8 +190,8 @@
 															<TextBlock Text="{x:Bind Facts}" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
 																Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
 														</StackPanel>
-														<Button Grid.Column="1" Content="Accept as proposed" Click="OnConfirm" VerticalAlignment="Center" />
-														<Button Grid.Column="2" Content="Reject" Click="OnReject" VerticalAlignment="Center" />
+														<Button Grid.Column="1" Content="Accept as proposed" Click="OnConfirm" Tag="{x:Bind}" VerticalAlignment="Center" />
+														<Button Grid.Column="2" Content="Reject" Click="OnReject" Tag="{x:Bind}" VerticalAlignment="Center" />
 													</Grid>
 												</DataTemplate>
 											</ItemsControl.ItemTemplate>
@@ -213,7 +213,7 @@
 														<TextBlock Grid.Column="1" Text="{x:Bind Facts}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
 															Style="{StaticResource CaptionTextBlockStyle}"
 															Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-														<Button Grid.Column="2" Content="Stop accepting" Click="OnStopAcceptingAccepted" />
+														<Button Grid.Column="2" Content="Stop accepting" Click="OnStopAcceptingAccepted" Tag="{x:Bind}" />
 													</Grid>
 												</DataTemplate>
 											</ItemsControl.ItemTemplate>
@@ -244,12 +244,12 @@
 										Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
 
 									<StackPanel Orientation="Horizontal" Spacing="8">
-										<Button Content="Show why it loaded as it did" Click="OnShowLoad"
+										<Button Content="Show why it loaded as it did" Click="OnShowLoad" Tag="{x:Bind}"
 											ToolTipService.ToolTip="Read the workspace's full status: failed projects, analyzers that would not load, the restore, every project" />
-										<Button Content="Open folder" Click="OnOpenFolder" />
-										<Button Content="Reload" Click="OnReload" />
-										<Button Content="Close" Click="OnClose" />
-										<Button Content="Open its log" Click="OnOpenLog" IsEnabled="{x:Bind HasLog, Mode=OneWay}" />
+										<Button Content="Open folder" Click="OnOpenFolder" Tag="{x:Bind}" />
+										<Button Content="Reload" Click="OnReload" Tag="{x:Bind}" />
+										<Button Content="Close" Click="OnClose" Tag="{x:Bind}" />
+										<Button Content="Open its log" Click="OnOpenLog" Tag="{x:Bind}" IsEnabled="{x:Bind HasLog, Mode=OneWay}" />
 										<ProgressRing IsActive="{x:Bind IsBusy, Mode=OneWay}" Width="16" Height="16" />
 									</StackPanel>
 								</StackPanel>

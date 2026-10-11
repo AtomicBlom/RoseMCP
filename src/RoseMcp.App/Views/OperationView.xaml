@@ -16,7 +16,7 @@
 				Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 		</Grid>
 
-		<Button Visibility="{x:Bind Row.IsCall, Mode=OneWay}" Click="OnToggle" HorizontalAlignment="Stretch"
+		<Button Visibility="{x:Bind Row.IsCall, Mode=OneWay}" Click="OnToggle" AutomationProperties.Name="{x:Bind Row.Tool, Mode=OneWay}" HorizontalAlignment="Stretch"
 			HorizontalContentAlignment="Stretch" Padding="8,4" Background="Transparent" BorderThickness="0"
 			ToolTipService.ToolTip="{x:Bind Row.Tool, Mode=OneWay}">
 			<StackPanel Spacing="2">

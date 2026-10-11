@@ -661,13 +661,13 @@ and its icon has one menu.
 - **Why it matters:** A first-time reader arrives at the inspector expecting a console over their
   sessions and finds a single-process window with no session list and no explanation, which reads as
   a missing feature rather than a decision. The Rose panel page gives Magnify billing comparable to
-  Select, which is defensible (USE-08 withdraws the claim that magnify is weak) but explains none of
+  Select, which is defensible ([the decision](../decisions/the-panel-keeps-a-magnifier-because-the-windows-one-filters.md) says why magnify stays) but explains none of
   the filtering reason that makes it worth that billing.
 - **Suggested change:** Rewrite the inspector page's opening around one process and one agent ("the
   window for watching an agent debug one app"), and point cross-session questions at the tray page.
   On the panel page, keep magnify's billing and give it the sentence it is missing: the Windows
   magnifier smooths pixels and cannot be told not to, so it can neither read a colour nor show a
-  one-pixel gap (USE-08).
+  one-pixel gap (#393).
 
 ### ~~USE-17 The tray spends 44px of a 400px minimum-height window on its own name~~
 **#462.** The tray's window spent the top of its height on an empty title bar. The tray has no window.
@@ -853,7 +853,7 @@ in the top half of the pane.
 
 ## Open questions for Steve
 
-1. ~~Who is the pixel lens for?~~ **Answered in USE-08.** What is left is narrower: **is anything else
+1. ~~Who is the pixel lens for?~~ **Answered in [the decision](../decisions/the-panel-keeps-a-magnifier-because-the-windows-one-filters.md).** What is left is narrower: **is anything else
    in the product justified by a platform limitation that is not written down?** The magnifier came
    within one review of being deleted because its reason lived only in the author's head.
 2. **Is the inspector meant to be used instead of Visual Studio, or beside it?** The breakpoint

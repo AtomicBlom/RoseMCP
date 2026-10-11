@@ -26,7 +26,6 @@ public sealed class WindowsRunningApps : IRunningApps
 	private const uint GwOwner = 4;
 	private const int GwlExStyle = -20;
 	private const long WsExToolWindow = 0x00000080;
-	private const int ErrorInsufficientBuffer = 122;
 
 	/// <summary>The lowest process id a user's process has; below it are the idle and system processes.</summary>
 	private const int LowestUserProcessId = 8;
@@ -100,7 +99,7 @@ public sealed class WindowsRunningApps : IRunningApps
 				WindowTitle = windows.GetValueOrDefault(processId),
 				ExecutablePath = path,
 				XamlStack = XamlStackModules.Identify(modules).Stack,
-				AppUserModelId = AppUserModelId(handle),
+				AppUserModelId = PackagedProcess.AppUserModelIdOf(handle),
 				Architecture = TargetArchitectureProbe.ForProcess(processId),
 				HasWindow = windows.ContainsKey(processId),
 			};
@@ -212,20 +211,6 @@ public sealed class WindowsRunningApps : IRunningApps
 		return QueryFullProcessImageNameW(process, 0, buffer, ref length) ? new string(buffer, 0, length) : null;
 	}
 
-	/// <summary>The packaged app a process runs as, or null for a process with no package identity.</summary>
-	[SupportedOSPlatform("windows")]
-	private static string? AppUserModelId(IntPtr process)
-	{
-		uint length = 0;
-		var result = GetApplicationUserModelId(process, ref length, null);
-		if (result != ErrorInsufficientBuffer || length == 0) return null;
-
-		var buffer = new char[length];
-		result = GetApplicationUserModelId(process, ref length, buffer);
-
-		return result == 0 ? new string(buffer, 0, (int)Math.Max(0, length - 1)) : null;
-	}
-
 	[SupportedOSPlatform("windows")]
 	private static string Text(IntPtr window)
 	{
@@ -296,7 +281,4 @@ public sealed class WindowsRunningApps : IRunningApps
 	[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
 	[return: MarshalAs(UnmanagedType.Bool)]
 	private static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags, [Out] char[] name, ref int size);
-
-	[DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
-	private static extern int GetApplicationUserModelId(IntPtr process, ref uint length, [Out] char[]? applicationUserModelId);
 }

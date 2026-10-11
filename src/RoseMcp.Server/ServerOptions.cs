@@ -24,6 +24,23 @@ public sealed record ServerOptions
 	/// </summary>
 	public bool NoRelay { get; init; }
 
+	/// <summary>
+	/// The environment variable that points the broker's per-machine records -- the recent debug targets, the accepted
+	/// workspace reasons, and the activity record where no log root moves it -- at another folder than this user's
+	/// local application data.
+	/// </summary>
+	public const string LocalAppDataVariable = "ROSEMCP_LOCAL_APP_DATA";
+
+	/// <summary>
+	/// Where the broker keeps its per-machine records instead of this user's local application data, from
+	/// <see cref="LocalAppDataVariable"/>; null for the user's own. What a test gives a server it starts, so that
+	/// server never writes the records the person using the machine relies on.
+	/// </summary>
+	public string? LocalAppData { get; init; } = Configured(Environment.GetEnvironmentVariable(LocalAppDataVariable));
+
+	/// <summary>A configured folder, or null where the variable is unset or blank.</summary>
+	private static string? Configured(string? folder) => string.IsNullOrWhiteSpace(folder) ? null : folder;
+
 	public static ServerOptions Parse(string[] args)
 	{
 		var useHttp = false;

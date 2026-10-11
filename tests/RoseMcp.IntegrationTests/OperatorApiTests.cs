@@ -451,11 +451,9 @@ public sealed class OperatorApiTests
 	/// than starting another debugger.
 	/// </summary>
 	[Test]
-	[NotInParallel(RecentTargetsKept.Key)]
 	public async Task A_session_a_person_starts_is_theirs_until_they_share_it_with_one_agent_session()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
-		using var recent = new RecentTargetsKept();
 		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
 		await using var agent = await AgentAsync(broker, cancellationToken);
 
@@ -534,6 +532,7 @@ public sealed class OperatorApiTests
 			var remembered = (await broker.GetAsync<RecentTargetList>("/operator/debug/recent", cancellationToken)).Targets.First();
 			remembered.Kind.ShouldBe(LiveAppTargetKind.AttachProcess);
 			remembered.ExecutablePath.ShouldBe(target.MainModule!.FileName, StringCompareShould.IgnoreCase);
+			File.Exists(Settings.RecentTargetsFile.PathFor(broker.Home)).ShouldBeTrue("the server keeps its records in the folder the suite gave it");
 
 			using var detached = await broker.Client.PostAsync(broker.Url($"/operator/sessions/{sessionId}/detach"), content: null, cancellationToken);
 			(await detached.Content.ReadFromJsonAsync<LiveSessionClosed>(ContractJson.Options, cancellationToken)).ShouldNotBeNull().Closed.ShouldBeTrue();
@@ -550,11 +549,9 @@ public sealed class OperatorApiTests
 	/// by a relative path is refused before any host starts, since a window has no folder to measure one from.
 	/// </summary>
 	[Test]
-	[NotInParallel(RecentTargetsKept.Key)]
 	public async Task A_person_launches_a_program_by_its_full_path()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
-		using var recent = new RecentTargetsKept();
 		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
 
 		using (var relative = await broker.Client.PostAsJsonAsync(
@@ -651,35 +648,6 @@ public sealed class OperatorApiTests
 
 	private static string Text(ModelContextProtocol.Protocol.CallToolResult result) =>
 		string.Join("\n", result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Select(block => block.Text));
-
-	/// <summary>
-	/// Puts back the machine's record of what a person debugged lately when a test is done with it: the broker a test
-	/// starts is a real server reading this user's local application data, and a probe the suite attached to is not
-	/// something the person debugged.
-	/// </summary>
-	private sealed class RecentTargetsKept : IDisposable
-	{
-		/// <summary>What the tests that start sessions from a window queue on, since each puts the one record back.</summary>
-		public const string Key = "recent-debug-targets";
-
-		private readonly string _path = Settings.RecentTargetsFile.PathFor();
-		private readonly byte[]? _before;
-
-		public RecentTargetsKept() => _before = File.Exists(_path) ? File.ReadAllBytes(_path) : null;
-
-		public void Dispose()
-		{
-			try
-			{
-				if (_before is null) File.Delete(_path);
-				else File.WriteAllBytes(_path, _before);
-			}
-			catch (IOException)
-			{
-				// Another process has it this moment; a stale recent entry is litter, not a failure.
-			}
-		}
-	}
 
 	/// <summary>The notices an answer's structured content carries.</summary>
 	private static IReadOnlyList<string> Notices(ModelContextProtocol.Protocol.CallToolResult result) =>
@@ -785,9 +753,17 @@ public sealed class OperatorApiTests
 	{
 		private readonly RoseServerProcess _process;
 
-		private OperatorBroker(RoseServerProcess process, int port)
+		/// <summary>
+		/// The server's local application data, a folder of this test's own: the broker keeps per-machine records
+		/// there -- what a person debugged lately among them -- and the ones in the user's own folder belong to the
+		/// person using the machine and to the tray serving them.
+		/// </summary>
+		private readonly string _home;
+
+		private OperatorBroker(RoseServerProcess process, int port, string home)
 		{
 			_process = process;
+			_home = home;
 			Port = port;
 
 			Client = new HttpClient { Timeout = Ceiling };
@@ -797,6 +773,9 @@ public sealed class OperatorApiTests
 		}
 
 		public int Port { get; }
+
+		/// <summary>The local application data this server was given, which no other server shares.</summary>
+		public string Home => _home;
 
 		/// <summary>Carries the token, so every request is one an operator's tools would make.</summary>
 		public HttpClient Client { get; }
@@ -814,14 +793,15 @@ public sealed class OperatorApiTests
 		public static async Task<OperatorBroker> StartAsync(CancellationToken cancellationToken)
 		{
 			var port = RoseServerProcess.FreePort();
+			var home = Path.Combine(Path.GetTempPath(), "RoseMcp.IntegrationTests", "OperatorBroker", Guid.NewGuid().ToString("N"));
 			var process = RoseServerProcess.StartWith(
-				new Dictionary<string, string> { ["ROSEMCP_TOKEN"] = Token },
+				new Dictionary<string, string> { ["ROSEMCP_TOKEN"] = Token, ["ROSEMCP_LOCAL_APP_DATA"] = home },
 				"--transport",
 				"http",
 				"--port",
 				port.ToString());
 
-			var broker = new OperatorBroker(process, port);
+			var broker = new OperatorBroker(process, port, home);
 
 			try
 			{
@@ -868,6 +848,15 @@ public sealed class OperatorApiTests
 			Client.Dispose();
 			Anonymous.Dispose();
 			_process.Dispose();
+
+			try
+			{
+				if (Directory.Exists(_home)) Directory.Delete(_home, recursive: true);
+			}
+			catch (IOException)
+			{
+				// The server's last write can outlast its process by a moment; a temp folder left behind is litter.
+			}
 
 			return ValueTask.CompletedTask;
 		}

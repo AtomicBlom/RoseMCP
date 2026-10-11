@@ -185,7 +185,8 @@ public sealed class LiveAppSessionManager(
 		ArgumentNullException.ThrowIfNull(owners);
 
 		var architecture = DetectArchitecture(target);
-		var hostPath = LiveAppHostLauncher.ResolveHostPath(architecture, _options);
+		var standIn = _options.LiveAppHost?.Invoke(target);
+		var hostPath = standIn is null ? LiveAppHostLauncher.ResolveHostPath(architecture, _options) : "a host the broker's options stood in";
 		var sessionId = NewSessionId();
 
 		CallRecording.Current?.Routed(debugSession: sessionId, target: target.Description);
@@ -194,7 +195,7 @@ public sealed class LiveAppSessionManager(
 		try
 		{
 			var session = await LiveAppSession.StartAsync(
-				sessionId, target, architecture, hostPath, Activities, loggerFactory, cancellationToken);
+				sessionId, target, architecture, hostPath, Activities, loggerFactory, cancellationToken, standIn);
 
 			// Recorded before it is reachable, so there is no window in which a session exists with no
 			// owner and every caller is its owner.
@@ -248,7 +249,8 @@ public sealed class LiveAppSessionManager(
 	/// process that is not a system process (<see cref="LocalAttachPolicy"/>), and neither this broker nor one of its
 	/// live-app hosts, since a debugger stopping either stops the thing serving the debugger. A process already being
 	/// debugged is answered with that session where the asker may reach it -- a process has one debugger -- and
-	/// refused where it may not; two attaches to one process at once are one attach and one refusal.
+	/// refused where it may not; two attaches to one process at once are one attach and one refusal, and so are an
+	/// attach and a launch of the packaged app the process runs as, since both would be a debugger on it.
 	/// </para>
 	/// </summary>
 	/// <exception cref="ArgumentException">The process may not be attached to, and the message says why.</exception>
@@ -261,7 +263,9 @@ public sealed class LiveAppSessionManager(
 		EnsureNotRose(processId);
 
 		var what = $"pid {processId}";
-		using var claim = Claim($"pid:{processId}", what);
+		using var claim = _options.AppUserModelIdOf(processId) is { } runsAs
+			? Claim(what, $"pid:{processId}", AppKey(runsAs))
+			: Claim(what, $"pid:{processId}");
 
 		var open = Sessions.FirstOrDefault(session => Debugs(session, processId));
 		if (Reached(open, owners, what) is { } existing) return existing;
@@ -283,24 +287,43 @@ public sealed class LiveAppSessionManager(
 	/// </summary>
 	private readonly ConcurrentDictionary<string, byte> _starting = new(StringComparer.OrdinalIgnoreCase);
 
-	/// <summary>Claims <paramref name="key"/> for the length of a start, released when the claim is disposed.</summary>
-	/// <exception cref="LiveAppRefusedException">A start against that target is already under way.</exception>
-	private StartClaim Claim(string key, string what)
+	/// <summary>
+	/// Claims every one of <paramref name="keys"/> for the length of a start, or none of them, released when the claim
+	/// is disposed: a process and the packaged app it runs as are one target under two names.
+	/// </summary>
+	/// <exception cref="LiveAppRefusedException">A start against that target, by any of its names, is already under way.</exception>
+	private StartClaim Claim(string what, params string[] keys)
 	{
-		if (!_starting.TryAdd(key, 0))
+		var taken = new List<string>(keys.Length);
+
+		foreach (var key in keys)
 		{
+			if (_starting.TryAdd(key, 0))
+			{
+				taken.Add(key);
+				continue;
+			}
+
+			foreach (var given in taken) _starting.TryRemove(given, out _);
+
 			throw new LiveAppRefusedException(
 				$"A debug session for {what} is already starting, and a process has one debugger. Wait for it, then open "
 					+ "the session it starts.");
 		}
 
-		return new StartClaim(_starting, key);
+		return new StartClaim(_starting, taken);
 	}
 
+	/// <summary>What a packaged app is claimed under, whether it is named by a launch or found running an attached process.</summary>
+	private static string AppKey(string appUserModelId) => $"app:{appUserModelId}";
+
 	/// <summary>One target's claim on starting, given back when disposed, on every path out of the start.</summary>
-	private readonly struct StartClaim(ConcurrentDictionary<string, byte> starting, string key) : IDisposable
+	private readonly struct StartClaim(ConcurrentDictionary<string, byte> starting, IReadOnlyList<string> keys) : IDisposable
 	{
-		public void Dispose() => starting.TryRemove(key, out _);
+		public void Dispose()
+		{
+			foreach (var key in keys) starting.TryRemove(key, out _);
+		}
 	}
 
 	/// <summary>
@@ -350,7 +373,7 @@ public sealed class LiveAppSessionManager(
 		ArgumentNullException.ThrowIfNull(owners);
 
 		var aumid = PackagedApp(appUserModelId);
-		using var claim = Claim($"app:{aumid}", aumid);
+		using var claim = Claim(aumid, AppKey(aumid));
 
 		var open = Sessions.FirstOrDefault(session => Activated(session, aumid));
 		if (Reached(open, owners, aumid) is { } existing) return existing;
@@ -417,10 +440,22 @@ public sealed class LiveAppSessionManager(
 		return Debugging(session, summary) && summary.TargetProcessId == processId;
 	}
 
-	/// <summary>Whether a session is debugging that packaged app now.</summary>
-	private static bool Activated(LiveAppSession session, string appUserModelId) =>
-		string.Equals(session.Target.AppUserModelId, appUserModelId, StringComparison.OrdinalIgnoreCase)
-		&& Debugging(session, session.Describe());
+	/// <summary>
+	/// Whether a session is debugging that packaged app now: one that launched it, or one attached by process id to a
+	/// process running as it -- the same app under its other name, which a second host would race for its one debugger
+	/// and then fail to activate, the app being running already.
+	/// </summary>
+	private bool Activated(LiveAppSession session, string appUserModelId)
+	{
+		var summary = session.Describe();
+		if (!Debugging(session, summary)) return false;
+
+		var launchedIt = string.Equals(session.Target.AppUserModelId, appUserModelId, StringComparison.OrdinalIgnoreCase);
+		if (launchedIt) return true;
+
+		return summary.TargetProcessId is { } processId
+			&& string.Equals(_options.AppUserModelIdOf(processId), appUserModelId, StringComparison.OrdinalIgnoreCase);
+	}
 
 	/// <summary>
 	/// Whether a session is a debugger on its target now. An ended one is not -- its target exited, or its host went,
@@ -430,8 +465,9 @@ public sealed class LiveAppSessionManager(
 		session.IsAlive && summary.State is not (LiveAppSessionState.Ended or LiveAppSessionState.Faulted);
 
 	/// <summary>
-	/// Refuses this broker's own process and every live-app host's: a debugger that stopped either would stop what
-	/// serves the debugger, and nothing could then let it go.
+	/// Refuses this broker's own process, every live-app host's, and any other process of Rose's -- the RoseMCP app
+	/// showing the debugger, the tray, a worker: a debugger that stopped one would stop part of what serves or shows the
+	/// debugger, and nothing could then let it go.
 	/// </summary>
 	/// <exception cref="ArgumentException">The process is part of Rose.</exception>
 	private void EnsureNotRose(int processId)
@@ -448,6 +484,27 @@ public sealed class LiveAppSessionManager(
 		{
 			throw new ArgumentException(
 				$"pid {processId} is the live-app host of a debug session, which is the debugger rather than an app to debug.");
+		}
+
+		if (ProcessName(processId) is { } name && RunningApps.IsRose(name))
+		{
+			throw new ArgumentException(
+				$"pid {processId} is {name}, part of Rose: stopping it at a breakpoint would stop the windows or the services "
+					+ "the debugger is driven through.");
+		}
+	}
+
+	/// <summary>A process's name, or null where it cannot be read.</summary>
+	private static string? ProcessName(int processId)
+	{
+		try
+		{
+			using var process = Process.GetProcessById(processId);
+			return process.ProcessName;
+		}
+		catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+		{
+			return null;
 		}
 	}
 
@@ -549,6 +606,43 @@ public sealed class LiveAppSessionManager(
 		if (unshared is not null) logger.LogInformation("Live-app session {SessionId} is shared with nobody.", sessionId);
 
 		return unshared;
+	}
+
+	/// <summary>
+	/// Ends the calling agent session's share in a session a person started, if that session is still shared with it,
+	/// and says whether it was. Checked and changed under the gate, so a person who has shared the session with another
+	/// agent session in the meantime keeps that share: the caller can only give up what is still its own.
+	/// </summary>
+	public async Task<bool> LeaveAsync(string sessionId, CancellationToken cancellationToken)
+	{
+		var caller = CallSession.ClientKey;
+		var left = false;
+
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			var stillTheirs = _sessions.TryGetValue(sessionId, out var session)
+				&& session.Owners is { IsPersons: true, Shared: { } shared }
+				&& string.Equals(shared.Key, caller, StringComparison.Ordinal);
+
+			if (stillTheirs)
+			{
+				session!.Owners = session.Owners.Unshared();
+				left = true;
+			}
+		}
+		finally
+		{
+			_gate.Release();
+		}
+
+		if (left)
+		{
+			Changed.Pulse();
+			logger.LogInformation("Live-app session {SessionId} was left by the agent session it was shared with.", sessionId);
+		}
+
+		return left;
 	}
 
 	/// <summary>Replaces a session's owners under the gate, pulsing the change; null where no such session is open.</summary>

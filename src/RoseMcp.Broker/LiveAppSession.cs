@@ -121,11 +121,12 @@ public sealed class LiveAppSession : IAsyncDisposable
 		string hostPath,
 		ActivityLog activities,
 		ILoggerFactory loggerFactory,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IClientTransport? host = null)
 	{
 		var logger = loggerFactory.CreateLogger<LiveAppSession>();
 
-		var transport = new StdioClientTransport(
+		var transport = host ?? new StdioClientTransport(
 			new StdioClientTransportOptions
 			{
 				Command = hostPath,

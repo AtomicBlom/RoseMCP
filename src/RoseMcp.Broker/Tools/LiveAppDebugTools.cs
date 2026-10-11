@@ -202,7 +202,7 @@ public sealed class LiveAppDebugTools(
 		{
 			// The person's session, reached because they shared it with this one: leaving ends the share and
 			// leaves their debugger where it is, since an agent tidying up must not take it away from them.
-			await sessions.UnshareAsync(sessionId, cancellationToken);
+			await sessions.LeaveAsync(sessionId, cancellationToken);
 
 			return new LiveSessionDetached { SessionId = sessionId, Detached = false, Detail = LeftPersonsSession };
 		}

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 using RoseMcp.Broker;
+using RoseMcp.Contracts;
 using RoseMcp.Settings;
 
 namespace RoseMcp.UnitTests;
@@ -118,6 +119,93 @@ public sealed class DebugStartRulesTests : IDisposable
 	[Test]
 	public void A_packaged_apps_id_is_trimmed() =>
 		LiveAppSessionManager.PackagedApp("  Drawboard.PDF_gqbn7fs4pywxm!App \n").ShouldBe("Drawboard.PDF_gqbn7fs4pywxm!App");
+
+	/// <summary>
+	/// A package launch finds the session already attached, by process id, to a process running as that package: the
+	/// same app under its other name. The person is handed it and no host is started -- a second one would race for the
+	/// app's one debugger and then wait out an activation of an app already running -- and another agent session is
+	/// refused it, as it would be refused the process.
+	/// </summary>
+	[Test]
+	public async Task A_package_launch_finds_the_session_attached_to_its_running_process()
+	{
+		const string Aumid = "RoseProbe_8wekyb3d8bbwe!App";
+		const int Running = 4242;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		await using var hosts = new FakeLiveAppHost();
+		await using var sessions = Manager(hosts, processId => processId == Running ? Aumid : null);
+
+		var attached = await sessions.StartAsync(
+			new LiveAppTarget { Kind = LiveAppTargetKind.AttachProcess, ProcessId = Running, Description = "probe" },
+			LiveAppOwners.Agent("mcp-one"),
+			cancellationToken);
+		hosts.Started.ShouldBe(1);
+
+		var launched = await sessions.LaunchPackageAsync(Aumid, "Rose Probe", LiveAppOwners.Person, cancellationToken);
+
+		launched.Existing.ShouldBeTrue();
+		launched.Session.ShouldBeSameAs(attached);
+		hosts.Started.ShouldBe(1, "a process has one debugger, so no second host is started for it");
+
+		using (CallSession.Use("mcp-two"))
+		{
+			(await Should.ThrowAsync<LiveAppRefusedException>(
+				() => sessions.LaunchPackageAsync(Aumid, null, LiveAppOwners.OfCaller(), cancellationToken)))
+				.Message.ShouldContain("already being debugged");
+		}
+
+		using (CallSession.Use("mcp-one"))
+		{
+			(await sessions.LaunchPackageAsync(Aumid, null, LiveAppOwners.OfCaller(), cancellationToken)).Session.ShouldBeSameAs(attached);
+		}
+
+		hosts.Started.ShouldBe(1);
+	}
+
+	/// <summary>
+	/// An agent session leaving a session the person shared with it gives up only its own share: once the person has
+	/// shared the session with another agent session instead, the first one's leaving changes nothing.
+	/// </summary>
+	[Test]
+	public async Task Leaving_a_shared_session_gives_up_only_the_callers_own_share()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		await using var hosts = new FakeLiveAppHost();
+		await using var sessions = Manager(hosts, _ => null);
+
+		var session = await sessions.StartAsync(
+			new LiveAppTarget { Kind = LiveAppTargetKind.AttachProcess, ProcessId = 4343, Description = "probe" },
+			LiveAppOwners.Person,
+			cancellationToken);
+
+		await sessions.ShareAsync(session.SessionId, new LiveAppSharedClient("relay:relayed-aaaaaaaaaaaaaaaa", "client-1", "one"), cancellationToken);
+		await sessions.ShareAsync(session.SessionId, new LiveAppSharedClient("relay:relayed-bbbbbbbbbbbbbbbb", "client-2", "two"), cancellationToken);
+
+		using (CallSession.Use(id: null, client: "relayed-aaaaaaaaaaaaaaaa", relayed: "relayed-aaaaaaaaaaaaaaaa"))
+		{
+			(await sessions.LeaveAsync(session.SessionId, cancellationToken)).ShouldBeFalse("the share is no longer this session's");
+		}
+
+		session.Owners.Shared.ShouldNotBeNull().ClientId.ShouldBe("client-2");
+
+		using (CallSession.Use(id: null, client: "relayed-bbbbbbbbbbbbbbbb", relayed: "relayed-bbbbbbbbbbbbbbbb"))
+		{
+			(await sessions.LeaveAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			sessions.Find(session.SessionId).ShouldBeNull("left, it is the person's alone");
+		}
+
+		session.Owners.Shared.ShouldBeNull();
+		sessions.ForOperator(session.SessionId).ShouldBeSameAs(session, "leaving never ends a person's session");
+	}
+
+	/// <summary>A manager whose hosts are <paramref name="hosts"/> and whose processes run as <paramref name="runsAs"/> says.</summary>
+	private static LiveAppSessionManager Manager(FakeLiveAppHost hosts, Func<int, string?> runsAs) =>
+		new(
+			Options.Create(new BrokerOptions { LiveAppHost = hosts.For, AppUserModelIdOf = runsAs }),
+			NullLoggerFactory.Instance,
+			NullLogger<LiveAppSessionManager>.Instance);
 
 	/// <summary>Sharing, unsharing and closing a session that is not open are answers rather than failures.</summary>
 	[Test]

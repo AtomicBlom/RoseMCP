@@ -124,7 +124,9 @@ dotnet run --project src/RoseMcp.Tray                                    # tray 
 
 The broker finds the worker binary next to itself, then via `ROSEMCP_WORKER`, then in the sibling
 project output, so running from source works without publishing first. Non-loopback http binds are
-refused unless `ROSEMCP_TOKEN` is set.
+refused unless `ROSEMCP_TOKEN` is set. `ROSEMCP_LOCAL_APP_DATA` points a server's per-machine records --
+recent debug targets, accepted workspace reasons, and the activity record unless a log root moves it --
+at another folder than your own `%LOCALAPPDATA%`; the integration suite gives every server it starts one.
 
 Anything you start from a checkout -- a tray, a server, a window -- runs from its `bin` and holds it
 open until it exits. Give a tray or server a port other than 5077, which an installed tray holds, and

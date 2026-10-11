@@ -382,5 +382,6 @@ internal static class Program
 	{
 		broker.WorkerPath = options.WorkerPath;
 		broker.NoRestore = options.NoRestore;
+		broker.LocalAppData = options.LocalAppData;
 	}
 }

@@ -293,8 +293,9 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   end a host that started and was never registered, and take out through the close's own teardown a session
   that came up faulted or whose asker gave up before it was answered, with a token of their own rather than
   the one that was cancelled. A host left behind by any of those keeps its target under a debugger nobody can
-  reach or detach. Two starts against one process or one package at once are one start and one refusal, and
-  a target already being debugged answers with its session wherever the asker may reach it. No tool call ends
+  reach or detach. Two starts against one target at once are one start and one refusal, a process and the
+  packaged app it runs as being one target under two names, and a target already being debugged -- by either
+  name -- answers with its session wherever the asker may reach it. No tool call ends
   a session a person started: an agent it was shared with leaves it, and the debugger stays.
 - **The one git the broker runs is bounded, contained and off every agent's path.**
   `CheckoutDistanceReader` counts how far a local build's checkout has moved on, for

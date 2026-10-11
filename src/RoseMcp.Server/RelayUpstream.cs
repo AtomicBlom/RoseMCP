@@ -33,14 +33,15 @@ public abstract class RelayUpstream : IAsyncDisposable
 	public abstract Task<RelayHello?> HelloAsync(McpClient client, CancellationToken cancellationToken);
 
 	/// <summary>
-	/// Completes when the broker behind <paramref name="client"/> may have gone; the caller asks it
-	/// before believing so. A watch that cannot be held waits until cancelled, leaving a lost broker
-	/// to be found by the next call.
+	/// Completes when the broker behind <paramref name="client"/> may have gone, saying why. A watch that
+	/// closed leaves the caller to ask the broker before believing it gone; one that reached another
+	/// broker instance is the answer already. A watch that cannot be held waits until cancelled, leaving
+	/// a lost broker to be found by the next call.
 	/// </summary>
 	/// <param name="client">The connection the relay is using.</param>
 	/// <param name="instance">The broker instance the relay believes it is connected to, where it knows one.</param>
 	/// <param name="cancellationToken">Ends the watch, when the relay does.</param>
-	public abstract Task WatchAsync(McpClient client, string? instance, CancellationToken cancellationToken);
+	public abstract Task<WatchEnd> WatchAsync(McpClient client, string? instance, CancellationToken cancellationToken);
 
 	/// <inheritdoc/>
 	public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;

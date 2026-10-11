@@ -59,6 +59,9 @@ public sealed class ChildBrokerUpstream(
 		Task.FromResult<RelayHello?>(null);
 
 	/// <summary>Completes when the child's connection does, which is when the child exits.</summary>
-	public override Task WatchAsync(McpClient client, string? instance, CancellationToken cancellationToken) =>
-		client.Completion.WaitAsync(cancellationToken);
+	public override async Task<WatchEnd> WatchAsync(McpClient client, string? instance, CancellationToken cancellationToken)
+	{
+		await client.Completion.WaitAsync(cancellationToken);
+		return WatchEnd.Closed;
+	}
 }

@@ -71,7 +71,9 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   session hears of a deploy without making a call. A watch ending is a reason to look, not proof: the
   broker is asked first -- any answer counts, since the 2026-07-28 revision has no `ping` -- because
   reconnecting to a live broker opens a new MCP session, and the debug sessions belong to the old one.
-  Calls and the watch reconnect through one gate, and the comparison of the new broker's tools and
+  A watch that reached another broker instance is the exception, and `WatchEnd` says which ended it:
+  the old connection reaches the new broker too, which answers it, so asking would keep the relay
+  there for good, and that watch reconnects without asking. Calls and the watch reconnect through one gate, and the comparison of the new broker's tools and
   instructions with what the client last listed happens inside it, so one restart is one comparison
   and at most one `notifications/tools/list_changed`. That notification goes through `ToolListSignal`,
   the SDK's fan-out for a changed collection, never by hand: a 2026-07-28 client asks for it on a

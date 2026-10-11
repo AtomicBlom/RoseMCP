@@ -80,12 +80,21 @@ internal sealed class FakeUpstream : RelayUpstream
 		});
 	}
 
-	public override async Task WatchAsync(McpClient client, string? instance, CancellationToken cancellationToken)
+	public override async Task<WatchEnd> WatchAsync(McpClient client, string? instance, CancellationToken cancellationToken)
 	{
 		_watching = _owners.GetValueOrDefault(client);
 
-		if (Interlocked.Exchange(ref _watchesToEndEarly, 0) == 1) return;
+		if (Interlocked.Exchange(ref _watchesToEndEarly, 0) == 1) return WatchEnd.Closed;
+
+		// The watch is a request of its own to the endpoint, so it reaches whichever broker listens
+		// there now, whatever the relay's connection is to; one other than the relay believes it holds
+		// ends the watch at once, as the real one does.
+		if (_current is { } listening && instance is not null && !string.Equals(listening.Instance, instance, StringComparison.Ordinal))
+		{
+			return WatchEnd.ReachedAnother(listening.Instance);
+		}
 
 		await client.Completion.WaitAsync(cancellationToken);
+		return WatchEnd.Closed;
 	}
 }

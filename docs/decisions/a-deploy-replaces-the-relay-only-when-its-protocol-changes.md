@@ -52,7 +52,11 @@ with the wrong tools in hand; polling would add a request and its log lines ever
 session to a tray log that is already large. A watch that ends is a reason to look rather than proof:
 the relay asks the broker first, because reconnecting to one that is still there opens a new MCP
 session and the debug sessions belong to the old one. The 2026-07-28 revision has no `ping`, so any
-answer counts, a refusal included. Reconnecting loops, two seconds apart, for as long as the relay
+answer counts, a refusal included. That is why a watch whose first line names another instance is
+not asked about: the broker restarted between the relay connecting and the watch arriving, the old
+connection reaches the new broker on the same endpoint, which refuses it -- an answer -- and asking
+would keep the relay on that connection for good. The watch says why it ended, and that one
+reconnects at once. Reconnecting loops, two seconds apart, for as long as the relay
 lives, since a tray mid-deploy is down for as long as the copy takes. Calls and the watch share one
 reconnect, and the comparison happens inside it, so one restart is one comparison and at most one
 notification.

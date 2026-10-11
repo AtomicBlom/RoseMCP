@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.IO.Pipelines;
 using System.Text.Json;
 
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -28,6 +29,7 @@ internal sealed class FakeBroker : IAsyncDisposable
 	private readonly string? _instructions;
 	private int _nextSession;
 	private int _listings;
+	private bool _refusing;
 
 	public FakeBroker(IReadOnlyList<Tool> tools, string? instructions, string commit)
 	{
@@ -52,6 +54,17 @@ internal sealed class FakeBroker : IAsyncDisposable
 
 	/// <summary>How many tool listings this broker has answered.</summary>
 	public int Listings => _listings;
+
+	/// <summary>
+	/// Whether every request is answered with a protocol error, as a broker that has restarted on the
+	/// same endpoint answers a connection to the one before it: something answers, and it is not the
+	/// broker the connection was opened to.
+	/// </summary>
+	public bool Refusing
+	{
+		get => Volatile.Read(ref _refusing);
+		set => Volatile.Write(ref _refusing, value);
+	}
 
 	/// <summary>A tool the relay may re-send, as a broker's read-only tools are.</summary>
 	public static Tool ReadOnly(string name, string description = "Reads something.") => new()
@@ -95,6 +108,16 @@ internal sealed class FakeBroker : IAsyncDisposable
 				CallToolHandler = (context, _) => ValueTask.FromResult(Call(context.Params!)),
 			},
 		};
+
+		options.Filters.Message.IncomingFilters.Add(next => async (context, token) =>
+		{
+			if (Refusing && context.JsonRpcMessage is JsonRpcRequest request)
+			{
+				throw new McpProtocolException($"No session answers {request.Method} here.", McpErrorCode.InvalidRequest);
+			}
+
+			await next(context, token);
+		});
 
 		var server = McpServer.Create(new StreamServerTransport(toServer.Reader.AsStream(), toClient.Writer.AsStream()), options);
 		var stop = new CancellationTokenSource();

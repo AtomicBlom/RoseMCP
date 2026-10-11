@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 
 using RoseMcp.Contracts;
@@ -223,6 +224,46 @@ public sealed class RelayReconnectTests
 
 		upstream.Connections.ShouldBe(1);
 		Notices(await Call(relay, "probe_read", cancellationToken)).ShouldBeEmpty();
+	}
+
+	/// <summary>
+	/// A watch that reaches another broker than the one the relay is connected to reconnects at once,
+	/// without asking the old connection first. A broker restarted on the same endpoint answers that
+	/// connection with a protocol error, which counts as an answer when a watch merely ended, so asking
+	/// would keep the relay on the old connection for good, watching again every pause.
+	/// </summary>
+	[Test]
+	public async Task A_watch_that_reaches_a_new_broker_reconnects_though_the_old_connection_answers()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		await using var first = new FakeBroker([FakeBroker.ReadOnly("probe_read")], Instructions, Commit('a'));
+		var upstream = new FakeUpstream(first);
+		upstream.EndNextWatchEarly();
+
+		await using var relay = await TrayRelay.ConnectAsync(upstream, Directory.GetCurrentDirectory(), NullLoggerFactory.Instance, Patience, cancellationToken);
+		var changes = Count(relay);
+
+		// What the old connection meets once the broker has restarted under it: a refusal, not silence.
+		await using (var probe = await first.ConnectAsync(cancellationToken))
+		{
+			first.Refusing = true;
+			await Should.ThrowAsync<McpProtocolException>(() => probe.PingAsync(cancellationToken: cancellationToken).AsTask());
+		}
+
+		// Inside the pause after the early watch: the next watch reaches the new broker.
+		await using var second = new FakeBroker([FakeBroker.ReadOnly("probe_read")], Instructions, Commit('b'));
+		upstream.Current = second;
+
+		await Eventually(() => upstream.Watching == second, "the relay moves to the broker its watch reached", cancellationToken);
+
+		var line = Notices(await Call(relay, "probe_read", cancellationToken)).ShouldHaveSingleItem();
+		line.ShouldStartWith("RoseMCP restarted and is now build 1.3.0 at bbbbbbb", Case.Sensitive);
+
+		upstream.Connections.ShouldBe(2, "one reconnect, to the broker the watch reached");
+		changes.Raised.ShouldBe(0, "the new broker has the same tools");
+		second.Calls.ShouldContain("probe_read", "the call after the reconnect is served by the new broker");
+		Notices(await Call(relay, "probe_read", cancellationToken)).ShouldBeEmpty("the restart is said once");
 	}
 
 	/// <summary>

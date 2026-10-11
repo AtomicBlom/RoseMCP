@@ -124,7 +124,7 @@ public sealed class TrayUpstream : RelayUpstream
 	/// one speaking a protocol this relay does not: then the watch waits until cancelled, and a lost
 	/// tray is found by the next call instead.
 	/// </summary>
-	public override async Task WatchAsync(McpClient client, string? instance, CancellationToken cancellationToken)
+	public override async Task<WatchEnd> WatchAsync(McpClient client, string? instance, CancellationToken cancellationToken)
 	{
 		using var request = Request(RelayProtocol.WatchRoute);
 		using var answer = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
@@ -141,25 +141,27 @@ public sealed class TrayUpstream : RelayUpstream
 			}
 
 			await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-			return;
+			return WatchEnd.Closed;
 		}
 
 		using var body = new StreamReader(await answer.Content.ReadAsStreamAsync(cancellationToken));
 
 		// The first line says which broker holds the watch. One other than the relay's own means the
 		// tray restarted between the relay connecting and the watch arriving, and the connection the
-		// relay holds is to a broker that has gone.
+		// relay holds is to a broker that has gone -- though the endpoint it names still answers it.
 		var first = await body.ReadLineAsync(cancellationToken);
-		if (first is null) return;
+		if (first is null) return WatchEnd.Closed;
 
 		var hello = Hello(first);
 		var landedElsewhere = instance is not null && hello is not null && !string.Equals(hello.Instance, instance, StringComparison.Ordinal);
-		if (landedElsewhere) return;
+		if (landedElsewhere) return WatchEnd.ReachedAnother(hello!.Instance);
 
 		while (await body.ReadLineAsync(cancellationToken) is not null)
 		{
 			// Nothing else is written; the loop ends when the response does.
 		}
+
+		return WatchEnd.Closed;
 	}
 
 	/// <inheritdoc/>

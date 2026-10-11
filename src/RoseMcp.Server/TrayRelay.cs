@@ -476,7 +476,7 @@ public sealed class TrayRelay : IAsyncDisposable
 	/// attempt rather than a second window of its own.
 	/// </para>
 	/// </summary>
-	private async Task<McpClient> ReconnectAsync(McpClient stale, TimeSpan within, CancellationToken cancellationToken)
+	private async Task<McpClient> ReconnectAsync(McpClient stale, TimeSpan within, CancellationToken cancellationToken, string? reachedInstance = null)
 	{
 		var asked = Stopwatch.GetTimestamp();
 		await _reconnecting.WaitAsync(cancellationToken);
@@ -484,6 +484,11 @@ public sealed class TrayRelay : IAsyncDisposable
 		try
 		{
 			if (!ReferenceEquals(_tray, stale)) return _tray;
+
+			// The watch reads the instance without the gate, so it can pair a new connection with the instance
+			// before it and find "another" broker that is in fact the one a reconnect has just adopted.
+			var reachedTheOneHeld = reachedInstance is not null && string.Equals(reachedInstance, _instance, StringComparison.Ordinal);
+			if (reachedTheOneHeld) return _tray;
 
 			await DisposeQuietlyAsync(stale);
 
@@ -608,11 +613,13 @@ public sealed class TrayRelay : IAsyncDisposable
 	/// <summary>
 	/// Watches the broker for as long as the relay lives, and reconnects when it goes.
 	/// <para>
-	/// A watch ending is a reason to look, not proof: the broker is asked before anything is replaced,
-	/// because reconnecting to a broker that is still there opens a new connection, and the debug
-	/// sessions this session started belong to the old one. A broker that is really gone is reconnected
-	/// to until it is back -- a tray mid-deploy is down for as long as the copy takes -- unless it was
-	/// one this relay started, which ends the relay instead.
+	/// A watch that closed is a reason to look, not proof: the broker is asked before anything is
+	/// replaced, because reconnecting to a broker that is still there opens a new connection, and the
+	/// debug sessions this session started belong to the old one. A broker that is really gone is
+	/// reconnected to until it is back -- a tray mid-deploy is down for as long as the copy takes --
+	/// unless it was one this relay started, which ends the relay instead. A watch that reached another
+	/// broker instance is not asked about: the old connection reaches that new broker too, which answers
+	/// it, so asking would keep the relay on it.
 	/// </para>
 	/// </summary>
 	private async Task WatchAsync()
@@ -622,6 +629,7 @@ public sealed class TrayRelay : IAsyncDisposable
 		while (!token.IsCancellationRequested)
 		{
 			var watched = _tray;
+			var ended = WatchEnd.Closed;
 
 			using (var scope = CancellationTokenSource.CreateLinkedTokenSource(token))
 			{
@@ -632,7 +640,7 @@ public sealed class TrayRelay : IAsyncDisposable
 
 				try
 				{
-					await _upstream.WatchAsync(watched, _instance, scope.Token);
+					ended = await _upstream.WatchAsync(watched, _instance, scope.Token);
 				}
 				catch (OperationCanceledException) when (token.IsCancellationRequested)
 				{
@@ -646,6 +654,14 @@ public sealed class TrayRelay : IAsyncDisposable
 
 			if (token.IsCancellationRequested) return;
 			if (!ReferenceEquals(watched, _tray)) continue;
+
+			if (ended.AnotherInstance is { } another)
+			{
+				_logger.LogWarning("{Upstream} is another broker than this relay is connected to; reconnecting.", _upstream.Name);
+				await ReconnectUntilBackAsync(watched, another, token);
+
+				continue;
+			}
 
 			if (await AnswersAsync(watched, token))
 			{
@@ -662,18 +678,21 @@ public sealed class TrayRelay : IAsyncDisposable
 			}
 
 			_logger.LogWarning("{Upstream} has gone; reconnecting.", _upstream.Name);
-			await ReconnectUntilBackAsync(watched, token);
+			await ReconnectUntilBackAsync(watched, reachedInstance: null, token);
 		}
 	}
 
 	/// <summary>Reconnects until a broker answers or the relay ends, pausing between attempts.</summary>
-	private async Task ReconnectUntilBackAsync(McpClient stale, CancellationToken token)
+	/// <param name="stale">The connection the watch found wanting.</param>
+	/// <param name="reachedInstance">The broker instance the watch reached, where that is why it ended.</param>
+	/// <param name="token">The relay's lifetime.</param>
+	private async Task ReconnectUntilBackAsync(McpClient stale, string? reachedInstance, CancellationToken token)
 	{
 		while (!token.IsCancellationRequested)
 		{
 			try
 			{
-				await ReconnectAsync(stale, ReconnectWindow, token);
+				await ReconnectAsync(stale, ReconnectWindow, token, reachedInstance);
 				return;
 			}
 			catch (OperationCanceledException) when (token.IsCancellationRequested)

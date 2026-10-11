@@ -475,7 +475,8 @@ public sealed class AgentNotes
 	{
 		if (text is { Length: > MaxText })
 		{
-			throw new ArgumentException($"{what} is at most {MaxText:N0} characters, and this one is {text.Length:N0}.");
+			throw new ArgumentException(string.Create(
+				CultureInfo.InvariantCulture, $"{what} is at most {MaxText:N0} characters, and this one is {text.Length:N0}."));
 		}
 
 		return Cleaned(text, MaxText, keepLines: true) ?? throw new ArgumentException($"{what} says something, and this one is empty.");

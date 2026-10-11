@@ -112,6 +112,13 @@ public sealed class TrayRelay : IAsyncDisposable
 	/// </summary>
 	private int _adoptions;
 
+	/// <summary>
+	/// Completed except while a reconnect has published a new connection and is still reading what that
+	/// broker offers. Calls wait on it: one answered by the new broker before the reading is done would
+	/// carry no line, and the client would have an answer from a broker it was not told had restarted.
+	/// </summary>
+	private volatile Task _adopted = Task.CompletedTask;
+
 	/// <summary>The broker's tools and instructions as last read.</summary>
 	private ToolSurface _surface;
 
@@ -436,6 +443,10 @@ public sealed class TrayRelay : IAsyncDisposable
 		bool retryable,
 		CancellationToken cancellationToken)
 	{
+		// A reconnect still reading the broker it reached holds calls back until it has, so the line it
+		// decides on goes on the first result the new broker gives.
+		await _adopted.WaitAsync(cancellationToken);
+
 		var tray = _tray;
 
 		using var cancelling = cancellationToken.Register(
@@ -520,9 +531,11 @@ public sealed class TrayRelay : IAsyncDisposable
 
 			var left = within - Stopwatch.GetElapsedTime(asked);
 
+			McpClient fresh;
+
 			try
 			{
-				_tray = await _upstream.ConnectAsync(left > TimeSpan.Zero ? left : TimeSpan.Zero, cancellationToken);
+				fresh = await _upstream.ConnectAsync(left > TimeSpan.Zero ? left : TimeSpan.Zero, cancellationToken);
 			}
 			catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
 			{
@@ -533,17 +546,21 @@ public sealed class TrayRelay : IAsyncDisposable
 					exception);
 			}
 
-			_logger.LogInformation("Reconnected to {Upstream}.", _upstream.Name);
-
-			// A reconnect is usually a deploy, which is exactly when the tray becomes another build.
-			SayIfAnotherBuild(_tray);
-
-			// Not the call's work, though a call may have found the broker gone: what it reads serves
-			// every call after this one.
-			var fresh = _tray;
+			// Calls are held from the moment the connection is published until the adopt is over, so none is
+			// answered by the new broker before the relay knows what to tell the client about it.
+			var adopting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+			_adopted = adopting.Task;
+			_tray = fresh;
 
 			try
 			{
+				_logger.LogInformation("Reconnected to {Upstream}.", _upstream.Name);
+
+				// A reconnect is usually a deploy, which is exactly when the tray becomes another build.
+				SayIfAnotherBuild(fresh);
+
+				// Not the call's work, though a call may have found the broker gone: what it reads serves
+				// every call after this one.
 				await Detached.Run(() => AdoptAsync(fresh));
 			}
 			finally
@@ -551,6 +568,7 @@ public sealed class TrayRelay : IAsyncDisposable
 				// Counted once the adopt is over, never when the connection is published: a watch that began
 				// in between paired this connection with the instance before it.
 				Interlocked.Increment(ref _adoptions);
+				adopting.TrySetResult();
 			}
 
 			CancelQuietly(Volatile.Read(ref _watch));

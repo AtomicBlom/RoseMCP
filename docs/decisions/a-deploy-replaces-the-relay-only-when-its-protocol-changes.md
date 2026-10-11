@@ -87,7 +87,9 @@ were added, removed or changed. Debug sessions die with the broker, so they are 
 after every call that starts or ends one, the relay asks `rose_debug_list`, which answers with the
 sessions the asking connection started, and every call a session makes goes through the relay's one
 connection. A session whose host died between those readings is still named, as one this session
-had open, which it was. Two restarts before any result fold into one line.
+had open, which it was. Two restarts before any result fold into one line. A call that arrives while
+a reconnect is still reading the new broker waits for that reading, so the first answer the new
+broker gives is the one that carries the line.
 
 **With no tray.** An installed relay that finds no tray does not host the broker from its own
 assemblies, which are as old as the last relay protocol change: every tool would answer from that

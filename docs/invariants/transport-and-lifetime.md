@@ -83,7 +83,10 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   `subscriptions/listen` stream and must get it tagged with that subscription. The relay advertises
   `tools.listChanged` itself and gives the broker's instructions as its own, because the client never
   sees the broker's handshake. The restart line is claimed from `PendingNotice` only once a result is
-  in hand, so exactly one result carries it and a failed call leaves it for the next. The broker's
+  in hand, so exactly one result carries it and a failed call leaves it for the next. A reconnect
+  publishes the new connection before it has read the broker behind it, so calls wait on that reading
+  (`_adopted`) before taking the connection: one answered in between would carry no line, and the
+  client would have an answer from a broker it was not told had restarted. The broker's
   instance id, not its build, says whether it restarted. The watch and the reconnect loop are
   `Detached`, bounded by the relay's lifetime, and disposing the relay cancels them and waits for them
   before closing the connection -- which, for a child broker, ends the child and its workers. See

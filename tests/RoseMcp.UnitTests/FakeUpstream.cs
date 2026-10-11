@@ -20,6 +20,7 @@ internal sealed class FakeUpstream : RelayUpstream
 	private volatile TaskCompletionSource? _closedWatchesHeld;
 	private volatile TaskCompletionSource? _silentHello;
 	private int _silentHelloOn;
+	private bool _helloAnswersAfterHold;
 	private int _connections;
 	private int _watchesToEndEarly;
 	private int _reachedAnother;
@@ -66,10 +67,17 @@ internal sealed class FakeUpstream : RelayUpstream
 	/// Makes the hello on connection <paramref name="connection"/> wait until the returned source is
 	/// completed and then say nothing, as a tray still starting answers it: late, or not at all.
 	/// </summary>
-	public TaskCompletionSource SilenceHelloOn(int connection)
+	public TaskCompletionSource SilenceHelloOn(int connection) => HoldHelloOn(connection, answers: false);
+
+	/// <summary>
+	/// Makes the hello on connection <paramref name="connection"/> wait until the returned source is
+	/// completed, which holds the relay's adopt of that connection open, and then answer or not.
+	/// </summary>
+	public TaskCompletionSource HoldHelloOn(int connection, bool answers)
 	{
 		var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 		_silentHello = release;
+		_helloAnswersAfterHold = answers;
 		Volatile.Write(ref _silentHelloOn, connection);
 
 		return release;
@@ -104,7 +112,7 @@ internal sealed class FakeUpstream : RelayUpstream
 		if (silenced && _silentHello is { } release)
 		{
 			await release.Task.WaitAsync(cancellationToken);
-			return null;
+			if (!_helloAnswersAfterHold) return null;
 		}
 
 		return new RelayHello

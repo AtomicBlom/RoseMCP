@@ -174,6 +174,42 @@ public sealed class RelayReconnectTests
 	}
 
 	/// <summary>
+	/// A call that arrives while a reconnect is still reading what the new broker offers waits for that
+	/// reading, so its result -- the first after the reconnect -- carries the line. Served by the new
+	/// connection before the reading was done, it carried nothing, and the line went on a later result,
+	/// after the client had already had an answer from a broker it was not told had restarted.
+	/// </summary>
+	[Test]
+	public async Task A_call_made_while_a_reconnect_reads_the_new_broker_carries_the_line()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		await using var first = new FakeBroker([FakeBroker.ReadOnly("probe_read")], Instructions, Commit('a'));
+		var upstream = new FakeUpstream(first);
+		await using var relay = await TrayRelay.ConnectAsync(upstream, Directory.GetCurrentDirectory(), NullLoggerFactory.Instance, Patience, cancellationToken);
+		var changes = Count(relay);
+		await Eventually(() => upstream.Watching == first, "the relay watches the first broker", cancellationToken);
+
+		await using var second = new FakeBroker([FakeBroker.ReadOnly("probe_read")], Instructions, Commit('b'));
+		var hello = upstream.HoldHelloOn(2, answers: true);
+		upstream.Current = second;
+		await first.DropConnectionsAsync();
+
+		// The watch has reconnected and is reading the new broker, held at its hello.
+		await Eventually(() => upstream.Connections == 2, "the relay reconnects", cancellationToken);
+
+		var call = Call(relay, "probe_read", cancellationToken);
+		var answeredMidReading = await Task.WhenAny(call, Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken)) == call;
+
+		hello.SetResult();
+
+		answeredMidReading.ShouldBeFalse("the call waits for the reconnect to finish reading the broker it reached");
+		Notices(await call).ShouldHaveSingleItem().ShouldStartWith("RoseMCP restarted and is now build 1.3.0 at bbbbbbb", Case.Sensitive);
+		Notices(await Call(relay, "probe_read", cancellationToken)).ShouldBeEmpty("the restart is said once");
+		changes.Raised.ShouldBe(0);
+	}
+
+	/// <summary>
 	/// Every call in flight fails at once when the broker goes. They and the watch share one
 	/// reconnect, the read-only ones are re-sent to the new broker, and exactly one of their results
 	/// carries the line.

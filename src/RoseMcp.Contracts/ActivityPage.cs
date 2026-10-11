@@ -18,6 +18,12 @@ public sealed record ActivityPage
 	/// <summary>How many entries matched, of which <see cref="Entries"/> holds the newest; more than its count where the limit cut it.</summary>
 	public required int Matched { get; init; }
 
+	/// <summary>
+	/// Whether the record holds entries older than a listing reaches. A listing reads at most a set number of the
+	/// newest entries, so on a busy machine the oldest days are on disk but not listed; each can still be read by its id.
+	/// </summary>
+	public bool OlderNotListed { get; init; }
+
 	/// <summary>Where the record is kept, so a person can find the files.</summary>
 	public string? Directory { get; init; }
 

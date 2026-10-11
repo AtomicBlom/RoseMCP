@@ -78,6 +78,14 @@ public sealed class BrokerOptions
 		() => TimeSpan.FromDays(Settings.RoseSettingsFile.Read().ActivityRetentionDays);
 
 	/// <summary>
+	/// Opens one of the activity record's files for writing, created new or opened to append. A file on disk, shared
+	/// for reading and deleting, everywhere but a test, which replaces it to make a write fail or stall the way a full
+	/// or slow disk does, which no folder can be made to do on demand.
+	/// </summary>
+	public Func<string, FileMode, Stream> OpenActivityFile { get; set; } =
+		(path, mode) => new FileStream(path, mode, FileAccess.Write, FileShare.Read | FileShare.Delete);
+
+	/// <summary>
 	/// How long a freshly started worker has to complete its MCP handshake.
 	/// <para>
 	/// Set explicitly because the SDK's own default is 60 seconds, and a worker begins loading its

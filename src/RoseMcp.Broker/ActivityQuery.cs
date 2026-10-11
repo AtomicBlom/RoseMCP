@@ -12,6 +12,12 @@ public sealed record ActivityQuery
 	/// <summary>The most a query answers with, however many it asks for.</summary>
 	public const int MaxLimit = 1000;
 
+	/// <summary>
+	/// The most a query answers with when it asks for bodies: each body can be tens of kilobytes, so a page of them is
+	/// kept to what a window shows at once.
+	/// </summary>
+	public const int MaxLimitWithBodies = 50;
+
 	/// <summary>A client, by <see cref="Contracts.ActivityEntry.ClientId"/> or <see cref="Contracts.ActivityEntry.ClientKey"/>.</summary>
 	public string? Client { get; init; }
 
@@ -30,7 +36,10 @@ public sealed record ActivityQuery
 	/// <summary>Only entries that started before this.</summary>
 	public DateTimeOffset? Until { get; init; }
 
-	/// <summary>How many of the newest matching entries to answer with, between one and <see cref="MaxLimit"/>.</summary>
+	/// <summary>
+	/// How many of the newest matching entries to answer with, between one and <see cref="MaxLimit"/>, or
+	/// <see cref="MaxLimitWithBodies"/> where <see cref="Bodies"/> asks for them.
+	/// </summary>
 	public int Limit { get; init; } = DefaultLimit;
 
 	/// <summary>Whether each entry carries its arguments, response and diffs.</summary>

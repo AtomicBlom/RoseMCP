@@ -94,19 +94,34 @@ public sealed class CallRecording : IDisposable
 	/// <summary>The entry's id.</summary>
 	public string Id { get; }
 
+	/// <summary>When the call arrived, on the broker's clock.</summary>
 	public DateTimeOffset StartedUtc { get; }
 
+	/// <summary>
+	/// The tool called, as the client named it, cleaned of anything unprintable and cut to a length.
+	/// </summary>
 	public string? Tool { get; }
 
+	/// <summary>
+	/// The directory the calling session works in, as its relay sent it; null where it sent none.
+	/// </summary>
 	public string? Origin { get; }
 
+	/// <summary>The call's correlation id, which every log line written for it carries.</summary>
 	public string? CorrelationId { get; }
 
 	/// <summary>See <see cref="ActivityEntry.ClientKey"/>.</summary>
 	public string ClientKey { get; }
 
+	/// <summary>
+	/// The arguments as the client sent them, in JSON, cut to
+	/// <see cref="ActivityBodies.ArgumentsCeiling"/>.
+	/// </summary>
 	public string? Arguments { get; }
 
+	/// <summary>
+	/// How long the arguments really are, where <see cref="Arguments"/> was cut; null otherwise.
+	/// </summary>
 	public int? ArgumentsFullLength { get; }
 
 	/// <summary>
@@ -253,7 +268,14 @@ public sealed class CallRecording : IDisposable
 			var (said, fullLength) = ActivityBodies.Cut(error, ActivityBodies.ErrorCeiling);
 			var entry = Snapshot(outcome, _record.Now, said, result);
 
-			if (fullLength is { } full) entry = entry with { Notes = [.. entry.Notes, ActivityBodies.CutNote("error", full, said!.Length)] };
+			if (fullLength is { } full)
+			{
+				entry = entry with
+				{
+					ErrorFullLength = full,
+					Notes = [.. entry.Notes, ActivityBodies.CutNote("error", full, said!.Length)],
+				};
+			}
 
 			lock (_gate)
 			{

@@ -21,6 +21,7 @@ public sealed record ActivityEntry
 	/// <summary>Unique across every broker run, so a window can ask for this entry again by it.</summary>
 	public required string Id { get; init; }
 
+	/// <summary>Whether this is a call or a broker starting.</summary>
 	public required ActivityEntryKind Kind { get; init; }
 
 	/// <summary>The broker run that wrote the entry: the instance id it gives relays, new every time a broker starts.</summary>
@@ -81,6 +82,12 @@ public sealed record ActivityEntry
 
 	/// <summary>What the caller was told went wrong, on a call that failed.</summary>
 	public string? Error { get; init; }
+
+	/// <summary>
+	/// How long <see cref="Error"/> really is, where it was cut: in a listing, to a short excerpt, and in the entry read
+	/// by its id, past what the record keeps of an error. Absent otherwise.
+	/// </summary>
+	public int? ErrorFullLength { get; init; }
 
 	/// <summary>The workspace revision the answer was read at, where it named one.</summary>
 	public long? Revision { get; init; }

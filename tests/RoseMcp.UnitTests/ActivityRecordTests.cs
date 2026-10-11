@@ -163,8 +163,13 @@ public sealed class ActivityRecordTests : IDisposable
 
 		await record.FlushAsync(cancellationToken);
 
-		var entry = Calls(record, new ActivityQuery()).ShouldHaveSingleItem();
+		var listed = Calls(record, new ActivityQuery()).ShouldHaveSingleItem();
+		listed.Error!.Length.ShouldBe(ActivityRecord.ErrorExcerpt, "a listing carries an excerpt");
+		listed.ErrorFullLength.ShouldBe(ActivityBodies.ErrorCeiling);
+
+		var entry = record.Find(listed.Id).ShouldNotBeNull();
 		entry.Error!.Length.ShouldBe(ActivityBodies.ErrorCeiling);
+		entry.ErrorFullLength.ShouldBe(told.Length);
 		entry.Notes.ShouldHaveSingleItem().ShouldContain("The error is 4,500 characters", Case.Sensitive);
 	}
 
@@ -357,19 +362,167 @@ public sealed class ActivityRecordTests : IDisposable
 		Calls(record, new ActivityQuery()).ShouldHaveSingleItem().Tool.ShouldBe("rose_outline");
 	}
 
-	private ActivityRecord Open(out SteerableClock clock, TimeSpan? retention = null)
+	/// <summary>
+	/// A folder the record cannot write to loses entries, counted, and leaves nothing behind; the loop goes on, a flush
+	/// still returns, and once the folder can be written to the record writes again.
+	/// </summary>
+	[Test]
+	public async Task A_folder_that_refuses_writes_loses_entries_and_the_record_writes_again_once_it_can(CancellationToken cancellationToken)
+	{
+		// A file where the folder should be: nothing can be created inside it, on any platform.
+		Directory.CreateDirectory(Path.GetDirectoryName(_directory)!);
+		await File.WriteAllTextAsync(_directory, "in the way", cancellationToken);
+
+		await using var record = Open(out _);
+		Record(record, "rose_outline");
+		await record.FlushAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+
+		record.Lost.ShouldBe(2, "the broker starting, and the call");
+		File.Exists(_directory).ShouldBeTrue("nothing was made in its place");
+
+		File.Delete(_directory);
+		Record(record, "rose_diagnostics");
+		await record.FlushAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+
+		Calls(record, new ActivityQuery()).ShouldHaveSingleItem().Tool.ShouldBe("rose_diagnostics");
+		Directory.GetFiles(_directory, "*.jsonl").ShouldHaveSingleItem();
+	}
+
+	/// <summary>
+	/// A write that fails partway -- a full disk -- loses its entry, and the next appends to the same file rather than
+	/// starting another: a file per failed batch would be an empty file every few seconds for the whole retention. The
+	/// line the failure cut short is ended, so the entry after it is still read.
+	/// </summary>
+	[Test]
+	public async Task A_write_that_fails_partway_is_lost_and_the_next_appends_to_the_same_file(CancellationToken cancellationToken)
+	{
+		var disk = new Disk();
+		await using var record = Open(out _, opener: disk.Open);
+
+		Record(record, "rose_outline");
+		await record.FlushAsync(cancellationToken);
+
+		disk.Full = true;
+		for (var call = 0; call < 3; call++)
+		{
+			Record(record, "rose_format");
+			await record.FlushAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+		}
+
+		disk.Full = false;
+		Record(record, "rose_diagnostics");
+		await record.FlushAsync(cancellationToken);
+
+		record.Lost.ShouldBe(3);
+		Directory.GetFiles(_directory, "*.jsonl").ShouldHaveSingleItem();
+		Calls(record, new ActivityQuery()).Select(entry => entry.Tool).ShouldBe(["rose_diagnostics", "rose_outline"], ignoreOrder: true);
+	}
+
+	/// <summary>A writer stuck on the disk never holds up a call: what does not fit in the queue is dropped and counted.</summary>
+	[Test]
+	public async Task A_stalled_writer_never_holds_up_a_call_and_counts_what_it_drops(CancellationToken cancellationToken)
+	{
+		var disk = new Disk { Stalled = true };
+		await using var record = Open(out _, opener: disk.Open);
+		var clock = System.Diagnostics.Stopwatch.StartNew();
+
+		for (var call = 0; call < ActivityRecord.MaxQueued + 100; call++) Record(record, "rose_outline");
+
+		clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(10), "no call waited for the disk");
+		record.Dropped.ShouldBeInRange(100, 101);
+
+		disk.Release();
+		await record.FlushAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+
+		record.Lost.ShouldBe(0);
+		record.Query(new ActivityQuery { Tool = "rose_outline", Limit = 1 }).Matched.ShouldBe((int)(ActivityRecord.MaxQueued + 100 - record.Dropped));
+	}
+
+	/// <summary>Bodies can be tens of kilobytes each, so a page that asks for them is held to what a window shows at once.</summary>
+	[Test]
+	public async Task A_listing_with_bodies_is_held_to_a_short_page(CancellationToken cancellationToken)
+	{
+		await using var record = Open(out _);
+		for (var call = 0; call < ActivityQuery.MaxLimitWithBodies + 10; call++) Record(record, "rose_outline");
+		await record.FlushAsync(cancellationToken);
+
+		var withBodies = record.Query(new ActivityQuery { Tool = "rose_outline", Limit = ActivityQuery.MaxLimit, Bodies = true });
+		withBodies.Entries.Count.ShouldBe(ActivityQuery.MaxLimitWithBodies);
+		withBodies.Matched.ShouldBe(ActivityQuery.MaxLimitWithBodies + 10);
+
+		record.Query(new ActivityQuery { Tool = "rose_outline", Limit = ActivityQuery.MaxLimit }).Entries.Count.ShouldBe(ActivityQuery.MaxLimitWithBodies + 10);
+	}
+
+	/// <summary>
+	/// The index holds the newest entries up to its capacity however much the folder holds, says that older ones are
+	/// not listed, and still finds one of those by its id; and it keeps an error as an excerpt.
+	/// </summary>
+	[Test]
+	public async Task The_index_keeps_the_newest_entries_up_to_its_capacity(CancellationToken cancellationToken)
+	{
+		Directory.CreateDirectory(_directory);
+		var seeded = ActivityRecord.IndexCapacity + 5000;
+		var oldest = string.Empty;
+		var newest = string.Empty;
+
+		await using (var writer = new StreamWriter(Path.Combine(_directory, "20261001-000000-000000000000.jsonl")))
+		{
+			for (var index = 0; index < seeded; index++)
+			{
+				var entry = new ActivityEntry
+				{
+					Id = ActivityRecord.MintId(),
+					Kind = ActivityEntryKind.Call,
+					Broker = "seeded",
+					StartedUtc = Start - TimeSpan.FromHours(1) + TimeSpan.FromMilliseconds(index),
+					Tool = "rose_seeded",
+					Outcome = ActivityOutcome.Failed,
+					Error = index == seeded - 1 ? new string('e', 1000) : "failed",
+					Response = "a body",
+				};
+
+				if (index == 0) oldest = entry.Id;
+				if (index == seeded - 1) newest = entry.Id;
+
+				await writer.WriteLineAsync(JsonSerializer.Serialize(entry, ContractJson.Options).AsMemory(), cancellationToken);
+			}
+		}
+
+		await using var record = Open(out _);
+		await record.FlushAsync(cancellationToken);
+
+		var page = record.Query(new ActivityQuery { Tool = "rose_seeded", Limit = 1 });
+		page.Matched.ShouldBeLessThanOrEqualTo(ActivityRecord.IndexCapacity);
+		page.Matched.ShouldBeGreaterThan(ActivityRecord.IndexCapacity - 10);
+		page.OlderNotListed.ShouldBeTrue();
+
+		var first = page.Entries.ShouldHaveSingleItem();
+		first.Id.ShouldBe(newest);
+		first.Response.ShouldBeNull();
+		first.Error!.Length.ShouldBe(ActivityRecord.ErrorExcerpt);
+		first.ErrorFullLength.ShouldBe(1000);
+
+		var found = record.Find(oldest).ShouldNotBeNull("an entry older than the index reaches is still read by its id");
+		found.Response.ShouldBe("a body");
+		record.Find(newest).ShouldNotBeNull().Error!.Length.ShouldBe(1000);
+	}
+
+	private ActivityRecord Open(out SteerableClock clock, TimeSpan? retention = null, Func<string, FileMode, Stream>? opener = null)
 	{
 		clock = new SteerableClock(Start);
-		var options = Options.Create(new BrokerOptions
+		var options = new BrokerOptions
 		{
 			TimeProvider = clock,
 			ActivityDirectory = _directory,
 			ActivityRetention = () => retention ?? TimeSpan.FromDays(7),
-		});
+		};
 
+		if (opener is not null) options.OpenActivityFile = opener;
+
+		var wrapped = Options.Create(options);
 		var relays = new RelayConnections(clock);
 
-		return new ActivityRecord(options, relays, new ConnectedClients(relays, options), NullLogger<ActivityRecord>.Instance);
+		return new ActivityRecord(wrapped, relays, new ConnectedClients(relays, wrapped), NullLogger<ActivityRecord>.Instance);
 	}
 
 	private static void Record(
@@ -405,5 +558,82 @@ public sealed class ActivityRecordTests : IDisposable
 		public void Advance(TimeSpan by) => _now += by;
 
 		public override DateTimeOffset GetUtcNow() => _now;
+	}
+
+	/// <summary>
+	/// The record's files as a disk that can fill up -- a write puts down half its bytes and fails -- or stall until it
+	/// is released, which no folder can be made to do on demand.
+	/// </summary>
+	private sealed class Disk
+	{
+		private readonly ManualResetEventSlim _released = new(initialState: false);
+
+		public volatile bool Full;
+
+		public volatile bool Stalled;
+
+		public Stream Open(string path, FileMode mode) =>
+			new Faulty(new FileStream(path, mode, FileAccess.Write, FileShare.Read | FileShare.Delete), this);
+
+		public void Release()
+		{
+			Stalled = false;
+			_released.Set();
+		}
+
+		private void Writing()
+		{
+			if (Stalled) _released.Wait();
+		}
+
+		private sealed class Faulty(FileStream inner, Disk disk) : Stream
+		{
+			public override bool CanRead => false;
+
+			public override bool CanSeek => inner.CanSeek;
+
+			public override bool CanWrite => true;
+
+			public override long Length => inner.Length;
+
+			public override long Position
+			{
+				get => inner.Position;
+				set => inner.Position = value;
+			}
+
+			public override void Write(ReadOnlySpan<byte> buffer)
+			{
+				disk.Writing();
+
+				if (disk.Full)
+				{
+					inner.Write(buffer[..(buffer.Length / 2)]);
+					inner.Flush();
+					throw new IOException("There is not enough space on the disk.");
+				}
+
+				inner.Write(buffer);
+			}
+
+			public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+
+			public override void WriteByte(byte value) => Write([value]);
+
+			public override void Flush() => inner.Flush();
+
+			public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+			public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+
+			public override void SetLength(long value) => inner.SetLength(value);
+
+			protected override void Dispose(bool disposing)
+			{
+				if (disposing) inner.Dispose();
+
+				base.Dispose(disposing);
+			}
+		}
 	}
 }

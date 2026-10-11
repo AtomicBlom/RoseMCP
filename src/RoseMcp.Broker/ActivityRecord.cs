@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading.Channels;
 
 using Microsoft.Extensions.Hosting;
@@ -34,12 +36,19 @@ namespace RoseMcp.Broker;
 /// for a tool call to wait. The loop is <see cref="Detached"/>, prunes files past the retention when it starts,
 /// when it rolls to a new file and every <see cref="PruneInterval"/>, and is ended by disposing the record, which
 /// writes what is queued first: the host disposes it as it stops, and the host stopping flushes it before that,
-/// for a host that stops without disposing its services. Nothing here throws to a caller.
+/// for a host that stops without disposing its services. A write that fails loses its batch, counted and logged at
+/// most once a minute, and the next batch appends to the same file again rather than starting another: on a full
+/// disk a fresh file per batch would leave an empty file behind every few seconds for the whole retention. Nothing
+/// here throws to a caller.
 /// </para>
 /// <para>
-/// A listing reads the files incrementally: each file's entries are indexed once, without their bodies, by where
-/// each line starts, and only what was appended since is read again. A body -- arguments, response and diffs -- is
-/// read back from its line when an entry is asked for by id, or when a listing asks for bodies.
+/// A listing reads the files incrementally: each file's entries are indexed once by where each line starts, parsed
+/// without their bodies and with an error cut to an excerpt, and only what was appended since is read again. The
+/// index holds at most <see cref="IndexCapacity"/> entries, the newest: the files are read newest first, a file
+/// past the capacity is left unread, and an index grown past it by later appends drops its oldest entries. A
+/// listing then says that older entries are on disk and not listed, and each can still be read by its id. A body
+/// -- arguments, response and diffs -- is read back from its line when an entry is asked for by id, or when a
+/// listing asks for bodies, which it does for at most <see cref="ActivityQuery.MaxLimitWithBodies"/> entries.
 /// </para>
 /// </summary>
 public sealed class ActivityRecord : IAsyncDisposable
@@ -57,11 +66,23 @@ public sealed class ActivityRecord : IAsyncDisposable
 	/// <summary>How many entries may wait to be written before more are dropped rather than wait for the disk.</summary>
 	public const int MaxQueued = 4096;
 
+	/// <summary>
+	/// The most entries a listing's index holds, the newest. A summary is a few hundred bytes, so this keeps the
+	/// index to some megabytes however busy a week was, and is days of a busy agent's calls.
+	/// </summary>
+	public const int IndexCapacity = 20_000;
+
+	/// <summary>The longest error a listing carries; the entry read by its id has what the record keeps of it.</summary>
+	public const int ErrorExcerpt = 300;
+
 	/// <summary>How often the files are pruned when nothing else -- a start, a new file -- has done it.</summary>
 	public static readonly TimeSpan PruneInterval = TimeSpan.FromHours(1);
 
 	/// <summary>How long stopping waits for what is queued to be written.</summary>
 	public static readonly TimeSpan StopWait = TimeSpan.FromSeconds(5);
+
+	/// <summary>How often a run of failed writes is logged again at warning: once at its start, and then this often.</summary>
+	public static readonly TimeSpan LossReportInterval = TimeSpan.FromMinutes(1);
 
 	private const string Extension = ".jsonl";
 
@@ -73,6 +94,15 @@ public sealed class ActivityRecord : IAsyncDisposable
 		Converters = { new JsonStringEnumConverter() },
 		DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
 		Encoder = ToolJson.Encoder,
+	};
+
+	/// <summary>
+	/// The same, reading an entry without its bodies: the arguments, the response and each diff are stepped over by
+	/// the parser rather than made into strings, which is most of what indexing a file would otherwise allocate.
+	/// </summary>
+	private static readonly JsonSerializerOptions SummaryJson = new(Json)
+	{
+		TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { WithoutBodyProperties } },
 	};
 
 	private readonly BrokerOptions _options;
@@ -96,12 +126,21 @@ public sealed class ActivityRecord : IAsyncDisposable
 	private readonly Task _writing;
 	private readonly CancellationTokenRegistration _stopping;
 
-	// The writer's own, touched only by its loop.
-	private FileStream? _file;
+	// The writer's own, touched only by its loop. The path outlives a failed write, so the next batch appends to the
+	// same file rather than starting another.
+	private Stream? _file;
 	private string? _filePath;
+	private long _fileLength;
 	private DateOnly _fileDay;
+	private bool _losing;
+	private long _lossReportedAt = long.MinValue;
 
-	private int _dropped;
+	// The readers', under _reading.
+	private int _indexed;
+	private bool _olderNotListed;
+
+	private long _dropped;
+	private long _lost;
 	private int _warned;
 	private int _disposed;
 
@@ -147,6 +186,12 @@ public sealed class ActivityRecord : IAsyncDisposable
 
 	/// <summary>The table each entry names its client from.</summary>
 	public ConnectedClients Clients { get; }
+
+	/// <summary>How many entries were dropped because the queue was full or the record had stopped, never reaching the disk.</summary>
+	public long Dropped => Interlocked.Read(ref _dropped);
+
+	/// <summary>How many entries were taken from the queue and lost to a write that failed.</summary>
+	public long Lost => Interlocked.Read(ref _lost);
 
 	/// <summary>How long an entry is kept: the setting, or a week where it says nothing usable.</summary>
 	public TimeSpan Retention
@@ -213,13 +258,14 @@ public sealed class ActivityRecord : IAsyncDisposable
 
 	/// <summary>
 	/// The newest entries matching <paramref name="query"/>, the calls still running among them. Reads what each
-	/// file gained since the last read, under the readers' lock; never throws for a file it cannot read, which is
-	/// left out.
+	/// file gained since the last read, under the readers' lock, and keeps only the newest of what matches as it goes
+	/// rather than sorting everything; never throws for a file it cannot read, which is left out.
 	/// </summary>
 	public ActivityPage Query(ActivityQuery query)
 	{
-		var limit = Math.Clamp(query.Limit, 1, ActivityQuery.MaxLimit);
-		var found = new List<Found>();
+		var limit = Math.Clamp(query.Limit, 1, query.Bodies ? ActivityQuery.MaxLimitWithBodies : ActivityQuery.MaxLimit);
+		var newest = new Newest(limit);
+		bool olderNotListed;
 
 		lock (_reading)
 		{
@@ -227,33 +273,45 @@ public sealed class ActivityRecord : IAsyncDisposable
 
 			foreach (var (path, index) in _files)
 			{
-				found.AddRange(index.Entries.Select(indexed => new Found(indexed.Summary, path, indexed.Offset, indexed.Length)));
+				foreach (var indexed in index.Entries)
+				{
+					// A copy still queued is the same entry, and is the one taken below.
+					if (_unwritten.ContainsKey(indexed.Summary.Id) || !Matches(indexed.Summary, query)) continue;
+
+					newest.Offer(new Found(indexed.Summary, path, indexed.Offset, indexed.Length));
+				}
 			}
+
+			olderNotListed = _olderNotListed;
 		}
 
-		var written = found.Select(entry => entry.Entry.Id).ToHashSet(StringComparer.Ordinal);
-		found.AddRange(_unwritten.Values.Where(entry => !written.Contains(entry.Id)).Select(entry => new Found(entry, null, 0, 0)));
-		found.AddRange(_running.Values.Select(Running).OfType<ActivityEntry>().Select(entry => new Found(entry, null, 0, 0)));
+		foreach (var entry in _unwritten.Values)
+		{
+			if (Matches(entry, query)) newest.Offer(new Found(entry, null, 0, 0));
+		}
 
-		var matching = found
-			.Where(entry => Matches(entry.Entry, query))
-			.OrderByDescending(entry => entry.Entry.StartedUtc)
-			.ThenByDescending(entry => entry.Entry.Id, StringComparer.Ordinal)
-			.ToList();
+		foreach (var recording in _running.Values)
+		{
+			if (Running(recording) is { } entry && Matches(entry, query)) newest.Offer(new Found(entry, null, 0, 0));
+		}
 
-		var page = matching.Take(limit).Select(entry => query.Bodies ? WithBodies(entry) : WithoutBodies(entry.Entry));
+		var page = newest.Descending().Select(found => query.Bodies ? WithBodies(found) : Summary(found.Entry));
 
 		return new ActivityPage
 		{
 			Entries = [.. page],
 			Bodies = query.Bodies,
-			Matched = matching.Count,
+			Matched = newest.Offered,
+			OlderNotListed = olderNotListed,
 			Directory = Directory,
 			Retention = Retention,
 		};
 	}
 
-	/// <summary>The entry with <paramref name="id"/>, bodies and all, running or written; null where the record has none.</summary>
+	/// <summary>
+	/// The entry with <paramref name="id"/>, bodies and all, running or written; null where the record has none. An
+	/// entry older than the index reaches is looked for in the files themselves.
+	/// </summary>
 	public ActivityEntry? Find(string id)
 	{
 		if (_running.TryGetValue(id, out var running) && Running(running) is { } snapshot) return snapshot;
@@ -273,6 +331,8 @@ public sealed class ActivityRecord : IAsyncDisposable
 					}
 				}
 			}
+
+			if (_olderNotListed && Scan(id) is { } older) return older;
 		}
 
 		return _unwritten.GetValueOrDefault(id);
@@ -313,7 +373,7 @@ public sealed class ActivityRecord : IAsyncDisposable
 		}
 	}
 
-	/// <summary>Takes a call's entry from the running calls to the queue.</summary>
+	/// <summary>Takes a call's entry from the running calls to the queue, never waiting for room in it.</summary>
 	internal void Finished(CallRecording recording, ActivityEntry entry)
 	{
 		_unwritten[entry.Id] = entry;
@@ -349,6 +409,22 @@ public sealed class ActivityRecord : IAsyncDisposable
 		_logger.LogDebug(exception, "The activity record could not keep an entry.");
 	}
 
+	private static void WithoutBodyProperties(JsonTypeInfo type)
+	{
+		string[] bodies = type.Type == typeof(ActivityEntry)
+			? [nameof(ActivityEntry.Arguments), nameof(ActivityEntry.Response)]
+			: type.Type == typeof(ActivityFileChange) ? [nameof(ActivityFileChange.Diff)] : [];
+
+		if (bodies.Length == 0) return;
+
+		var names = bodies.Select(JsonNamingPolicy.CamelCase.ConvertName).ToHashSet(StringComparer.Ordinal);
+
+		for (var index = type.Properties.Count - 1; index >= 0; index--)
+		{
+			if (names.Contains(type.Properties[index].Name)) type.Properties.RemoveAt(index);
+		}
+	}
+
 	private static bool Matches(ActivityEntry entry, ActivityQuery query)
 	{
 		var inWindow = (query.Since is not { } since || entry.StartedUtc >= since)
@@ -373,12 +449,22 @@ public sealed class ActivityRecord : IAsyncDisposable
 		return client && workspace && session && tool;
 	}
 
-	private static ActivityEntry WithoutBodies(ActivityEntry entry) => entry with
+	/// <summary>The entry as a listing carries it: without its bodies, and with its error cut to <see cref="ErrorExcerpt"/>.</summary>
+	private static ActivityEntry Summary(ActivityEntry entry)
 	{
-		Arguments = null,
-		Response = null,
-		Changes = [.. entry.Changes.Select(change => change with { Diff = null })],
-	};
+		var (error, fullLength) = ActivityBodies.Cut(entry.Error, ErrorExcerpt);
+
+		return entry with
+		{
+			Arguments = null,
+			Response = null,
+			Error = error,
+			ErrorFullLength = fullLength ?? entry.ErrorFullLength,
+			Changes = entry.Changes.Any(change => change.Diff is not null)
+				? [.. entry.Changes.Select(change => change with { Diff = null })]
+				: entry.Changes,
+		};
+	}
 
 	private ActivityEntry? Running(CallRecording recording)
 	{
@@ -394,19 +480,13 @@ public sealed class ActivityRecord : IAsyncDisposable
 	}
 
 	/// <summary>The entry with its bodies, read back from its line where it was written, or as it is where it was not.</summary>
-	private ActivityEntry WithBodies(Found found)
+	private static ActivityEntry WithBodies(Found found)
 	{
 		if (found.Path is null) return found.Entry;
 
 		try
 		{
-			using var stream = Open(found.Path);
-			stream.Seek(found.Offset, SeekOrigin.Begin);
-
-			var line = new byte[found.Length];
-			stream.ReadExactly(line);
-
-			return JsonSerializer.Deserialize<ActivityEntry>(line, Json) ?? found.Entry;
+			return ReadLine(found.Path, found.Offset, found.Length) ?? found.Entry;
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
 		{
@@ -414,14 +494,27 @@ public sealed class ActivityRecord : IAsyncDisposable
 		}
 	}
 
+	/// <summary>The whole entry written at <paramref name="offset"/> in <paramref name="path"/>.</summary>
+	private static ActivityEntry? ReadLine(string path, long offset, int length)
+	{
+		using var stream = Open(path);
+		stream.Seek(offset, SeekOrigin.Begin);
+
+		var line = new byte[length];
+		stream.ReadExactly(line);
+
+		return JsonSerializer.Deserialize<ActivityEntry>(line, Json);
+	}
+
 	private static FileStream Open(string path) =>
 		new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
 	/// <summary>
-	/// Brings the index up to date with the folder: forgets files that are gone, and reads what each file has
-	/// gained since it was last read. A file not yet indexed whose last write is before <paramref name="since"/> is
-	/// left until a query reaches back that far, since every entry in it started before it was written. Under
-	/// <see cref="_reading"/>.
+	/// Brings the index up to date with the folder: forgets files that are gone, and reads what each file has gained
+	/// since it was last read, the newest files first. A file not yet indexed whose last write is before
+	/// <paramref name="since"/> is left until a query reaches back that far, since every entry in it started before
+	/// it was written; one met once the index is full is left unread for good, and an index grown well past its
+	/// capacity by appends is trimmed back to it. Under <see cref="_reading"/>.
 	/// </summary>
 	private void Refresh(DateTimeOffset? since)
 	{
@@ -437,9 +530,15 @@ public sealed class ActivityRecord : IAsyncDisposable
 		}
 
 		var kept = present.ToHashSet(PathCasing.Comparer);
-		foreach (var gone in _files.Keys.Where(path => !kept.Contains(path)).ToList()) _files.Remove(gone);
+		foreach (var gone in _files.Keys.Where(path => !kept.Contains(path)).ToList())
+		{
+			_indexed -= _files[gone].Entries.Count;
+			_files.Remove(gone);
+		}
 
-		foreach (var path in present)
+		// A file is named for when it was started, so by name is newest last: read backwards, the capacity is spent
+		// on the newest entries.
+		foreach (var path in present.OrderByDescending(Path.GetFileName, StringComparer.Ordinal))
 		{
 			try
 			{
@@ -448,75 +547,158 @@ public sealed class ActivityRecord : IAsyncDisposable
 					var tooOld = since is { } from && File.GetLastWriteTimeUtc(path) < from.UtcDateTime;
 					if (tooOld) continue;
 
-					_files[path] = index = new FileIndex();
+					index = new FileIndex { Skipped = _indexed >= IndexCapacity };
+					_files[path] = index;
+					_olderNotListed |= index.Skipped;
 				}
+
+				if (index.Skipped) continue;
 
 				// The length from an open handle rather than the directory's listing, which a file another process
 				// is still writing can report short of.
 				using var stream = Open(path);
 
-				if (stream.Length < index.Consumed) index.Clear();
+				if (stream.Length < index.Consumed)
+				{
+					_indexed -= index.Entries.Count;
+					index.Clear();
+				}
+
 				if (stream.Length == index.Consumed) continue;
 
 				stream.Seek(index.Consumed, SeekOrigin.Begin);
-				Read(stream, index);
+				_indexed += Read(stream, index);
 			}
 			catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 			{
 				// Gone since the listing, or held in a way that refuses a reader: it is read on a later pass.
 			}
 		}
+
+		// A tenth of slack, so a full index is trimmed once per few thousand calls rather than on every listing.
+		if (_indexed > IndexCapacity + (IndexCapacity / 10)) Trim();
+	}
+
+	/// <summary>Drops the oldest entries from the index until it holds <see cref="IndexCapacity"/>. Under <see cref="_reading"/>.</summary>
+	private void Trim()
+	{
+		var starts = _files.Values.SelectMany(index => index.Entries).Select(indexed => indexed.Summary.StartedUtc).ToList();
+		starts.Sort();
+
+		var cutoff = starts[starts.Count - IndexCapacity];
+
+		_indexed = 0;
+		foreach (var index in _files.Values)
+		{
+			index.Entries.RemoveAll(indexed => indexed.Summary.StartedUtc < cutoff);
+			_indexed += index.Entries.Count;
+		}
+
+		_olderNotListed = true;
 	}
 
 	/// <summary>
-	/// Indexes each whole line from where the stream stands. A line not yet ended -- the writer is mid-append -- is
-	/// left for the next read; a line that does not parse is stepped over, since a partly written file from a
-	/// process that died is still worth the lines it finished.
+	/// Looks through every file for the entry with <paramref name="id"/>, for one the index does not hold. Only a line
+	/// that names the id is parsed. Under <see cref="_reading"/>.
 	/// </summary>
-	private static void Read(FileStream stream, FileIndex index)
+	private ActivityEntry? Scan(string id)
+	{
+		var needle = Encoding.UTF8.GetBytes($"\"id\":\"{id}\"");
+
+		foreach (var path in _files.Keys)
+		{
+			var at = new List<(long Offset, int Length)>();
+
+			try
+			{
+				using var stream = Open(path);
+				Lines(stream, 0, (line, offset, length) =>
+				{
+					if (line.IndexOf(needle) >= 0) at.Add((offset, length));
+				});
+			}
+			catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+			{
+				continue;
+			}
+
+			foreach (var (offset, length) in at)
+			{
+				if (ReadLine(path, offset, length) is { } entry && string.Equals(entry.Id, id, StringComparison.Ordinal)) return entry;
+			}
+		}
+
+		return null;
+	}
+
+	/// <summary>Indexes each whole line from where the stream stands, and says how many entries it added.</summary>
+	private static int Read(FileStream stream, FileIndex index)
+	{
+		var added = 0;
+
+		index.Consumed = Lines(stream, index.Consumed, (line, offset, length) =>
+		{
+			if (Index(line) is { } summary)
+			{
+				index.Entries.Add(new Indexed(summary, offset, length));
+				added++;
+			}
+		});
+
+		return added;
+	}
+
+	/// <summary>
+	/// Hands each whole line from where the stream stands to <paramref name="visit"/>, with where it starts, and
+	/// answers where the next read should begin. A line not yet ended -- the writer is mid-append -- is left for the
+	/// next read.
+	/// </summary>
+	private static long Lines(FileStream stream, long start, LineVisitor visit)
 	{
 		var buffer = new byte[64 * 1024];
 		using var pending = new MemoryStream();
-		var lineStart = index.Consumed;
+		var lineStart = start;
 		int read;
 
 		while ((read = stream.Read(buffer)) > 0)
 		{
-			var start = 0;
+			var from = 0;
 
 			for (var at = 0; at < read; at++)
 			{
 				if (buffer[at] != (byte)'\n') continue;
 
-				pending.Write(buffer, start, at - start);
+				pending.Write(buffer, from, at - from);
 
 				var length = (int)pending.Length;
-				Index(pending.GetBuffer().AsSpan(0, length), lineStart, length, index);
+				visit(pending.GetBuffer().AsSpan(0, length), lineStart, length);
 
 				lineStart += length + 1;
 				pending.SetLength(0);
-				start = at + 1;
+				from = at + 1;
 			}
 
-			pending.Write(buffer, start, read - start);
+			pending.Write(buffer, from, read - from);
 		}
 
-		index.Consumed = lineStart;
+		return lineStart;
 	}
 
-	private static void Index(ReadOnlySpan<byte> line, long offset, int length, FileIndex index)
+	/// <summary>
+	/// One line as the index keeps it, or null for a blank one or one that does not parse, which is stepped over:
+	/// a partly written file from a process that died is still worth the lines it finished.
+	/// </summary>
+	private static ActivityEntry? Index(ReadOnlySpan<byte> line)
 	{
-		if (line.Trim((byte)' ').IsEmpty) return;
+		if (line.Trim((byte)' ').IsEmpty) return null;
 
 		try
 		{
-			if (JsonSerializer.Deserialize<ActivityEntry>(line, Json) is { } entry)
-			{
-				index.Entries.Add(new Indexed(WithoutBodies(entry), offset, length));
-			}
+			return JsonSerializer.Deserialize<ActivityEntry>(line, SummaryJson) is { } entry ? Summary(entry) : null;
 		}
 		catch (JsonException)
 		{
+			return null;
 		}
 	}
 
@@ -552,6 +734,9 @@ public sealed class ActivityRecord : IAsyncDisposable
 
 			var written = new List<string>();
 			var flushes = new List<FlushRequest>();
+			var appended = 0;
+			var lost = 0;
+			Exception? failure = null;
 
 			try
 			{
@@ -566,10 +751,23 @@ public sealed class ActivityRecord : IAsyncDisposable
 					if (item is not ActivityEntry entry) continue;
 
 					written.Add(entry.Id);
-					Append(entry);
+
+					if (Append(entry) is { } refused)
+					{
+						failure = refused;
+						lost++;
+						continue;
+					}
+
+					appended++;
 				}
 
-				Persist();
+				if (Persist() is { } unflushed)
+				{
+					// What was appended since the last flush may be in the file or may not; it is counted as lost.
+					failure = unflushed;
+					lost += appended;
+				}
 			}
 			catch (Exception exception)
 			{
@@ -580,12 +778,51 @@ public sealed class ActivityRecord : IAsyncDisposable
 				foreach (var id in written) _unwritten.TryRemove(id, out _);
 				foreach (var flush in flushes) flush.Done.TrySetResult();
 			}
+
+			Account(lost, failure);
 		}
 
 		Close();
 	}
 
-	private void Append(ActivityEntry entry)
+	/// <summary>
+	/// Counts what a batch lost and says so: at warning when a run of failures starts and then at most once every
+	/// <see cref="LossReportInterval"/>, so a full disk is heard about without a line per batch; and once, when a
+	/// batch is written again after a run of failures.
+	/// </summary>
+	private void Account(int lost, Exception? failure)
+	{
+		if (lost == 0)
+		{
+			if (!_losing) return;
+
+			_losing = false;
+			_logger.LogInformation("The activity record is writing again, having lost {Lost} entries in all.", Lost);
+			return;
+		}
+
+		var total = Interlocked.Add(ref _lost, lost);
+		var now = Environment.TickCount64;
+		var due = !_losing || now - _lossReportedAt >= (long)LossReportInterval.TotalMilliseconds;
+		_losing = true;
+
+		if (!due)
+		{
+			_logger.LogDebug(failure, "The activity record could not write {Count} entries.", lost);
+			return;
+		}
+
+		_lossReportedAt = now;
+		_logger.LogWarning(
+			failure,
+			"The activity record could not write {Count} entries to {Directory}, and has lost {Lost} in all; it goes on trying with each batch.",
+			lost,
+			Directory,
+			total);
+	}
+
+	/// <summary>Appends one entry's line, answering the failure rather than throwing it.</summary>
+	private Exception? Append(ActivityEntry entry)
 	{
 		try
 		{
@@ -594,34 +831,49 @@ public sealed class ActivityRecord : IAsyncDisposable
 
 			file.Write(line);
 			file.WriteByte((byte)'\n');
+			_fileLength += line.Length + 1;
+
+			return null;
 		}
 		catch (Exception exception)
 		{
 			Close();
-			Failed(exception);
+			return exception;
 		}
 	}
 
-	private void Persist()
+	/// <summary>Flushes the file, answering the failure rather than throwing it.</summary>
+	private Exception? Persist()
 	{
 		try
 		{
 			_file?.Flush();
+			return null;
 		}
 		catch (Exception exception)
 		{
 			Close();
-			Failed(exception);
+			return exception;
 		}
 	}
 
-	/// <summary>The file to append to: this run's, or a new one on a new UTC day or where this one is full.</summary>
-	private FileStream Current(int adding)
+	/// <summary>
+	/// The file to append to: the one open; else the last one, opened again to append where a write to it failed;
+	/// else a new one, on a new UTC day or where the last is full. Only a new day, a full file, or a run with no file
+	/// yet starts one, so failing writes cannot leave a trail of empty files.
+	/// </summary>
+	private Stream Current(int adding)
 	{
 		var now = Now;
 		var today = DateOnly.FromDateTime(now.UtcDateTime);
 
-		if (_file is { } open && today == _fileDay && open.Length + adding <= FileSizeLimit) return open;
+		if (_file is { } open && today == _fileDay && _fileLength + adding <= FileSizeLimit) return open;
+
+		if (_file is null && _filePath is { } last && today == _fileDay && File.Exists(last))
+		{
+			var length = new FileInfo(last).Length;
+			if (length + adding <= FileSizeLimit) return Reopen(last, length);
+		}
 
 		Close();
 		System.IO.Directory.CreateDirectory(Directory);
@@ -636,9 +888,10 @@ public sealed class ActivityRecord : IAsyncDisposable
 
 			try
 			{
-				var created = new FileStream(candidate, FileMode.CreateNew, FileAccess.Write, FileShare.Read | FileShare.Delete);
+				var created = _options.OpenActivityFile(candidate, FileMode.CreateNew);
 				_file = created;
 				_filePath = candidate;
+				_fileLength = 0;
 				_fileDay = today;
 
 				Prune();
@@ -651,6 +904,35 @@ public sealed class ActivityRecord : IAsyncDisposable
 		}
 	}
 
+	/// <summary>
+	/// The file a failed write left, opened again to append. A line a failure cut short is ended first, so the next
+	/// entry is a line of its own rather than the tail of one that no longer parses.
+	/// </summary>
+	private Stream Reopen(string path, long length)
+	{
+		var unended = false;
+
+		if (length > 0)
+		{
+			using var reading = Open(path);
+			reading.Seek(-1, SeekOrigin.End);
+			unended = reading.ReadByte() != '\n';
+		}
+
+		var reopened = _options.OpenActivityFile(path, FileMode.Append);
+		_file = reopened;
+		_fileLength = length;
+
+		if (unended)
+		{
+			reopened.WriteByte((byte)'\n');
+			_fileLength++;
+		}
+
+		return reopened;
+	}
+
+	/// <summary>Closes the file, keeping its path so the next write appends to it.</summary>
 	private void Close()
 	{
 		try
@@ -663,13 +945,12 @@ public sealed class ActivityRecord : IAsyncDisposable
 		}
 
 		_file = null;
-		_filePath = null;
 	}
 
 	/// <summary>
-	/// Deletes every file last written longer ago than the retention, this run's own open file aside. A file
-	/// another process holds open is left for a later pass, and nothing here throws: a record that cannot prune
-	/// goes on recording.
+	/// Deletes every file last written longer ago than the retention, this run's own file aside. A file another
+	/// process holds open is left for a later pass, and nothing here throws: a record that cannot prune goes on
+	/// recording.
 	/// </summary>
 	private void Prune()
 	{
@@ -710,16 +991,23 @@ public sealed class ActivityRecord : IAsyncDisposable
 		}
 	}
 
+	private delegate void LineVisitor(ReadOnlySpan<byte> line, long offset, int length);
+
 	/// <summary>A request in the queue to be told once everything before it is written.</summary>
 	private sealed class FlushRequest
 	{
 		public TaskCompletionSource Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 	}
 
-	/// <summary>What a reader knows of one file: how far into it it has read, and each entry there without its bodies.</summary>
+	/// <summary>
+	/// What a reader knows of one file: how far into it it has read, and each entry there as a listing carries it; or
+	/// that it was met with the index full and is not read.
+	/// </summary>
 	private sealed class FileIndex
 	{
 		public long Consumed { get; set; }
+
+		public bool Skipped { get; init; }
 
 		public List<Indexed> Entries { get; } = [];
 
@@ -730,7 +1018,46 @@ public sealed class ActivityRecord : IAsyncDisposable
 		}
 	}
 
-	/// <summary>One entry without its bodies, and where its line is in its file.</summary>
+	/// <summary>
+	/// The newest of what a query matched, up to its limit, kept in a heap as the matches are offered so a listing
+	/// never sorts everything it read; and how many were offered.
+	/// </summary>
+	private sealed class Newest(int limit)
+	{
+		private static readonly Comparer<Found> Oldest = Comparer<Found>.Create((left, right) =>
+		{
+			var byTime = left.Entry.StartedUtc.CompareTo(right.Entry.StartedUtc);
+			return byTime != 0 ? byTime : string.CompareOrdinal(left.Entry.Id, right.Entry.Id);
+		});
+
+		private readonly PriorityQueue<Found, Found> _heap = new(Oldest);
+
+		public int Offered { get; private set; }
+
+		public void Offer(Found found)
+		{
+			Offered++;
+
+			if (_heap.Count < limit)
+			{
+				_heap.Enqueue(found, found);
+				return;
+			}
+
+			if (Oldest.Compare(found, _heap.Peek()) > 0) _heap.EnqueueDequeue(found, found);
+		}
+
+		public IEnumerable<Found> Descending()
+		{
+			var kept = new List<Found>(_heap.Count);
+			while (_heap.TryDequeue(out var found, out _)) kept.Add(found);
+
+			kept.Reverse();
+			return kept;
+		}
+	}
+
+	/// <summary>One entry as a listing carries it, and where its line is in its file.</summary>
 	private readonly record struct Indexed(ActivityEntry Summary, long Offset, int Length);
 
 	/// <summary>An entry a query found, and where its line is where it was written; a null path for one not written yet.</summary>

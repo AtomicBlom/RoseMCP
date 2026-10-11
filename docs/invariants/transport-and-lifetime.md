@@ -229,7 +229,8 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   marked `rosemcp/relayRead` is not recorded. Recording never fails a call and never waits on the disk:
   an entry goes to a bounded queue, dropped and logged where it is full, written by a `Detached` loop
   whose every disk step catches what it throws, since a loop that ended would leave every flush waiting
-  for the life of the broker. Disposing the record completes the queue and waits, bounded, for the loop
+  for the life of the broker. A failed write appends to the same file on the next batch rather than
+  starting another, or a full disk leaves an empty file per batch. Disposing the record completes the queue and waits, bounded, for the loop
   to write it; the host stopping flushes it first, for a host that stops without disposing its services.
   Each broker run writes files of its own, so brokers sharing the folder never share a file or a lock.
   See [the decision](../decisions/every-call-an-agent-makes-is-recorded-and-kept-on-disk.md).

@@ -171,6 +171,8 @@ public sealed class ProducedFactTests
 		["ActivityEntry.ArgumentsFullLength"] = ActivityView,
 		["ActivityEntry.ResponseFullLength"] = ActivityView,
 		["ActivityEntry.Notes"] = ActivityView,
+		["ActivityEntry.ErrorFullLength"] = ActivityView,
+		["ActivityPage.OlderNotListed"] = ActivityView,
 		["ActivityFileChange.FilePath"] = ActivityView,
 		["ActivityFileChange.Created"] = ActivityView,
 		["ActivityFileChange.Normalised"] = ActivityView,

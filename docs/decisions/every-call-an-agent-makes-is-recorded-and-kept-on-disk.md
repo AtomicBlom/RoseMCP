@@ -45,7 +45,20 @@ bounded queue a detached loop writes from, and where the queue is full -- a disk
 the entry is dropped, counted and logged. The host disposing the record writes what is queued first,
 and the host stopping flushes it before that, for the tray, which stops its host without disposing its
 services. A force-killed broker loses at most the entries of the batch it was writing, since every batch
-is flushed to the file as it is written.
+is flushed to the file as it is written. A write that fails -- a full disk, a folder that refuses it --
+loses its batch, counted and logged at warning when a run of failures starts and then at most once a
+minute, and the next batch appends to the same file again, ending any line the failure cut short. Only
+a new day, a full file or a run with no file yet starts one: starting a fresh file per failed batch
+would leave an empty file behind every few seconds, kept for the whole retention and opened by every
+listing.
+
+**Why a listing is bounded.** A week of a busy machine's calls is far more than a window shows or a
+process should hold. A listing's index keeps at most 20,000 entries, the newest, each without its
+bodies and with its error cut to a 300-character excerpt; files are read newest first, a file met with
+the index full is left unread, and an index grown past the bound by appends drops its oldest entries.
+A listing then says older entries are on disk and not listed, and each is still read by its id. A
+query keeps only the newest of what matches as it goes rather than sorting everything, and a page that
+asks for bodies holds at most 50 entries, since each body can be tens of kilobytes.
 
 **Why bodies are cut, and to what.** An entry is one line, and a listing reads past every line, so a
 migration's megabyte response would be paid for by every later read. Arguments and responses are kept to

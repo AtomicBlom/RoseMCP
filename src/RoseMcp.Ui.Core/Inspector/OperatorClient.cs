@@ -426,6 +426,53 @@ public sealed class OperatorClient : IDisposable
 	public Task<LiveSessionClosed> DetachAsync(string sessionId, CancellationToken cancellationToken) =>
 		PostAsync<object?, LiveSessionClosed>($"/operator/sessions/{sessionId}/detach", null, Quick, cancellationToken);
 
+	/// <summary>
+	/// What an attach or a launch gets. A host starts, finds the runtime and attaches, and a packaged app is put in
+	/// debug mode and activated first, which against a cold app takes tens of seconds; past two minutes it has hung.
+	/// </summary>
+	public static readonly TimeSpan DebugStart = TimeSpan.FromMinutes(2);
+
+	/// <summary>
+	/// What reading the installed packages gets: the first read resolves every package's name from its resources,
+	/// which takes seconds on a machine with a few hundred.
+	/// </summary>
+	public static readonly TimeSpan PackageRead = TimeSpan.FromSeconds(45);
+
+	/// <summary>The running .NET apps with a window, or every .NET process, each naming the session debugging it.</summary>
+	public Task<RunningAppList> RunningAppsAsync(bool every, CancellationToken cancellationToken) =>
+		GetAsync<RunningAppList>($"/operator/debug/apps?every={Lowered(every)}", Quick, cancellationToken);
+
+	/// <summary>The packaged apps installed for this user, those in development mode first.</summary>
+	public Task<InstalledAppList> InstalledAppsAsync(CancellationToken cancellationToken) =>
+		GetAsync<InstalledAppList>("/operator/debug/packages", PackageRead, cancellationToken);
+
+	/// <summary>What the person debugged from a window lately, newest first.</summary>
+	public Task<RecentTargetList> RecentTargetsAsync(CancellationToken cancellationToken) =>
+		GetAsync<RecentTargetList>("/operator/debug/recent", Quick, cancellationToken);
+
+	/// <summary>
+	/// Attaches the debugger to a running process for the person: the session started, or the one already debugging
+	/// it, since a process has one debugger. Cancelling ends a session it started.
+	/// </summary>
+	public Task<DebugStart> AttachAsync(int processId, CancellationToken cancellationToken) =>
+		PostAsync<AttachRequest, DebugStart>("/operator/debug/attach", new AttachRequest { ProcessId = processId }, DebugStart, cancellationToken);
+
+	/// <summary>Launches a program, by its full path with its arguments, or a packaged app, under the debugger for the person.</summary>
+	public Task<DebugStart> LaunchAsync(LaunchRequest request, CancellationToken cancellationToken) =>
+		PostAsync<LaunchRequest, DebugStart>("/operator/debug/launch", request, DebugStart, cancellationToken);
+
+	/// <summary>Shares a session the person started with one agent session, by its row in the client table, in place of any before it.</summary>
+	public Task<LiveAppSessionSummary> ShareAsync(string sessionId, string clientId, CancellationToken cancellationToken) =>
+		PostAsync<ShareRequest, LiveAppSessionSummary>(
+			$"/operator/sessions/{sessionId}/share", new ShareRequest { Client = clientId }, Quick, cancellationToken);
+
+	/// <summary>Stops sharing a session with the agent session it was shared with.</summary>
+	public Task<LiveAppSessionSummary> UnshareAsync(string sessionId, CancellationToken cancellationToken) =>
+		SendAsync<LiveAppSessionSummary>(
+			() => new HttpRequestMessage(HttpMethod.Delete, $"/operator/sessions/{sessionId}/share"),
+			Quick,
+			cancellationToken);
+
 	private static string Lowered(bool value) => value ? "true" : "false";
 
 	/// <summary>
@@ -525,7 +572,7 @@ public sealed class OperatorClient : IDisposable
 				new OperatorException(OperatorFailure.Unauthorized, InspectorText.TokenRefused, response.StatusCode),
 			HttpStatusCode.NotFound =>
 				new OperatorException(OperatorFailure.NotFound, said ?? "That is not there any more.", response.StatusCode),
-			HttpStatusCode.BadRequest =>
+			HttpStatusCode.BadRequest or HttpStatusCode.Conflict =>
 				new OperatorException(OperatorFailure.Refused, said ?? "The tray refused the request.", response.StatusCode),
 			_ => new OperatorException(
 				OperatorFailure.Failed,

@@ -63,7 +63,14 @@ public sealed class WindowsRunningApps : IRunningApps
 			var isOurs = processId == Environment.ProcessId || processId < LowestUserProcessId;
 			if (isOurs) continue;
 
-			if (Describe(processId, windows, piped) is { } app) apps.Add(app);
+			try
+			{
+				if (Describe(processId, windows, piped) is { } app) apps.Add(app);
+			}
+			catch (Exception exception) when (exception is not OutOfMemoryException)
+			{
+				// One process that cannot be read -- exited between the listing and the read, say -- is left out alone.
+			}
 		}
 
 		return RunningApps.Ordered(apps);

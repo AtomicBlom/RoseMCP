@@ -60,13 +60,20 @@ public sealed class WindowsInstalledApps : IInstalledApps
 
 		foreach (var family in families)
 		{
-			foreach (var (fullName, properties) in CurrentPackages(family))
+			try
 			{
-				var isLaunchable = (properties & (PackagePropertyFramework | PackagePropertyResource | PackagePropertyOptional)) == 0;
-				if (!isLaunchable) continue;
+				foreach (var (fullName, properties) in CurrentPackages(family))
+				{
+					var isLaunchable = (properties & (PackagePropertyFramework | PackagePropertyResource | PackagePropertyOptional)) == 0;
+					if (!isLaunchable) continue;
 
-				var developmentMode = (properties & PackagePropertyDevelopmentMode) != 0;
-				apps.AddRange(_byFullName.GetOrAdd(fullName, name => AppsOf(name, family, developmentMode)));
+					var developmentMode = (properties & PackagePropertyDevelopmentMode) != 0 || FromADeveloper(fullName);
+					apps.AddRange(_byFullName.GetOrAdd(fullName, name => AppsOf(name, family, developmentMode)));
+				}
+			}
+			catch (Exception exception) when (exception is not OutOfMemoryException)
+			{
+				// One package that cannot be read is left out, rather than taking every other package with it.
 			}
 		}
 
@@ -191,6 +198,33 @@ public sealed class WindowsInstalledApps : IInstalledApps
 
 		return result == 0 ? new string(buffer, 0, (int)Math.Max(0, length - 1)) : null;
 	}
+
+	/// <summary>
+	/// Whether a package was registered from a folder without a signature, which is what deploying a build does. Read
+	/// from its origin, because the properties <c>FindPackagesByPackageFamily</c> reports leave development mode unset
+	/// for exactly those packages. A signed origin is not taken as development: packages a person installs through App
+	/// Installer arrive signed by a developer certificate, and every one of them would be listed first. A Windows
+	/// without the call says no, which only orders the list differently.
+	/// </summary>
+	[SupportedOSPlatform("windows")]
+	private static bool FromADeveloper(string fullName)
+	{
+		try
+		{
+			return GetStagedPackageOrigin(fullName, out var origin) == 0 && origin == PackageOriginDeveloperUnsigned;
+		}
+		catch (Exception exception) when (exception is EntryPointNotFoundException or DllNotFoundException)
+		{
+			return false;
+		}
+	}
+
+	/// <summary><c>PackageOrigin_DeveloperUnsigned</c>: registered from a folder, unsigned.</summary>
+	private const int PackageOriginDeveloperUnsigned = 4;
+
+	// Exported by the app model's API set rather than by kernel32, which forwards most of its siblings but not this.
+	[DllImport("api-ms-win-appmodel-runtime-l1-1-1.dll", CharSet = CharSet.Unicode, SetLastError = false)]
+	private static extern int GetStagedPackageOrigin(string packageFullName, out int origin);
 
 	[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = false)]
 	private static extern int FindPackagesByPackageFamily(

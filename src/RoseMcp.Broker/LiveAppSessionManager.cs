@@ -389,7 +389,7 @@ public sealed class LiveAppSessionManager(
 		await RemoveAsync(session.SessionId, CancellationToken.None);
 
 		cancellationToken.ThrowIfCancellationRequested();
-		throw new LiveAppRefusedException(summary.Detail ?? couldNot);
+		throw new LiveAppRefusedException(summary.Detail is { Length: > 0 } detail ? $"{couldNot} {detail}" : couldNot);
 	}
 
 	/// <summary>

@@ -15,13 +15,17 @@ using RoseMcp.Ui.Core.Inspector;
 namespace RoseMcp.App.Inspector;
 
 /// <summary>
-/// An Inspector window, which is about one debugged process.
+/// An Inspector window, which is about one debugged process once it has one.
 /// <para>
 /// One per process rather than one per machine, so the taskbar tells two debugged apps apart and
-/// the title says which is which. There is deliberately no list of other sessions here: the RoseMCP
-/// window's Debugging view is where sessions are listed, and a window that could be re-pointed at
-/// another process would make its own title a lie. It reads through the app's one client, which it
-/// does not own and so does not dispose.
+/// the title says which is which. Opened on its own it is about nothing yet and shows its start
+/// page -- the running apps to attach to, a launch form and the targets debugged lately -- and it
+/// becomes about the process a person attaches to or launches there, or the one whose session they
+/// open. It goes back to the start page when its session ends, still answering for that process,
+/// so detaching and attaching again reaches the same window. There is deliberately no list of
+/// sessions to switch between: the RoseMCP window's Debugging view is where sessions are listed, and
+/// a window that could be re-pointed at another process while it shows one would make its own title
+/// a lie. It reads through the app's one client, which it does not own and so does not dispose.
 /// </para>
 /// </summary>
 public sealed partial class InspectorWindow : Window
@@ -61,12 +65,18 @@ public sealed partial class InspectorWindow : Window
 
 	/// <summary>
 	/// The session this window is about, once it has one. Set from the command line, from a
-	/// redirected launch, or by adopting the only session there is.
+	/// redirected launch, or by what a person starts or opens on the start page.
 	/// </summary>
 	private string? _sessionId;
 
-	/// <summary>The process this window is about, as the launch named it or as its session reports it.</summary>
-	private readonly int? _targetProcessId;
+	/// <summary>The process this window is about, as the launch named it, or as the session started on its start page reports it.</summary>
+	private int? _targetProcessId;
+
+	/// <summary>
+	/// Brings forward another window already about a session, where there is one, so opening a session from the
+	/// start page reaches the window showing it rather than a second window about the same process.
+	/// </summary>
+	private readonly Func<string, int?, bool> _shownElsewhere;
 
 	/// <summary>
 	/// The one hold on the target, shared by the panes that read a stop. On the window rather than in
@@ -81,17 +91,27 @@ public sealed partial class InspectorWindow : Window
 	/// <summary>What the window said when the broker stopped answering, so the first answer after can take it down.</summary>
 	private string? _offlineNotice;
 
+	/// <summary>What the window said when its session went, so opening the next one can take it down.</summary>
+	private string? _goneNotice;
+
 	/// <param name="client">The app's client, shared by every window.</param>
 	/// <param name="sessionId">The session to open on, or null to settle on the one session there is.</param>
 	/// <param name="targetProcessId">The process the session debugs, where the launch named it.</param>
 	/// <param name="optionsProblem">Why the app's command line could not be read, to say on screen.</param>
-	public InspectorWindow(OperatorClient client, string? sessionId, int? targetProcessId, string? optionsProblem)
+	/// <param name="shownElsewhere">Brings forward another window about a session and says so, or says there is none.</param>
+	public InspectorWindow(
+		OperatorClient client,
+		string? sessionId,
+		int? targetProcessId,
+		string? optionsProblem,
+		Func<string, int?, bool> shownElsewhere)
 	{
 		InitializeComponent();
 
 		_client = client;
 		_sessionId = sessionId;
 		_targetProcessId = targetProcessId;
+		_shownElsewhere = shownElsewhere;
 
 		ExtendsContentIntoTitleBar = true;
 		SetTitleBar(TitleBarArea);
@@ -106,6 +126,7 @@ public sealed partial class InspectorWindow : Window
 		Threads.Attach(_client, Report);
 		Execution.Attach(_client, Report);
 		Xaml.Attach(_client, Report);
+		Start.Attach(_client, Report, Open);
 
 		_sessionPoll = new PollLoop(RefreshAsync, SessionInterval, Report);
 
@@ -120,7 +141,9 @@ public sealed partial class InspectorWindow : Window
 
 		if (optionsProblem is { } problem) ShowNotice(problem, InfoBarSeverity.Warning);
 
-		ShowEmpty(InspectorText.NoSessions, string.Empty);
+		if (_sessionId is null) ShowStartPage();
+		else ShowEmpty(InspectorText.WaitingForSession(_sessionId), string.Empty);
+
 		_sessionPoll.Start();
 		_ = CheckBrokerBuildAsync();
 
@@ -132,6 +155,7 @@ public sealed partial class InspectorWindow : Window
 		{
 			_ticking.Stop();
 			_sessionPoll.Stop();
+			Start.Showing(false);
 			Events.Showing(false);
 			Breakpoints.Showing(false);
 			Stack.Showing(false);
@@ -168,16 +192,40 @@ public sealed partial class InspectorWindow : Window
 
 	/// <summary>
 	/// Points this window at a session, which a redirected launch does. Only ever the same process
-	/// this window is already about, because the single-instance key is that process.
+	/// this window is already about, because the single-instance key is that process -- or, for a
+	/// window on its start page, the process the launch names, which it becomes about.
 	/// </summary>
-	public void ShowSession(string? sessionId)
+	public void ShowSession(string? sessionId, int? targetProcessId = null)
 	{
 		if (string.IsNullOrWhiteSpace(sessionId) || sessionId == _sessionId) return;
 
 		_sessionId = sessionId;
+		_targetProcessId ??= targetProcessId;
 		_inspected = null;
 		_row = null;
+
+		HideStartPage();
+		ShowEmpty(InspectorText.WaitingForSession(sessionId), string.Empty);
 		_sessionPoll.Kick();
+
+		// The last session's going is not news about this one.
+		if (_goneNotice is { } gone && Notice.IsOpen && Notice.Message == gone) Notice.IsOpen = false;
+		_goneNotice = null;
+	}
+
+	/// <summary>Whether this window is on its start page, about no session, which "Debug an app" brings forward rather than opening another.</summary>
+	public bool IsOnStartPage => _sessionId is null;
+
+	/// <summary>
+	/// What the start page hands over once a session is started or opened there: another window's, where one is
+	/// already about it, and this window's otherwise.
+	/// </summary>
+	private void Open(LiveAppSessionSummary session)
+	{
+		if (_shownElsewhere(session.SessionId, session.TargetProcessId)) return;
+
+		_targetProcessId = session.TargetProcessId;
+		ShowSession(session.SessionId);
 	}
 
 	/// <summary>
@@ -201,24 +249,25 @@ public sealed partial class InspectorWindow : Window
 	}
 
 	/// <summary>
-	/// Reads the session this window is about, adopting one when it was not told which.
+	/// Reads the session this window is about. A window about none is on its start page, which reads for
+	/// itself, so there is nothing to read here; and one whose session has gone goes back to it, saying so.
 	/// <para>
-	/// Adopting is only ever from one candidate. Several is an ambiguity this window cannot settle
-	/// -- it has no idea which process the reader meant -- so it names them and waits, rather than
-	/// picking one and being confidently about the wrong program.
+	/// A window is never settled on some session it was not pointed at: which process a person meant is
+	/// what the start page asks them, rather than this window guessing and being confidently about the
+	/// wrong program.
 	/// </para>
 	/// </summary>
 	private async Task RefreshAsync(CancellationToken cancellationToken)
 	{
 		try
 		{
-			if (_sessionId is null && !await AdoptAsync(cancellationToken))
+			if (_sessionId is not { } sessionId)
 			{
 				Online();
 				return;
 			}
 
-			Show(await _client.SessionAsync(_sessionId!, cancellationToken));
+			Show(await _client.SessionAsync(sessionId, cancellationToken));
 			Online();
 		}
 		catch (OperatorException failure) when (failure.Failure == OperatorFailure.NotFound)
@@ -229,7 +278,10 @@ public sealed partial class InspectorWindow : Window
 			_row = null;
 
 			Online();
-			ShowEmpty(InspectorText.SessionGone(gone ?? "?"), string.Empty);
+			ShowStartPage();
+
+			_goneNotice = InspectorText.SessionGone(gone ?? "?");
+			ShowNotice(_goneNotice, InfoBarSeverity.Informational);
 		}
 		catch (OperatorException failure)
 		{
@@ -237,30 +289,30 @@ public sealed partial class InspectorWindow : Window
 		}
 	}
 
-	/// <summary>Whether a session to be about could be settled on. False leaves the empty state up.</summary>
-	private async Task<bool> AdoptAsync(CancellationToken cancellationToken)
+	/// <summary>
+	/// Shows the start page in place of everything about a session: no header, tabs or panes, and the title of a
+	/// window about nothing. The page reads for itself while it is on screen.
+	/// </summary>
+	private void ShowStartPage()
 	{
-		var sessions = await _client.SessionsAsync(cancellationToken);
+		ShowEmpty(string.Empty, string.Empty);
+		EmptyState.Visibility = Visibility.Collapsed;
+		Header.Visibility = Visibility.Collapsed;
+		Tabs.Visibility = Visibility.Collapsed;
 
-		if (sessions.Count == 0)
-		{
-			ShowEmpty(InspectorText.NoSessions, string.Empty);
-			return false;
-		}
+		Start.Visibility = Visibility.Visible;
+		Start.Showing(true);
+	}
 
-		if (sessions.Count > 1)
-		{
-			ShowEmpty(
-				"Several targets are being debugged",
-				"This window is about one process, and nothing here says which one you meant. An agent "
-					+ "opens it on its own session by attaching with showInspector. Right now: "
-					+ string.Join(", ", sessions.Select(session => session.TargetDescription)) + ".");
+	/// <summary>Takes the start page down, cancelling what it was reading, for a window that is now about a session.</summary>
+	private void HideStartPage()
+	{
+		if (Start.Visibility == Visibility.Collapsed) return;
 
-			return false;
-		}
-
-		_sessionId = sessions[0].SessionId;
-		return true;
+		Start.Showing(false);
+		Start.Visibility = Visibility.Collapsed;
+		Header.Visibility = Visibility.Visible;
+		Tabs.Visibility = Visibility.Visible;
 	}
 
 	/// <summary>Binds the panes to the session, the first time it is seen, and renders the header.</summary>
@@ -368,6 +420,9 @@ public sealed partial class InspectorWindow : Window
 		StateText.Text = row.StateLabel;
 		FactsText.Text = row.Facts;
 		XamlFactText.Text = row.XamlFact;
+		OwnersText.Text = row.Owners;
+		ShareButton.Visibility = row.IsPersons && !row.IsEnded ? Visibility.Visible : Visibility.Collapsed;
+		ShareButton.Content = row.IsShared ? "Shared" : "Share";
 
 		ExecutionPill.Visibility = row.IsStopped ? Visibility.Visible : Visibility.Collapsed;
 		ExecutionText.Text = row.IsHeld ? $"{row.ExecutionLabel} · {row.ResumeLabel}" : row.ExecutionLabel;
@@ -480,6 +535,8 @@ public sealed partial class InspectorWindow : Window
 		StateText.Text = string.Empty;
 		FactsText.Text = string.Empty;
 		XamlFactText.Text = string.Empty;
+		OwnersText.Text = string.Empty;
+		ShareButton.Visibility = Visibility.Collapsed;
 		ExecutionPill.Visibility = Visibility.Collapsed;
 		TitleText.Text = "RoseMCP Inspector";
 		Title = TitleText.Text;
@@ -530,6 +587,78 @@ public sealed partial class InspectorWindow : Window
 		finally
 		{
 			Busy.IsActive = false;
+		}
+	}
+
+	/// <summary>
+	/// Fills the share menu as it opens: each agent session behind a relay, the one it is shared with checked, and
+	/// stopping where it is shared with one. Read as it opens rather than held, because sessions come and go.
+	/// </summary>
+	private async void OnShareOpening(object? sender, object args)
+	{
+		ShareMenu.Items.Clear();
+		ShareMenu.Items.Add(new MenuFlyoutItem { Text = "Reading the agent sessions…", IsEnabled = false });
+
+		try
+		{
+			var clients = await _client.ClientsAsync(after: null, waitSeconds: 0, CancellationToken.None);
+			var choices = StartPage.ShareChoices(clients.Clients);
+			var sharedWith = _row?.SharedWithClientId;
+
+			ShareMenu.Items.Clear();
+
+			foreach (var choice in choices)
+			{
+				var item = new ToggleMenuFlyoutItem { Text = choice.Name, Tag = choice.Id, IsChecked = choice.Id == sharedWith };
+				item.Click += OnShareWith;
+				ShareMenu.Items.Add(item);
+			}
+
+			if (choices.Count == 0)
+			{
+				ShareMenu.Items.Add(new MenuFlyoutItem { Text = "No agent session is connected through the relay", IsEnabled = false });
+			}
+
+			if (sharedWith is not null)
+			{
+				var stop = new MenuFlyoutItem { Text = "Stop sharing" };
+				stop.Click += OnStopSharing;
+				ShareMenu.Items.Add(new MenuFlyoutSeparator());
+				ShareMenu.Items.Add(stop);
+			}
+		}
+		catch (OperatorException exception)
+		{
+			ShareMenu.Items.Clear();
+			Report(exception);
+		}
+	}
+
+	private async void OnShareWith(object sender, RoutedEventArgs args)
+	{
+		if (_sessionId is not { } sessionId || sender is not FrameworkElement { Tag: string clientId }) return;
+
+		try
+		{
+			Show(await _client.ShareAsync(sessionId, clientId, CancellationToken.None));
+		}
+		catch (OperatorException exception)
+		{
+			Report(exception);
+		}
+	}
+
+	private async void OnStopSharing(object sender, RoutedEventArgs args)
+	{
+		if (_sessionId is not { } sessionId) return;
+
+		try
+		{
+			Show(await _client.UnshareAsync(sessionId, CancellationToken.None));
+		}
+		catch (OperatorException exception)
+		{
+			Report(exception);
 		}
 	}
 

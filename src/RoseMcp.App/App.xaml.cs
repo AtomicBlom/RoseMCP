@@ -87,28 +87,50 @@ public partial class App : Application
 
 	/// <summary>
 	/// Opens an Inspector window on a session, or brings forward the one already about that process or session. With
-	/// neither named -- "Debug an app" -- an Inspector window already open is brought forward rather than a second
-	/// opened, since a window with no session settles on the one session there is, and that is the one it shows.
+	/// neither named -- "Debug an app" -- a window already on its start page is brought forward rather than a second
+	/// opened, and otherwise a new window opens on its start page, since every other window is about a process of
+	/// its own.
 	/// </summary>
 	public void ShowInspector(string? sessionId, int? targetProcessId)
 	{
 		var named = sessionId is { Length: > 0 } || targetProcessId is not null;
 		var open = named
 			? _inspectors.FirstOrDefault(window => window.IsAbout(sessionId, targetProcessId))
-			: _inspectors.LastOrDefault();
+			: _inspectors.LastOrDefault(window => window.IsOnStartPage);
 
 		if (open is not null)
 		{
-			open.ShowSession(sessionId);
+			open.ShowSession(sessionId, targetProcessId);
 			open.BringToFront();
 			return;
 		}
 
-		var window = new InspectorWindow(Client, sessionId, targetProcessId, OptionsProblem);
+		InspectorWindow? created = null;
+		var window = new InspectorWindow(
+			Client,
+			sessionId,
+			targetProcessId,
+			OptionsProblem,
+			(shownSession, shownProcess) => ShownElsewhere(created, shownSession, shownProcess));
+		created = window;
 		window.Closed += (_, _) => _inspectors.Remove(window);
 
 		_inspectors.Add(window);
 		window.Activate();
+	}
+
+	/// <summary>
+	/// Brings forward a window other than <paramref name="asking"/> that is already about the session, and says whether
+	/// one was: a session opened from one window's start page that another window is showing is that window's.
+	/// </summary>
+	private bool ShownElsewhere(InspectorWindow? asking, string sessionId, int? targetProcessId)
+	{
+		var other = _inspectors.FirstOrDefault(candidate => !ReferenceEquals(candidate, asking) && candidate.IsAbout(sessionId, targetProcessId));
+		if (other is null) return false;
+
+		other.ShowSession(sessionId, targetProcessId);
+		other.BringToFront();
+		return true;
 	}
 
 	private void Open(InspectorOptions options)

@@ -116,7 +116,7 @@ public sealed partial class RoseWindow : Window
 	/// <summary>Opens a session's Inspector window.</summary>
 	public void OpenSession(string sessionId, int? targetProcessId = null) => _app.ShowInspector(sessionId, targetProcessId);
 
-	/// <summary>Opens an Inspector window that settles on the session there is.</summary>
+	/// <summary>Opens an Inspector window on its start page, to attach to a running app or launch one.</summary>
 	public void DebugAnApp() => _app.ShowInspector(sessionId: null, targetProcessId: null);
 
 	/// <summary>Runs the feed while the window can be seen and stops it otherwise.</summary>

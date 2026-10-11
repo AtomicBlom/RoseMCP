@@ -22,7 +22,7 @@
 		</Grid>
 
 		<Border x:Name="Header" Grid.Row="1" Style="{StaticResource CardStyle}" Margin="14,0,14,10">
-			<Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
+			<Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto">
 				<StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
 					<TextBlock x:Name="SessionName" Text="No session" TextTrimming="CharacterEllipsis"
 						Style="{StaticResource SubtitleTextBlockStyle}" />
@@ -41,6 +41,13 @@
 					<Button x:Name="OpenLogButton" Style="{StaticResource ChipButtonStyle}" Click="OnOpenHostLog"
 						Content="Host log" IsEnabled="False"
 						ToolTipService.ToolTip="Open the folder holding this session's host log" />
+					<!-- Only on a session the person started: theirs to share with one agent session, and to stop sharing. -->
+					<Button x:Name="ShareButton" Style="{StaticResource ChipButtonStyle}" Content="Share" Visibility="Collapsed"
+						ToolTipService.ToolTip="Let one agent session reach this session through its debug tools">
+						<Button.Flyout>
+							<MenuFlyout x:Name="ShareMenu" Opening="OnShareOpening" />
+						</Button.Flyout>
+					</Button>
 					<Button x:Name="DetachButton" Style="{StaticResource ChipButtonStyle}" Click="OnDetach"
 						Content="Detach" IsEnabled="False"
 						ToolTipService.ToolTip="End the session. The target keeps running." />
@@ -72,6 +79,11 @@
 				<TextBlock x:Name="XamlFactText" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,2,0,0" TextWrapping="Wrap"
 					Style="{StaticResource CaptionTextBlockStyle}"
 					Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+
+				<!-- Who is in the session: an agent's, yours alone, or yours and the agent session you shared it with. -->
+				<TextBlock x:Name="OwnersText" Grid.Row="3" Grid.ColumnSpan="2" Margin="0,2,0,0" TextWrapping="Wrap"
+					Style="{StaticResource CaptionTextBlockStyle}"
+					Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
 			</Grid>
 		</Border>
 
@@ -98,6 +110,10 @@
 			<panes:StackPane x:Name="Stack" Visibility="Collapsed" />
 			<panes:ThreadsPane x:Name="Threads" Visibility="Collapsed" />
 			<panes:XamlPane x:Name="Xaml" Visibility="Collapsed" />
+
+			<!-- Shown in place of everything about a session while the window is about none: opened on its own, or
+			     after its session ended. -->
+			<panes:StartPane x:Name="Start" Visibility="Collapsed" />
 
 			<!-- Shown instead of the panes when there is no session to show them for. -->
 			<StackPanel x:Name="EmptyState" Spacing="10" MaxWidth="520" VerticalAlignment="Center"

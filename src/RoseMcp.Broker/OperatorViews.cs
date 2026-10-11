@@ -90,7 +90,7 @@ public sealed class OperatorViews(
 	public OperatorSessionList Sessions()
 	{
 		var present = clients.ByKey();
-		var rows = sessions.Sessions.Select(session => WithShare(session, present)).ToList();
+		var rows = sessions.Sessions.Select(session => WithParties(session, present)).ToList();
 
 		var stable = rows.Select(row => row with
 		{
@@ -104,29 +104,66 @@ public sealed class OperatorViews(
 	}
 
 	/// <summary>One session's row, as <see cref="Sessions"/> lists it.</summary>
-	public LiveAppSessionSummary Session(LiveAppSession session) => WithShare(session, clients.ByKey());
+	public LiveAppSessionSummary Session(LiveAppSession session) => WithParties(session, clients.ByKey());
 
-	/// <summary>
-	/// A session's row, its share naming the row the client table files the shared session under now -- a row goes
-	/// and is made again with a new id while the session is the same one -- and saying whether there is one.
-	/// </summary>
-	private static LiveAppSessionSummary WithShare(LiveAppSession session, IReadOnlyDictionary<string, ClientSummary> present)
+	/// <summary>A session's row, its parties named as <see cref="Named"/> names them.</summary>
+	private static LiveAppSessionSummary WithParties(LiveAppSession session, IReadOnlyDictionary<string, ClientSummary> present)
 	{
 		var summary = session.Describe();
-		if (session.Owners.Shared is not { } shared || summary.SharedWith is not { } share) return summary;
 
-		var row = present.GetValueOrDefault(shared.Key);
+		return Named(summary, session.Owners, session.SetterOf(summary.Stop?.BreakpointId), present);
+	}
+
+	/// <summary>
+	/// <paramref name="summary"/> naming each agent session in it by the row the client table files that session under
+	/// now -- a row goes and is made again with a new id while the session is the same one: the one it is shared with,
+	/// saying whether there is one; the one that started it, where the table still lists it; and who set the breakpoint
+	/// the target is stopped at, which is <paramref name="setter"/>.
+	/// </summary>
+	public static LiveAppSessionSummary Named(
+		LiveAppSessionSummary summary,
+		LiveAppOwners owners,
+		LiveAppActor? setter,
+		IReadOnlyDictionary<string, ClientSummary> present)
+	{
+		ArgumentNullException.ThrowIfNull(summary);
+		ArgumentNullException.ThrowIfNull(owners);
+		ArgumentNullException.ThrowIfNull(present);
+
+		if (owners.Shared is { } shared && summary.SharedWith is { } share)
+		{
+			var row = present.GetValueOrDefault(shared.Key);
+
+			summary = summary with
+			{
+				SharedWith = share with
+				{
+					ClientId = row?.Id ?? share.ClientId,
+					Name = row is null ? share.Name : ClientName(row) ?? share.Name,
+					Connected = row is not null,
+				},
+			};
+		}
+
+		var stoppedAtBreakpoint = summary.Stop?.BreakpointId is { Length: > 0 };
 
 		return summary with
 		{
-			SharedWith = share with
-			{
-				ClientId = row?.Id ?? share.ClientId,
-				Name = row is null ? share.Name : ClientName(row) ?? share.Name,
-				Connected = row is not null,
-			},
+			StartedByAgent = owners.IsPersons ? null : AgentOf(owners.StarterKey, present),
+			StopSetBy = setter is null || !stoppedAtBreakpoint
+				? null
+				: new LiveBreakpointSetter { Person = setter.IsPerson, Agent = AgentOf(setter.ClientKey, present) },
 		};
 	}
+
+	/// <summary>
+	/// The agent session the client table files under <paramref name="clientKey"/>, by its row now; null where the table
+	/// lists none, since a row that has gone is no longer one a window can name or send a note to.
+	/// </summary>
+	private static LiveAppAgent? AgentOf(string? clientKey, IReadOnlyDictionary<string, ClientSummary> present) =>
+		clientKey is not null && present.GetValueOrDefault(clientKey) is { } row
+			? new LiveAppAgent { ClientId = row.Id, Name = ClientName(row), Connected = true }
+			: null;
 
 	/// <summary>
 	/// What a window calls a client: what its relay labelled it, else the folder it runs in, else the program; null

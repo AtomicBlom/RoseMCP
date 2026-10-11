@@ -873,6 +873,7 @@ public sealed class LiveAppDebugTests
 					new SetBreakpointRequest { Location = "NotYetLoaded!Somewhere.Later.Walk", Condition = "this is not a condition" },
 					new SetBreakpointRequest { Location = "DebugProbeTarget.Program.NoSuchMethod" },
 				],
+				RoseMcp.Broker.LiveAppActor.Person,
 				cancellationToken);
 			breakpoints.Total.ShouldBe(4);
 			breakpoints.Set.ShouldBe(2);
@@ -940,7 +941,7 @@ public sealed class LiveAppDebugTests
 			var adding = await Should.ThrowAsync<InvalidOperationException>(() => session.AddTracepointsAsync([], cancellationToken));
 			adding.Message.ShouldContain("tracepoints is empty", Case.Sensitive);
 
-			var setting = await Should.ThrowAsync<InvalidOperationException>(() => session.SetBreakpointsAsync([], cancellationToken));
+			var setting = await Should.ThrowAsync<InvalidOperationException>(() => session.SetBreakpointsAsync([], RoseMcp.Broker.LiveAppActor.Person, cancellationToken));
 			setting.Message.ShouldContain("breakpoints is empty", Case.Sensitive);
 
 			var removingTracepoints = await Should.ThrowAsync<InvalidOperationException>(() => session.RemoveTracepointsAsync([], cancellationToken));

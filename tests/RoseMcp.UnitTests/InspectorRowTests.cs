@@ -182,59 +182,6 @@ public sealed class InspectorRowTests
 		TracepointRow.Ordinal(value).ShouldBe(expected);
 	}
 
-	/// <summary>
-	/// A tail is bounded, and what it trims is said. A silently truncated tail reads as a complete
-	/// one, which is the difference between "nothing happened before this" and "I stopped looking".
-	/// </summary>
-	[Test]
-	public void The_tail_is_capped_and_says_what_it_dropped()
-	{
-		var session = new InspectedSession("s1");
-
-		session.Absorb(Page(1, InspectedSession.MaxEvents + 5));
-
-		session.Events.Count.ShouldBe(InspectedSession.MaxEvents);
-		session.HasNotice.ShouldBeTrue();
-		session.Notice.ShouldContain("5 earlier events", Case.Sensitive);
-
-		// The oldest went, so the newest is what is left at the end.
-		session.Events[^1].Sequence.ShouldBe(InspectedSession.MaxEvents + 5);
-	}
-
-	/// <summary>
-	/// The cursor advances so the next poll asks only for what is new. Reading it back from the
-	/// page rather than from the last event is what makes a filtered read page forward at all.
-	/// </summary>
-	[Test]
-	public void Absorbing_a_page_advances_the_cursor()
-	{
-		var session = new InspectedSession("s1");
-
-		session.Absorb(Page(1, 3, nextCursor: 9));
-
-		session.Cursor.ShouldBe(9);
-		session.Events.Count.ShouldBe(3);
-		session.HasEvents.ShouldBeTrue();
-		session.HasNotice.ShouldBeFalse();
-	}
-
-	/// <summary>
-	/// The host's buffer is bounded too, so a reader that fell behind missed events nobody will
-	/// ever see. The count of them is the only thing that says the tail has a hole in it.
-	/// </summary>
-	[Test]
-	public void Events_the_host_dropped_are_counted()
-	{
-		var session = new InspectedSession("s1");
-		session.Absorb(Page(1, 2, nextCursor: 2, oldestAvailable: 1, totalObserved: 2));
-
-		// The next page starts at 20: sequences 3 to 19 went out of the host's buffer.
-		session.Absorb(Page(20, 1, nextCursor: 20, oldestAvailable: 20, totalObserved: 20));
-
-		session.HasNotice.ShouldBeTrue();
-		session.Notice.ShouldContain("17 earlier events", Case.Sensitive);
-	}
-
 	/// <summary>Breakpoint rows survive a poll, so the row a reader is about to click stays put.</summary>
 	[Test]
 	public void Breakpoints_merge_in_place()
@@ -267,28 +214,4 @@ public sealed class InspectorRowTests
 		HasChildren = false,
 	};
 
-	private static LiveDebugEventPage Page(
-		long firstSequence,
-		int count,
-		long? nextCursor = null,
-		long oldestAvailable = 1,
-		long? totalObserved = null)
-	{
-		var events = Enumerable.Range(0, count).Select(offset => new LiveDebugEvent
-		{
-			Sequence = firstSequence + offset,
-			TimestampUtc = DateTime.UtcNow,
-			Kind = LiveDebugEventKind.LogMessage,
-			Message = $"event {firstSequence + offset}",
-		}).ToList();
-
-		return new LiveDebugEventPage
-		{
-			State = LiveAppSessionState.Ready,
-			NextCursor = nextCursor ?? firstSequence + count - 1,
-			OldestAvailable = oldestAvailable,
-			TotalObserved = totalObserved ?? firstSequence + count - 1,
-			Events = events,
-		};
-	}
 }

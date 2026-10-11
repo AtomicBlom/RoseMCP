@@ -4,35 +4,55 @@
 	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
 	xmlns:panes="using:RoseMcp.App.Inspector.Panes"
 	xmlns:controls="using:RoseMcp.App.Inspector.Controls"
+	xmlns:views="using:RoseMcp.App.Views"
 	Title="RoseMCP Inspector">
 
 	<Window.SystemBackdrop>
 		<MicaBackdrop />
 	</Window.SystemBackdrop>
 
-	<Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" Padding="0,0,0,14">
+	<Grid x:Name="Root" RowDefinitions="Auto,Auto,Auto,Auto,*" Padding="0,0,0,14">
 
-		<!-- Title bar. Draggable region only; every control in it would otherwise eat the drag.
-		     It names the process being debugged, because there is one of these windows per process
-		     and the taskbar is where somebody picks between them. -->
+		<!-- Asks about whichever row was selected last, anywhere in the window. -->
+		<Grid.KeyboardAccelerators>
+			<KeyboardAccelerator Key="A" Modifiers="Control,Shift" Invoked="OnAskShortcut" />
+		</Grid.KeyboardAccelerators>
+
+		<!-- One composer for the window, opened beside whatever is being asked about. -->
+		<FlyoutBase.AttachedFlyout>
+			<Flyout x:Name="AskFlyout" Placement="Bottom">
+				<Flyout.FlyoutPresenterStyle>
+					<Style TargetType="FlyoutPresenter">
+						<Setter Property="MaxWidth" Value="460" />
+						<Setter Property="MinWidth" Value="380" />
+					</Style>
+				</Flyout.FlyoutPresenterStyle>
+				<StackPanel Spacing="6" Width="420">
+					<TextBlock Text="Ask an agent" Style="{StaticResource BodyStrongTextBlockStyle}" />
+					<views:NoteComposerView x:Name="AskComposer" OpenLabel="Ask an agent about this…" />
+				</StackPanel>
+			</Flyout>
+		</FlyoutBase.AttachedFlyout>
+
+		<!-- Title bar. Draggable region only; every control in it would otherwise eat the drag. It names the process being
+		     debugged, because there is one of these windows per process and the taskbar is where somebody picks between
+		     them. -->
 		<Grid x:Name="TitleBarArea" Grid.Row="0" Height="40" Padding="14,0" ColumnDefinitions="Auto,Auto,*">
 			<Image x:Name="TitleMark" Grid.Column="0" Width="16" Height="16" VerticalAlignment="Center" />
 			<TextBlock x:Name="TitleText" Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center"
 				Text="RoseMCP Inspector" Style="{StaticResource CaptionTextBlockStyle}" />
 		</Grid>
 
+		<!-- The header: the app, who is in the session and how current this is; then why it stopped, who stopped it and
+		     when it lets go, with what moves it; or, once it has gone, that it exited and where its log is. -->
 		<Border x:Name="Header" Grid.Row="1" Style="{StaticResource CardStyle}" Margin="14,0,14,10">
-			<Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto">
-				<StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+			<Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6">
+				<StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
 					<TextBlock x:Name="SessionName" Text="No session" TextTrimming="CharacterEllipsis"
 						Style="{StaticResource SubtitleTextBlockStyle}" />
-					<Border x:Name="StatePill" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
-						<TextBlock x:Name="StateText" Style="{StaticResource CaptionTextBlockStyle}" />
-					</Border>
-					<Border x:Name="ExecutionPill" Style="{StaticResource AccentPillStyle}" VerticalAlignment="Center"
-						Visibility="Collapsed">
-						<TextBlock x:Name="ExecutionText" Style="{StaticResource CaptionTextBlockStyle}" />
-					</Border>
+					<TextBlock x:Name="AppLine" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+						Style="{StaticResource CaptionTextBlockStyle}"
+						Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 				</StackPanel>
 
 				<StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
@@ -48,12 +68,9 @@
 							<MenuFlyout x:Name="ShareMenu" Opening="OnShareOpening" />
 						</Button.Flyout>
 					</Button>
-					<Button x:Name="DetachButton" Style="{StaticResource ChipButtonStyle}" Click="OnDetach"
-						Content="Detach" IsEnabled="False"
-						ToolTipService.ToolTip="End the session. The target keeps running." />
 
-					<!-- A flyout rather than a toggle in the header, because what is in it is not about
-					     this session: it is a preference every RoseMCP host on the machine reads. -->
+					<!-- A flyout rather than a toggle in the header, because what is in it is not about this session: it is a
+					     preference every RoseMCP host on the machine reads. -->
 					<Button x:Name="SettingsButton" Style="{StaticResource IconButtonStyle}"
 						ToolTipService.ToolTip="Settings">
 						<Button.Content>
@@ -72,51 +89,71 @@
 					</Button>
 				</StackPanel>
 
-				<TextBlock x:Name="FactsText" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,6,0,0"
-					Style="{StaticResource CaptionTextBlockStyle}"
-					Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+				<StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8">
+					<Border Style="{StaticResource PillStyle}" VerticalAlignment="Center">
+						<TextBlock x:Name="InSessionText" Style="{StaticResource CaptionTextBlockStyle}" />
+					</Border>
+					<!-- Live while the host answers; how long ago it last did, once it has gone quiet. -->
+					<Border x:Name="LivePill" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
+						<StackPanel Orientation="Horizontal" Spacing="6">
+							<Ellipse x:Name="LiveDot" Width="7" Height="7" VerticalAlignment="Center"
+								Fill="{ThemeResource SystemFillColorSuccessBrush}" />
+							<TextBlock x:Name="LiveText" Style="{StaticResource CaptionTextBlockStyle}" />
+						</StackPanel>
+					</Border>
+				</StackPanel>
 
-				<TextBlock x:Name="XamlFactText" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,2,0,0" TextWrapping="Wrap"
-					Style="{StaticResource CaptionTextBlockStyle}"
-					Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+				<controls:ExecutionBar x:Name="Execution" Grid.Row="2" Grid.ColumnSpan="2" />
 
-				<!-- Who is in the session: an agent's, yours alone, or yours and the agent session you shared it with. -->
-				<TextBlock x:Name="OwnersText" Grid.Row="3" Grid.ColumnSpan="2" Margin="0,2,0,0" TextWrapping="Wrap"
+				<!-- In place of the stop line once the app has gone: that it did, when, and the log that explains it. -->
+				<Grid x:Name="EndedPanel" Grid.Row="2" Grid.ColumnSpan="2" ColumnSpacing="10" ColumnDefinitions="*,Auto"
+					Visibility="Collapsed">
+					<StackPanel Grid.Column="0" Spacing="2">
+						<TextBlock x:Name="EndedTitle" Style="{StaticResource BodyStrongTextBlockStyle}" />
+						<TextBlock x:Name="EndedLog" TextWrapping="Wrap" IsTextSelectionEnabled="True"
+							Style="{StaticResource CaptionTextBlockStyle}"
+							Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+					</StackPanel>
+					<StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+						<Button Style="{StaticResource ChipButtonStyle}" Content="Open its log" Click="OnOpenHostLog" />
+						<Button Style="{StaticResource ChipButtonStyle}" Content="Debug an app" Click="OnDebugAnother"
+							ToolTipService.ToolTip="Go to the list of running apps, a launch form and the targets debugged lately" />
+					</StackPanel>
+				</Grid>
+
+				<TextBlock x:Name="XamlFactText" Grid.Row="3" Grid.ColumnSpan="2" TextWrapping="Wrap"
 					Style="{StaticResource CaptionTextBlockStyle}"
 					Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
 			</Grid>
 		</Border>
 
-		<!-- Above the tabs, because moving the target is a thing you do to the session rather
-		     than to a stack: wanting to continue while reading the event tail is the ordinary case. -->
-		<controls:ExecutionBar x:Name="Execution" Grid.Row="2" Margin="14,0,14,10" />
+		<InfoBar x:Name="Notice" Grid.Row="2" Margin="14,0,14,10" IsOpen="False" IsClosable="True" />
 
-		<InfoBar x:Name="Notice" Grid.Row="3" Margin="14,0,14,10" IsOpen="False" IsClosable="True" />
-
-		<SelectorBar x:Name="Tabs" Grid.Row="4" Margin="14,0,14,8" SelectionChanged="OnTabChosen">
-			<SelectorBarItem x:Name="EventsTab" Text="Events" IsSelected="True" />
-			<SelectorBarItem x:Name="BreakpointsTab" Text="Breakpoints" />
-			<SelectorBarItem x:Name="StackTab" Text="Stack" />
-			<SelectorBarItem x:Name="ThreadsTab" Text="Threads" />
-			<SelectorBarItem x:Name="XamlTab" Text="XAML" Visibility="Collapsed" />
+		<!-- Code is the view of the stop; XAML the second view of the same session; Breakpoints what is set. The stream
+		     stays beside whichever is shown. -->
+		<SelectorBar x:Name="Views" Grid.Row="3" Margin="14,0,14,8" SelectionChanged="OnViewChosen">
+			<SelectorBarItem x:Name="CodeView" Text="Code" IsSelected="True" />
+			<SelectorBarItem x:Name="XamlView" Text="XAML" Visibility="Collapsed" />
+			<SelectorBarItem x:Name="BreakpointsView" Text="Breakpoints" />
 		</SelectorBar>
 
-		<!-- Panes are toggled by visibility rather than navigated to. A Frame recreates a page on
-		     every visit, which would lose the event tail, any open expander, and the scroll
-		     position: all of which are the reader's place in what they were doing. -->
-		<Grid Grid.Row="5" Margin="14,0,14,0">
-			<panes:EventsPane x:Name="Events" />
-			<panes:BreakpointsPane x:Name="Breakpoints" Visibility="Collapsed" />
-			<panes:StackPane x:Name="Stack" Visibility="Collapsed" />
-			<panes:ThreadsPane x:Name="Threads" Visibility="Collapsed" />
-			<panes:XamlPane x:Name="Xaml" Visibility="Collapsed" />
+		<!-- Views are toggled by visibility rather than navigated to. A Frame recreates a page on every visit, which would
+		     lose any open expander and the scroll position: the reader's place in what they were doing. -->
+		<Grid Grid.Row="4" Margin="14,0,14,0" ColumnSpacing="14" ColumnDefinitions="*,360">
+			<panes:CodePane x:Name="Code" Grid.Column="0" />
+			<panes:XamlPane x:Name="Xaml" Grid.Column="0" Visibility="Collapsed" />
+			<panes:BreakpointsPane x:Name="Breakpoints" Grid.Column="0" Visibility="Collapsed" />
 
-			<!-- Shown in place of everything about a session while the window is about none: opened on its own, or
-			     after its session ended. -->
-			<panes:StartPane x:Name="Start" Visibility="Collapsed" />
+			<Border x:Name="StreamFrame" Grid.Column="1" Style="{StaticResource CardStyle}" Padding="10">
+				<panes:StreamPane x:Name="Stream" />
+			</Border>
 
-			<!-- Shown instead of the panes when there is no session to show them for. -->
-			<StackPanel x:Name="EmptyState" Spacing="10" MaxWidth="520" VerticalAlignment="Center"
+			<!-- Shown in place of everything about a session while the window is about none: opened on its own, or after
+			     the person left a session that ended. -->
+			<panes:StartPane x:Name="Start" Grid.ColumnSpan="2" Visibility="Collapsed" />
+
+			<!-- Shown instead of the views when there is no session to show them for. -->
+			<StackPanel x:Name="EmptyState" Grid.ColumnSpan="2" Spacing="10" MaxWidth="520" VerticalAlignment="Center"
 				HorizontalAlignment="Center" Visibility="Collapsed">
 				<TextBlock x:Name="EmptyTitle" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
 					Style="{StaticResource SubtitleTextBlockStyle}" />

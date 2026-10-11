@@ -218,7 +218,7 @@ public sealed class StartPageTests
 	{
 		var agents = SessionRowTests.Session();
 		var mine = agents with { StartedBy = LiveAppStarter.Person };
-		var shared = mine with { SharedWith = new LiveAppShare { ClientId = "client-2", Name = "PDF fixes", Connected = true } };
+		var shared = mine with { SharedWith = new LiveAppAgent { ClientId = "client-2", Name = "PDF fixes", Connected = true } };
 
 		SessionRow.DescribeOwners(agents).ShouldBe("Started by an agent");
 		SessionRow.DescribeOwners(mine).ShouldBe("Started by you · not shared with an agent");

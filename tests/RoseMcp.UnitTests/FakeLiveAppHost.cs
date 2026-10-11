@@ -50,8 +50,20 @@ internal sealed class FakeLiveAppHost : IAsyncDisposable
 		return new StreamClientTransport(toServer.Writer.AsStream(), toClient.Reader.AsStream());
 	}
 
-	private static CallToolResult Answer(string tool, int processId)
+	private int _breakpoints;
+
+	private CallToolResult Answer(string tool, int processId)
 	{
+		if (tool == ToolNames.LiveAppSetBreakpoint)
+		{
+			// One breakpoint set per call, numbered as a host numbers them, so a test can see who set which.
+			var id = $"bp-{Interlocked.Increment(ref _breakpoints)}";
+			var set = new LiveBreakpoint { Id = id, Location = "Probe.Program.Beat", StopOnHit = true, Bound = true, HitCount = 0, AutoContinueSeconds = 30 };
+			var batch = new LiveBreakpointBatch { Set = 1, Results = [new LiveBreakpointOutcome { Location = set.Location, Status = "set", Breakpoint = set }] };
+
+			return new CallToolResult { Content = [], StructuredContent = JsonSerializer.SerializeToElement(batch, McpJsonUtilities.DefaultOptions) };
+		}
+
 		var info = new LiveAppInfo
 		{
 			HostProcessId = 1,

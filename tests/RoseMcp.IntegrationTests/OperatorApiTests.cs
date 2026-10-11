@@ -190,6 +190,11 @@ public sealed class OperatorApiTests
 			var row = listed!.Sessions.ShouldHaveSingleItem();
 			row.SessionId.ShouldBe(sessionId);
 
+			// Named for a window by the row the client table lists the session that started it under.
+			var clientRows = (await broker.GetAsync<ClientList>("/operator/clients", cancellationToken)).Clients;
+			var starter = row.StartedByAgent.ShouldNotBeNull("an agent started it, and the table lists that agent");
+			clientRows.ShouldContain(client => client.Id == starter.ClientId);
+
 			// What the session holds is read apart from Rose's own: its host is Rose's cost, the app it debugs is
 			// not. The app is read only while the host says it is serving, so wait for the host to say so.
 			var memory = await SessionMemoryAsync(broker, sessionId!, cancellationToken);
@@ -498,6 +503,33 @@ public sealed class OperatorApiTests
 			var read = await agent.CallToolAsync(
 				ToolNames.DebugEvents, new Dictionary<string, object?> { ["sessionId"] = sessionId }, options: mine, cancellationToken: cancellationToken);
 			read.IsError.ShouldNotBe(true, Text(read));
+			shared.StartedByAgent.ShouldBeNull("a person started it");
+
+			// A breakpoint the shared agent sets is named as that agent's when the target stops at it.
+			var set = await agent.CallToolAsync(
+				ToolNames.DebugSetBreakpoint,
+				new Dictionary<string, object?>
+				{
+					["sessionId"] = sessionId,
+					["breakpoints"] = new[] { new Dictionary<string, object?> { ["location"] = "DebugProbeTarget.Program.Beat", ["autoContinueSeconds"] = 30 } },
+				},
+				options: mine,
+				cancellationToken: cancellationToken);
+			set.IsError.ShouldNotBe(true, Text(set));
+
+			var stopped = await StoppedAsync(broker, sessionId, cancellationToken);
+			var setter = stopped.StopSetBy.ShouldNotBeNull("the broker saw the breakpoint set");
+			setter.Person.ShouldBeFalse();
+			setter.Agent.ShouldNotBeNull().ClientId.ShouldBe(myRow);
+
+			// Taken out before the target goes on, or the next beat stops it again under the rest of the test.
+			var breakpointId = stopped.Stop.ShouldNotBeNull().BreakpointId.ShouldNotBeNull();
+			using (var removed = await broker.Client.DeleteAsync(broker.Url($"/operator/sessions/{sessionId}/breakpoints/{breakpointId}"), cancellationToken))
+			{
+				removed.StatusCode.ShouldBe(HttpStatusCode.OK);
+			}
+
+			await PostAsync<LiveContinueResult>(broker, $"/operator/sessions/{sessionId}/continue", new { }, cancellationToken);
 
 			var handed = await agent.CallToolAsync(
 				ToolNames.DebugAttach, new Dictionary<string, object?> { ["processId"] = target.Id }, options: mine, cancellationToken: cancellationToken);
@@ -733,6 +765,25 @@ public sealed class OperatorApiTests
 			}
 
 			await Task.Delay(100, cancellationToken);
+		}
+	}
+
+	/// <summary>The session as the operator reads it once its target is stopped, waiting for the stop within the suite's ceiling.</summary>
+	private static async Task<LiveAppSessionSummary> StoppedAsync(OperatorBroker broker, string sessionId, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + Ceiling;
+
+		while (true)
+		{
+			var session = await broker.GetAsync<LiveAppSessionSummary>($"/operator/sessions/{sessionId}", cancellationToken);
+			if (session.Stop is not null) return session;
+
+			if (DateTime.UtcNow > deadline)
+			{
+				throw new ShouldAssertException($"The target never stopped: {JsonSerializer.Serialize(session, ContractJson.Options)}");
+			}
+
+			await Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken);
 		}
 	}
 

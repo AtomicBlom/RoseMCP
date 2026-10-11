@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 using Microsoft.Extensions.Logging;
@@ -40,6 +41,10 @@ public sealed class LiveAppSession : IAsyncDisposable
 	// Whoever this session belongs to; see Owners. An agent's with no session until the manager says otherwise,
 	// which it does before the session is registered.
 	private LiveAppOwners _owners = LiveAppOwners.Agent(null);
+
+	// Who set each breakpoint, by the id the host gave it. The host never learns who asked, and ids are not reused
+	// within a host's life, so an entry stays true for as long as the session does.
+	private readonly ConcurrentDictionary<string, LiveAppActor> _setters = new(StringComparer.Ordinal);
 
 	private LiveAppSession(
 		string sessionId,
@@ -371,12 +376,32 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["tracepointIds"] = ids },
 			cancellationToken);
 
-	/// <summary>Sets stopping breakpoints, each request's outcome its own entry, as <see cref="AddTracepointsAsync"/> does.</summary>
-	public Task<LiveBreakpointBatch> SetBreakpointsAsync(IReadOnlyList<SetBreakpointRequest> breakpoints, CancellationToken cancellationToken)
-		=> SendAsync<LiveBreakpointBatch>(
+	/// <summary>
+	/// Sets stopping breakpoints, each request's outcome its own entry, as <see cref="AddTracepointsAsync"/> does, and
+	/// records <paramref name="setBy"/> against each one set, which is how a window says who set the breakpoint a stop
+	/// is at.
+	/// </summary>
+	public async Task<LiveBreakpointBatch> SetBreakpointsAsync(
+		IReadOnlyList<SetBreakpointRequest> breakpoints,
+		LiveAppActor setBy,
+		CancellationToken cancellationToken)
+	{
+		var batch = await SendAsync<LiveBreakpointBatch>(
 			ToolNames.LiveAppSetBreakpoint,
 			new Dictionary<string, object?> { ["breakpoints"] = breakpoints },
 			cancellationToken);
+
+		foreach (var set in batch.Results.Select(outcome => outcome.Breakpoint).OfType<LiveBreakpoint>())
+		{
+			_setters[set.Id] = setBy;
+		}
+
+		return batch;
+	}
+
+	/// <summary>Who set the breakpoint by that id, as <see cref="SetBreakpointsAsync"/> recorded it; null for an id it did not set, and for none.</summary>
+	public LiveAppActor? SetterOf(string? breakpointId) =>
+		breakpointId is { Length: > 0 } id && _setters.TryGetValue(id, out var setter) ? setter : null;
 
 	public Task<LiveBreakpointList> ListBreakpointsAsync(CancellationToken cancellationToken)
 		=> SendAsync<LiveBreakpointList>(ToolNames.LiveAppListBreakpoints, cancellationToken);
@@ -406,12 +431,15 @@ public sealed class LiveAppSession : IAsyncDisposable
 			: throw new InvalidOperationException(outcome.Status);
 	}
 
-	/// <summary>Sets one stopping breakpoint, as <see cref="AddTracepointAsync"/> adds one tracepoint.</summary>
+	/// <summary>
+	/// Sets one stopping breakpoint, as <see cref="AddTracepointAsync"/> adds one tracepoint, for the person: one at a
+	/// time is how a window sets them, and an agent's go through <see cref="SetBreakpointsAsync"/> naming the caller.
+	/// </summary>
 	/// <exception cref="InvalidOperationException">The host refused it, or the session could not set one at all.</exception>
 	public async Task<LiveBreakpoint> SetBreakpointAsync(string location, int? autoContinueSeconds, string? condition, CancellationToken cancellationToken)
 	{
 		var request = new SetBreakpointRequest { Location = location, AutoContinueSeconds = autoContinueSeconds, Condition = condition };
-		var batch = await SetBreakpointsAsync([request], cancellationToken);
+		var batch = await SetBreakpointsAsync([request], LiveAppActor.Person, cancellationToken);
 		var outcome = Single(batch.Results, ToolNames.LiveAppSetBreakpoint);
 
 		return outcome.Breakpoint is { } set

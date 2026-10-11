@@ -334,7 +334,7 @@ public sealed class LiveAppDebugTools(
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.SetBreakpointsAsync(breakpoints, cancellationToken);
+		return await session.SetBreakpointsAsync(breakpoints, LiveAppActor.OfCaller(), cancellationToken);
 	}
 
 	[McpServerTool(

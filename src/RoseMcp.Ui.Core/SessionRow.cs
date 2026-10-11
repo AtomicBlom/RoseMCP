@@ -209,6 +209,9 @@ public sealed class SessionRow : Observable
 		private set => Set(ref _stopSequence, value);
 	}
 
+	/// <summary>The thread the stop is on, where the runtime named one; null while the target runs.</summary>
+	public int? StopThreadId { get; private set; }
+
 	/// <summary>
 	/// How old the host's report of this session is, counted on between polls. What makes the rest of the row
 	/// readable: a stop, a state or a XAML fact from a report a minute old is a minute old, and a host that has
@@ -288,6 +291,171 @@ public sealed class SessionRow : Observable
 	/// <summary>Whether it is shared with an agent session.</summary>
 	public bool IsShared => SharedWithClientId is not null;
 
+	/// <summary>
+	/// How old the host's report may get before the header stops calling the session live. The broker asks every host
+	/// how it is once a second, so five seconds is several answers missed in a row rather than one slow one.
+	/// </summary>
+	public static readonly TimeSpan StaleAfter = TimeSpan.FromSeconds(5);
+
+	private string _inSession = string.Empty;
+	private string _liveness = string.Empty;
+	private bool _isLive;
+	private string _stopTitle = string.Empty;
+	private string _stopFacts = string.Empty;
+	private string _setBy = string.Empty;
+	private string _stoppedAt = string.Empty;
+	private string _framework = string.Empty;
+	private string _solution = string.Empty;
+	private string _appLine = string.Empty;
+	private LiveAppSessionState _state;
+
+	/// <summary>Who is in the session, as the Inspector's header says it: you, and the agent session that started it or that you shared it with.</summary>
+	public string InSession
+	{
+		get => _inSession;
+		private set => Set(ref _inSession, value);
+	}
+
+	/// <summary>Whether the host has answered lately enough for what the header says to be current.</summary>
+	public bool IsLive
+	{
+		get => _isLive;
+		private set => Set(ref _isLive, value);
+	}
+
+	/// <summary>"Live", or how long ago the host last answered when it has stopped answering, counted on between polls.</summary>
+	public string Liveness
+	{
+		get => _liveness;
+		private set => Set(ref _liveness, value);
+	}
+
+	/// <summary>Why the app is stopped, as the header's first words say it, or that it is running.</summary>
+	public string StopTitle
+	{
+		get => _stopTitle;
+		private set => Set(ref _stopTitle, value);
+	}
+
+	/// <summary>Who stopped it, when, and when it lets go, counted down between polls. Empty while it runs.</summary>
+	public string StopFacts
+	{
+		get => _stopFacts;
+		private set => Set(ref _stopFacts, value);
+	}
+
+	/// <summary>The process, its framework, its host and the solution its agent works in, in one line.</summary>
+	public string AppLine
+	{
+		get => _appLine;
+		private set => Set(ref _appLine, value);
+	}
+
+	/// <summary>The agent session that started it, where an agent did and the broker still lists it.</summary>
+	public LiveAppAgent? StartedByAgent { get; private set; }
+
+	/// <summary>The agent session a person shared it with, where they did.</summary>
+	public LiveAppAgent? SharedWith { get; private set; }
+
+	/// <summary>
+	/// The agent sessions in this debug session, which are whom a note about something in it can go to: the one that
+	/// started it, or the one a person shared theirs with.
+	/// </summary>
+	public IReadOnlyList<LiveAppAgent> Agents => new[] { StartedByAgent, SharedWith }.OfType<LiveAppAgent>().ToList();
+
+	/// <summary>
+	/// Takes the solution the session's agent last worked in, read from the activity record, for the line naming the
+	/// app. Nothing in a debug session names a solution, so this is said as what it is: where the agent works.
+	/// </summary>
+	public void Learn(string? solution)
+	{
+		_solution = DescribeSolution(solution);
+		AppLine = DescribeApp(Facts, _framework, _solution);
+	}
+
+	/// <summary>Who is in a session, as the Inspector's header says it.</summary>
+	public static string DescribeParties(LiveAppSessionSummary summary)
+	{
+		if (summary.StartedBy != LiveAppStarter.Person)
+		{
+			var starter = summary.StartedByAgent?.Name is { Length: > 0 } name ? name : "an agent session";
+			return $"In this session: you, and {starter} (started it)";
+		}
+
+		if (summary.SharedWith is not { } share) return "In this session: you (started it), not shared with an agent";
+
+		var shared = share.Name is { Length: > 0 } named ? named : share.ClientId;
+		var gone = share.Connected == false ? " (not connected)" : string.Empty;
+
+		return $"In this session: you (started it), and {shared}{gone}";
+	}
+
+	/// <summary>
+	/// Whether a session's report is current, and if not how old it is: "Live" while the host answers, its age once it
+	/// has gone quiet past <see cref="StaleAfter"/>. A host that has stopped answering looks exactly like one with nothing
+	/// new to say unless this is shown.
+	/// </summary>
+	public static (bool Live, string Text) DescribeLiveness(LiveAppSessionState state, TimeSpan? reportAge)
+	{
+		if (state == LiveAppSessionState.Ended) return (false, "Ended");
+		if (state == LiveAppSessionState.Faulted) return (false, "Faulted");
+		if (reportAge is not { } age) return (false, "waiting for the host's first report");
+
+		return age < StaleAfter ? (true, "Live") : (false, $"host last answered {Format.Age(age)}");
+	}
+
+	/// <summary>Why the app is stopped, in the header's words: at a breakpoint, after a step, paused; or running.</summary>
+	public static string DescribeStop(LiveAppSessionSummary summary) => summary.Stop?.State switch
+	{
+		null => summary.State == LiveAppSessionState.Ended ? "Ended" : "Running",
+		LiveExecutionState.StoppedAtBreakpoint => "Stopped at a breakpoint",
+		LiveExecutionState.PausedByOperator => "Paused",
+		_ => "Stopped after a step",
+	};
+
+	/// <summary>
+	/// Who stopped it, where the broker knows: who set the breakpoint, or you for a pause, since only a window pauses.
+	/// Empty for a step, whose stepper the broker does not record, rather than a guess.
+	/// </summary>
+	public static string DescribeSetter(LiveAppSessionSummary summary)
+	{
+		if (summary.Stop?.State == LiveExecutionState.PausedByOperator) return "paused by you";
+		if (summary.StopSetBy is not { } setter) return string.Empty;
+		if (setter.Person) return "set by you";
+
+		return setter.Agent?.Name is { Length: > 0 } name ? $"set by {name}" : "set by an agent session";
+	}
+
+	/// <summary>The framework a target runs, as the header names it; empty where it is none the debugger recognised.</summary>
+	public static string DescribeFramework(XamlStack stack) => stack switch
+	{
+		XamlStack.Uwp => "UWP",
+		XamlStack.WinUi => "WinUI 3",
+		XamlStack.Wpf => "WPF",
+		_ => string.Empty,
+	};
+
+	/// <summary>The newest solution among <paramref name="entries"/>, which is where the agent that made them last worked.</summary>
+	public static string? SolutionOf(IEnumerable<ActivityEntry> entries) =>
+		entries
+			.Where(entry => entry.Kind == ActivityEntryKind.Call && entry.Workspace is { Length: > 0 })
+			.OrderByDescending(entry => entry.StartedUtc)
+			.Select(entry => entry.Workspace)
+			.FirstOrDefault();
+
+	/// <summary>A solution as the header names it, file then folder; empty for none.</summary>
+	public static string DescribeSolution(string? solution)
+	{
+		if (solution is not { Length: > 0 } path) return string.Empty;
+
+		var cut = path.TrimEnd('/', '\\').LastIndexOfAny(['/', '\\']);
+
+		return cut < 0 ? $"its agent works in {path}" : $"its agent works in {path[(cut + 1)..]} in {path[..cut]}";
+	}
+
+	private static string DescribeApp(string facts, string framework, string solution) =>
+		string.Join(Format.Separator, new[] { facts, framework, solution }.Where(part => part.Length > 0));
+
 	public void Update(LiveAppSessionSummary summary)
 	{
 		DisplayName = summary.TargetDescription;
@@ -313,6 +481,7 @@ public sealed class SessionRow : Observable
 		ExecutionLabel = DescribeExecution(summary);
 		IsHeld = summary.Stop?.Resume == LiveStopResume.HeldByOperator;
 		StopSequence = summary.Stop?.EventSequence ?? 0;
+		StopThreadId = summary.Stop?.ThreadId;
 
 		IsFaulted = summary.State == LiveAppSessionState.Faulted;
 		Detail = summary.Detail ?? string.Empty;
@@ -334,6 +503,18 @@ public sealed class SessionRow : Observable
 		HasRecent = Recent.Count > 0;
 		RecentHeader = DescribeRecent(summary.Recent);
 
+		_state = summary.State;
+		StartedByAgent = summary.StartedByAgent;
+		SharedWith = summary.SharedWith;
+		InSession = DescribeParties(summary);
+		StopTitle = DescribeStop(summary);
+		_setBy = DescribeSetter(summary);
+		_stoppedAt = summary.Stop is { } stop
+			? $"stopped {DateTime.SpecifyKind(stop.StoppedAtUtc, DateTimeKind.Utc).ToLocalTime().ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture)}"
+			: string.Empty;
+		_framework = DescribeFramework(summary.XamlStack);
+		AppLine = DescribeApp(Facts, _framework, _solution);
+
 		Tick(_readAtUtc);
 	}
 
@@ -354,6 +535,14 @@ public sealed class SessionRow : Observable
 
 		ResumeLabel = _resumeDeadlineUtc is { } deadline
 			? DescribeResume(IsHeld, deadline - utcNow)
+			: string.Empty;
+
+		var (live, liveness) = DescribeLiveness(_state, _infoAge + since);
+		IsLive = live;
+		Liveness = liveness;
+
+		StopFacts = IsStopped
+			? string.Join(Format.Separator, new[] { _setBy, _stoppedAt, ResumeLabel }.Where(part => part.Length > 0))
 			: string.Empty;
 	}
 
@@ -522,9 +711,8 @@ public sealed class SessionRow : Observable
 	}
 
 	/// <summary>
-	/// How long before this session's stop ends, deferred to the one place that says it: the stack
-	/// pane counts the same deadline down beside the stack it is reading, and two copies of the
-	/// sentence would disagree the first time either was reworded.
+	/// How long before this session's stop ends, deferred to the one place that says it, so the RoseMCP
+	/// window and the Inspector's header cannot word the same deadline two ways.
 	/// </summary>
 	private static string DescribeResume(bool held, TimeSpan remaining) =>
 		Inspector.HoldCountdown.Describe(held, remaining);

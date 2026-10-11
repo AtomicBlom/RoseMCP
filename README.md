@@ -235,9 +235,12 @@ A debug session can be driven three ways at once, and all three see the same ses
   the agent to work on, show its margins and padding and measure gaps, or magnify the app or its
   pixels.
   [Details and screenshots](https://github.com/AtomicBlom/RoseMCP/wiki/The-Rose-panel).
-- **The inspector**, an Inspector window of the RoseMCP app (`RoseMcp.App.exe`), beside the app with the event tail,
-  breakpoints and tracepoints, the call stack with its source and values, threads, and the live visual
-  tree. It reads the session from the tray over a token-protected http API, so it can be closed and
+- **The inspector**, an Inspector window of the RoseMCP app (`RoseMcp.App.exe`): one view of the app, the agent
+  and you. Its header says who is in the session, why the app stopped, who stopped it and when it lets go, with
+  Hold and the usual stepping keys (F5, F10, F11, Shift+F11); below it are the threads and any thread's stack,
+  the frame's source, locals and watches, beside a stream of the app's events, the agents' calls into the
+  session and your notes. Right-click any row, or select it and press Ctrl+Shift+A, to ask the agent in the
+  session about it. Breakpoints and tracepoints, and the live visual tree, are views of their own. It reads the session from the tray over a token-protected http API, so it can be closed and
   reopened while the session carries on. It shows the sessions agents started, and starts sessions of
   your own: **Debug an app** on the tray's icon or in the RoseMCP window opens it on a page listing the
   running .NET apps to attach to, a launch form for an installed app or a program with arguments, and

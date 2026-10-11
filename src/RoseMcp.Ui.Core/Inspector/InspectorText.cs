@@ -57,10 +57,10 @@ public static class InspectorText
 	public static string WaitingForSession(string sessionId) =>
 		$"Waiting for session {sessionId} to appear.";
 
-	/// <summary>Why the stack and thread panes are empty while the target runs.</summary>
+	/// <summary>Why the threads and the stack are empty while the target runs.</summary>
 	public const string NotStopped =
 		"The target is running. Frames, variables and threads can only be read while it is held at a "
-			+ "breakpoint or a step -- set one on the Breakpoints tab.";
+			+ "breakpoint or a step -- set one in the Breakpoints view.";
 
 	/// <summary>
 	/// Shown over frames from a stop that has ended, rather than clearing them. A reader mid-scroll
@@ -70,8 +70,10 @@ public static class InspectorText
 		"The target continued -- an agent, a step, or the safety timer. These frames are from the "
 			+ "previous stop.";
 
-	/// <summary>The event tail has nothing yet, which is ordinary for a session that just started.</summary>
-	public const string NoEvents = "No events yet. The tail fills in as the target throws, hits or logs.";
+	/// <summary>Shown over the last stop's rows once the session has ended, which is why nothing on them can be read further.</summary>
+	public const string SessionEnded =
+		"The session has ended. These are from the last place the app stopped, kept so they can still be read.";
+
 
 	/// <summary>How many events the host dropped, which it does rather than growing without bound.</summary>
 	public static string DroppedEvents(long dropped) =>

@@ -65,7 +65,7 @@ public sealed class LiveAppOwnersTests
 		owners.Admits("some-transport", One.Key).ShouldBeTrue();
 		owners.Admits(null, Two.Key).ShouldBeFalse();
 		owners.Admits(null, "unnamed").ShouldBeFalse();
-		owners.DescribeShare().ShouldBe(new LiveAppShare { ClientId = "client-1", Name = "D:/one" });
+		owners.DescribeShare().ShouldBe(new LiveAppAgent { ClientId = "client-1", Name = "D:/one" });
 	}
 
 	/// <summary>A session is shared with one client at a time: sharing with another takes it from the first.</summary>

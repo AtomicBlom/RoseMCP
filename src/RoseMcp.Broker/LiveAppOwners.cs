@@ -19,30 +19,39 @@ namespace RoseMcp.Broker;
 /// </summary>
 public sealed class LiveAppOwners
 {
-	private LiveAppOwners(bool person, string? starter, LiveAppSharedClient? shared)
+	private LiveAppOwners(bool person, string? starter, string? starterKey, LiveAppSharedClient? shared)
 	{
 		IsPersons = person;
 		Starter = starter;
+		StarterKey = starterKey;
 		Shared = shared;
 	}
 
 	/// <summary>A session the person started from a window, reached by no MCP call until they share it.</summary>
-	public static LiveAppOwners Person { get; } = new(person: true, starter: null, shared: null);
+	public static LiveAppOwners Person { get; } = new(person: true, starter: null, starterKey: null, shared: null);
 
 	/// <summary>
 	/// A session an agent started, belonging to the MCP session <paramref name="transportSession"/> -- null where the
 	/// transport has no notion of one, which every call without one then matches, as a stdio broker's has always been.
+	/// <paramref name="clientKey"/> is the key the client table files that session under, which names it to a window.
 	/// </summary>
-	public static LiveAppOwners Agent(string? transportSession) => new(person: false, starter: transportSession, shared: null);
+	public static LiveAppOwners Agent(string? transportSession, string? clientKey = null) =>
+		new(person: false, starter: transportSession, starterKey: clientKey, shared: null);
 
-	/// <summary>A session started by the MCP call in flight, as <see cref="CallSession.Id"/> names it.</summary>
-	public static LiveAppOwners OfCaller() => Agent(CallSession.Id);
+	/// <summary>A session started by the MCP call in flight, as <see cref="CallSession.Id"/> and <see cref="CallSession.ClientKey"/> name it.</summary>
+	public static LiveAppOwners OfCaller() => Agent(CallSession.Id, CallSession.ClientKey);
 
 	/// <summary>Whether the person started this session, rather than an agent.</summary>
 	public bool IsPersons { get; }
 
 	/// <summary>The MCP session an agent's session belongs to; null for a person's, and for an agent on a transport with no sessions.</summary>
 	public string? Starter { get; }
+
+	/// <summary>
+	/// The key the client table files the agent session that started it under, so a window can name that session and
+	/// send it a note; null for a person's. Never sent out, and never what ownership is decided by.
+	/// </summary>
+	public string? StarterKey { get; }
 
 	/// <summary>The agent session the person shared this session with, or null.</summary>
 	public LiveAppSharedClient? Shared { get; }
@@ -79,14 +88,14 @@ public sealed class LiveAppOwners
 					+ "You reach it from the window as it is.");
 		}
 
-		return new LiveAppOwners(IsPersons, Starter, client);
+		return new LiveAppOwners(IsPersons, Starter, StarterKey, client);
 	}
 
 	/// <summary>These owners shared with nobody.</summary>
-	public LiveAppOwners Unshared() => Shared is null ? this : new LiveAppOwners(IsPersons, Starter, shared: null);
+	public LiveAppOwners Unshared() => Shared is null ? this : new LiveAppOwners(IsPersons, Starter, StarterKey, shared: null);
 
 	/// <summary>The share as a summary says it, naming the client by the row it was shared through; the key never leaves the broker.</summary>
-	public LiveAppShare? DescribeShare() => Shared is { } shared ? new LiveAppShare { ClientId = shared.ClientId, Name = shared.Name } : null;
+	public LiveAppAgent? DescribeShare() => Shared is { } shared ? new LiveAppAgent { ClientId = shared.ClientId, Name = shared.Name } : null;
 }
 
 /// <summary>An agent session a person shared a debug session with.</summary>

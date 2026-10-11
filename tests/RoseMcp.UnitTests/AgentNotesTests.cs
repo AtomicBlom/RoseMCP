@@ -374,6 +374,10 @@ public sealed class AgentNotesTests
 			new() { Kind = NoteSubjectKind.WorkspaceReason, Readable = "Not loaded", Workspace = Shop, ReasonKind = "Project Not Loaded" },
 			new() { Kind = NoteSubjectKind.ActivityCall, Readable = "rose_outline", ActivityEntry = "123" },
 			new() { Kind = NoteSubjectKind.ActivityCall, Readable = "  \n ", ActivityEntry = "0123456789abcdef" },
+			new() { Kind = NoteSubjectKind.DebugEvent, Readable = "Stopped", Session = "a1b2c3d4" },
+			new() { Kind = NoteSubjectKind.DebugEvent, Readable = "Stopped", Session = "a1b2c3d4", EventSequence = 0 },
+			new() { Kind = NoteSubjectKind.Breakpoint, Readable = "Beat", Session = "a1b2c3d4" },
+			new() { Kind = NoteSubjectKind.Breakpoint, Readable = "Beat", Session = "a1b2c3d4", Breakpoint = "bp 3; rm" },
 			new() { Kind = (NoteSubjectKind)99, Readable = "?" },
 		];
 
@@ -383,6 +387,52 @@ public sealed class AgentNotesTests
 		}
 
 		notes.Describe().Notes.ShouldHaveSingleItem();
+	}
+
+	/// <summary>
+	/// A note about an event or a breakpoint in a debugged app keeps the session and the one reference that finds it --
+	/// the event's sequence, the breakpoint's id -- and its notice gives the agent both, since each is what a debug tool
+	/// takes to read that thing again.
+	/// </summary>
+	[Test]
+	public void A_note_about_an_event_or_a_breakpoint_carries_what_finds_it_again()
+	{
+		var (notes, clients, _) = Store();
+		var mine = Session(clients);
+		var id = IdOf(clients, mine);
+
+		var debugEvent = notes.Post(new NoteRequest
+		{
+			Client = id,
+			Text = "Why did it throw here?",
+			Subject = new NoteSubject
+			{
+				Kind = NoteSubjectKind.DebugEvent,
+				Readable = "First-chance InvalidOperationException on thread 7",
+				Session = "a1b2c3d4",
+				EventSequence = 42,
+				Breakpoint = "bp-1",
+				ThreadId = 7,
+			},
+		}).Subject;
+
+		debugEvent.EventSequence.ShouldBe(42);
+		debugEvent.Breakpoint.ShouldBeNull("an event is found by its sequence alone");
+		debugEvent.ThreadId.ShouldBeNull();
+
+		var breakpoint = notes.Post(new NoteRequest
+		{
+			Client = id,
+			Text = "Can this one go?",
+			Subject = new NoteSubject { Kind = NoteSubjectKind.Breakpoint, Readable = "Program.Beat", Session = "a1b2c3d4", Breakpoint = " tp-2 " },
+		}).Subject;
+
+		breakpoint.Breakpoint.ShouldBe("tp-2");
+
+		var notices = notes.Claim(mine, null, ToolNames.Outline, null).Notes.Select(AgentNotes.Notice).ToList();
+
+		notices[0].ShouldContain("debug session a1b2c3d4, event sequence 42");
+		notices[1].ShouldContain("debug session a1b2c3d4, breakpoint tp-2");
 	}
 
 	/// <summary>

@@ -19,7 +19,19 @@ public sealed record LiveAppSessionSummary
 	public LiveAppStarter StartedBy { get; init; }
 
 	/// <summary>The agent session a person has shared this session with, or null where it is shared with none.</summary>
-	public LiveAppShare? SharedWith { get; init; }
+	public LiveAppAgent? SharedWith { get; init; }
+
+	/// <summary>
+	/// The agent session that started it, where an agent did and the client table still lists that session; null for a
+	/// session a person started, and on an agent's own list, where the agent is the reader.
+	/// </summary>
+	public LiveAppAgent? StartedByAgent { get; init; }
+
+	/// <summary>
+	/// Who set the breakpoint the target is stopped at, as the broker saw it set; null while it runs, for a stop no
+	/// breakpoint made, and on an agent's own list.
+	/// </summary>
+	public LiveBreakpointSetter? StopSetBy { get; init; }
 
 	public required TargetArchitecture Architecture { get; init; }
 

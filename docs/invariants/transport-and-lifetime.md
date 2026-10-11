@@ -269,7 +269,10 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   connection answers at once, and without the pause a closed port is a core spinning for as long as the
   window stays open -- and `Kick` ends the pause, which is what a new token from the tray's next launch
   does through `OperatorClient.Reauthorise`. The client is the app's, shared by every window and disposed
-  with none of them. An Inspector window still releases its hold before it closes, and its start page reads the
+  with none of them. An Inspector window's session stream -- the event tail, the activity record narrowed to its
+  session, and the notes -- and every read of a stop or a watch stop when the window closes and when its session
+  ends, the window staying open on what was read; a hold is taken only when the person asks for one, Hold or Pause,
+  never because a view is on screen. An Inspector window still releases its hold before it closes, and its start page reads the
   running apps only while it is shown, cancelling that read and any attach or launch in flight when it is hidden
   or the window closes -- which the broker answers by ending a session that start made.
   See [the decision](../decisions/one-rosemcp-app-per-broker-holds-every-window.md).

@@ -31,4 +31,10 @@ public enum NoteSubjectKind
 
 	/// <summary>A call the agent made, as the activity record holds it: <see cref="NoteSubject.ActivityEntry"/>.</summary>
 	ActivityCall,
+
+	/// <summary>An event a debugged app's session recorded: <see cref="NoteSubject.Session"/> and <see cref="NoteSubject.EventSequence"/>, as <c>rose_debug_events</c> takes it.</summary>
+	DebugEvent,
+
+	/// <summary>A breakpoint or tracepoint in a debugged app: <see cref="NoteSubject.Session"/> and <see cref="NoteSubject.Breakpoint"/>.</summary>
+	Breakpoint,
 }

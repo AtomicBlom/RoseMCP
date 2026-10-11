@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
+using RoseMcp.Broker;
 using RoseMcp.Contracts;
 using RoseMcp.Logging;
 using static RoseMcp.IntegrationTests.ProbeTargetSession;
@@ -364,6 +367,144 @@ public sealed class OperatorApiTests
 
 		var clients = await broker.GetAsync<ClientList>("/operator/clients", cancellationToken);
 		clients.Clients.ShouldContain(client => client.Calls >= 2);
+	}
+
+	/// <summary>
+	/// A note rides on a real call through the real broker: sent at <c>/operator/notes</c> to a session its relay
+	/// names, it is in the notices of that session's next answer -- a workspace's status, from a real worker -- and of
+	/// no answer after it; the call that carried it holds it in its record; and the agent's <c>rose_reply</c> shows
+	/// under it.
+	/// </summary>
+	[Test]
+	public async Task A_note_rides_on_its_sessions_next_real_call_and_is_answered()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		await using var agent = await McpClient.CreateAsync(
+			new HttpClientTransport(new HttpClientTransportOptions
+			{
+				Endpoint = new Uri(broker.Url("/")),
+				AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {Token}" },
+			}),
+			new McpClientOptions { DiscoverProbeTimeout = Timeout.InfiniteTimeSpan },
+			cancellationToken: cancellationToken);
+
+		// What a relay sends with every call, naming the session it serves.
+		var session = new RequestOptions { Meta = new JsonObject { [CallSession.MetaKey] = CallSession.Mint() } };
+		var workspace = new Dictionary<string, object?> { ["workspace"] = fixture.SolutionPath };
+
+		await agent.CallToolAsync(ToolNames.WorkspaceOpen, workspace, options: session, cancellationToken: cancellationToken);
+
+		var row = (await broker.GetAsync<ClientList>("/operator/clients", cancellationToken)).Clients.Single(client => client.Named);
+
+		using var posted = await broker.Client.PostAsJsonAsync(
+			broker.Url("/operator/notes"),
+			new NoteRequest
+			{
+				Client = row.Id,
+				Text = "Is Simple loading the configuration you expect?",
+				Subject = new NoteSubject
+				{
+					Kind = NoteSubjectKind.WorkspaceReason,
+					Readable = "Simple's configuration",
+					Workspace = fixture.SolutionPath,
+					ReasonKind = ReasonKinds.WrongPlatform,
+				},
+			},
+			ContractJson.Options,
+			cancellationToken);
+		posted.StatusCode.ShouldBe(HttpStatusCode.OK, await posted.Content.ReadAsStringAsync(cancellationToken));
+		var note = (await posted.Content.ReadFromJsonAsync<AgentNote>(ContractJson.Options, cancellationToken)).ShouldNotBeNull();
+
+		var carried = await agent.CallToolAsync(ToolNames.WorkspaceStatus, workspace, options: session, cancellationToken: cancellationToken);
+		carried.IsError.ShouldNotBe(true);
+		Notices(carried).ShouldContain(notice => notice.Contains(note.Id, StringComparison.Ordinal), "the session's next answer carries it");
+
+		var after = await agent.CallToolAsync(ToolNames.WorkspaceStatus, workspace, options: session, cancellationToken: cancellationToken);
+		Notices(after).ShouldNotContain(notice => notice.Contains(note.Id, StringComparison.Ordinal), "a note rides on one answer");
+
+		var answered = await agent.CallToolAsync(
+			ToolNames.Reply,
+			new Dictionary<string, object?> { ["noteId"] = note.Id, ["text"] = "Debug, as the solution declares." },
+			options: session,
+			cancellationToken: cancellationToken);
+		answered.IsError.ShouldNotBe(true);
+
+		var held = (await broker.GetAsync<NoteList>("/operator/notes", cancellationToken)).Notes.ShouldHaveSingleItem();
+		held.Delivery.ShouldBe(NoteDelivery.Delivered);
+		held.DeliveredTool.ShouldBe(ToolNames.WorkspaceStatus);
+		held.Replies.ShouldHaveSingleItem().Text.ShouldBe("Debug, as the solution declares.");
+
+		var entry = await broker.GetAsync<ActivityEntry>($"/operator/activity/{held.DeliveredWith.ShouldNotBeNull()}", cancellationToken);
+		entry.Tool.ShouldBe(ToolNames.WorkspaceStatus);
+		entry.Response.ShouldNotBeNull().ShouldContain(note.Id, customMessage: "the record holds the answer the agent was given, the note in it");
+	}
+
+	/// <summary>The notices an answer's structured content carries.</summary>
+	private static IReadOnlyList<string> Notices(ModelContextProtocol.Protocol.CallToolResult result) =>
+		result.StructuredContent is { } content && content.TryGetProperty("notices", out var notices)
+			? [.. notices.EnumerateArray().Select(notice => notice.GetString() ?? string.Empty)]
+			: [];
+
+	/// <summary>
+	/// What a person does to a workspace through the real broker: its full status read on request, its projects
+	/// included, without counting as use; a reload that answers with the new worker's row; and a close that takes the
+	/// row away. None of it is a call an agent made, so the record holds only the agent's own.
+	/// </summary>
+	[Test]
+	public async Task A_person_reads_reloads_and_closes_a_workspace()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		await using var agent = await McpClient.CreateAsync(
+			new HttpClientTransport(new HttpClientTransportOptions
+			{
+				Endpoint = new Uri(broker.Url("/")),
+				AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {Token}" },
+			}),
+			new McpClientOptions { DiscoverProbeTimeout = Timeout.InfiniteTimeSpan },
+			cancellationToken: cancellationToken);
+
+		(await agent.CallToolAsync(
+			ToolNames.WorkspaceStatus,
+			new Dictionary<string, object?> { ["workspace"] = fixture.SolutionPath },
+			cancellationToken: cancellationToken)).IsError.ShouldNotBe(true);
+
+		var before = (await broker.GetAsync<OperatorWorkspaceList>("/operator/workspaces", cancellationToken)).Workspaces.ShouldHaveSingleItem();
+		var workspace = Uri.EscapeDataString(fixture.SolutionPath);
+
+		var status = await broker.GetAsync<WorkspaceStatusReport>($"/operator/workspaces/status?workspace={workspace}", cancellationToken);
+		status.Workspace.ShouldBe(fixture.SolutionPath);
+		status.Projects.ShouldNotBeEmpty("a person reading why a load went as it did reads every project");
+		status.Revision.ShouldBeGreaterThan(0);
+
+		var after = (await broker.GetAsync<OperatorWorkspaceList>("/operator/workspaces", cancellationToken)).Workspaces.ShouldHaveSingleItem();
+		after.LastUsedUtc.ShouldBe(before.LastUsedUtc, "reading a status is looking, not using");
+
+		var body = new OperatorWorkspaceRequest { Workspace = fixture.SolutionPath };
+		using (var reloaded = await broker.Client.PostAsJsonAsync(broker.Url("/operator/workspaces/reload"), body, ContractJson.Options, cancellationToken))
+		{
+			reloaded.StatusCode.ShouldBe(System.Net.HttpStatusCode.OK);
+			var row = (await reloaded.Content.ReadFromJsonAsync<OperatorWorkspace>(ContractJson.Options, cancellationToken))!;
+			row.Summary.Workspace.ShouldBe(fixture.SolutionPath);
+			row.Summary.ProcessId.ShouldNotBe(before.Summary.ProcessId, "a reload is a fresh worker");
+		}
+
+		using (var closed = await broker.Client.PostAsJsonAsync(broker.Url("/operator/workspaces/close"), body, ContractJson.Options, cancellationToken))
+		{
+			closed.StatusCode.ShouldBe(System.Net.HttpStatusCode.OK);
+			(await closed.Content.ReadFromJsonAsync<WorkspaceClosed>(ContractJson.Options, cancellationToken))!.Closed.ShouldBeTrue();
+		}
+
+		(await broker.GetAsync<OperatorWorkspaceList>("/operator/workspaces", cancellationToken)).Workspaces.ShouldBeEmpty();
+
+		// By workspace, because every broker the suite starts writes to the one record folder.
+		var activity = await broker.GetAsync<ActivityPage>($"/operator/activity?workspace={workspace}", cancellationToken);
+		activity.Entries.Where(entry => entry.Kind == ActivityEntryKind.Call).Select(entry => entry.Tool).ShouldBe([ToolNames.WorkspaceStatus]);
 	}
 
 	/// <summary>The session's row of the memory report, once its host says it is serving the app.</summary>

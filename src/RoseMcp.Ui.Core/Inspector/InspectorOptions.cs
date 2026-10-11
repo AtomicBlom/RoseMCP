@@ -1,7 +1,8 @@
 namespace RoseMcp.Ui.Core.Inspector;
 
 /// <summary>
-/// Where the inspector connects and what it opens on, read from the command line the tray built.
+/// Where the RoseMCP app connects and which window it opens, read from the command line the tray or the broker
+/// built: the RoseMCP window, or an Inspector window on a debug session.
 /// <para>
 /// Strict about what it does not recognise, the way <c>ServerOptions</c> is: a mistyped switch that
 /// is silently ignored leaves a window pointed at the wrong port with nothing to say why. A
@@ -35,20 +36,43 @@ public sealed record InspectorOptions
 	/// </summary>
 	public int? TargetProcessId { get; init; }
 
+	/// <summary>
+	/// Whether to open an Inspector window even with no session named, which then adopts the one debug session
+	/// there is or says there are none or several. What "Debug an app" asks for; a launch naming nothing opens
+	/// the RoseMCP window instead.
+	/// </summary>
+	public bool Inspect { get; init; }
+
+	/// <summary>Whether this launch asks for an Inspector window rather than the RoseMCP window.</summary>
+	public bool OpensInspector => Inspect || SessionId is { Length: > 0 } || TargetProcessId is not null;
+
 	/// <summary>Where the operator API is, composed from the host and port.</summary>
 	public Uri BaseAddress => new($"http://{Host}:{Port}");
 
 	/// <summary>
-	/// What one inspector is one of: the process being debugged, else the session, else the app.
+	/// What one RoseMCP app is one of: the broker it reads, named by where it listens.
 	/// <para>
-	/// The target rather than the session, because detaching and attaching again is the same
-	/// program being looked at and should be the same window -- and because the title names the
-	/// process, so two windows keyed on sessions would be two windows with one name.
+	/// One app per broker rather than one per window, because the app holds every window -- the RoseMCP
+	/// window and an Inspector window per debugged process -- and a second launch against the same broker is
+	/// asking for one of those, which the running app opens or brings forward. The broker rather than the
+	/// machine, because a broker on a scratch port beside the installed one is a different set of agents and
+	/// workspaces, and a window showing one while launched for the other would be confidently wrong.
 	/// </para>
 	/// </summary>
-	public string InstanceKey => TargetProcessId is { } pid
-		? $"RoseMcp.Inspector:pid:{pid}"
-		: SessionId is { Length: > 0 } session ? $"RoseMcp.Inspector:session:{session}" : "RoseMcp.Inspector";
+	public string InstanceKey => $"RoseMcp.App:{Host.ToLowerInvariant()}:{Port}";
+
+	/// <summary>
+	/// The command that opens the RoseMCP window against this broker, for a person to run themselves or keep in a
+	/// shortcut: the app's executable, quoted for the space an install path routinely has, then where to connect
+	/// and the token. Valid only for this run of the broker, since the token is minted per run.
+	/// </summary>
+	public string CommandLine(string executablePath)
+	{
+		var arguments = new List<string> { $"\"{executablePath}\"", "--host", Host, "--port", Port.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+		if (Token is { Length: > 0 } token) arguments.AddRange(["--token", token]);
+
+		return string.Join(' ', arguments);
+	}
 
 	/// <exception cref="ArgumentException">A switch is unrecognised, or one is missing its value.</exception>
 	public static InspectorOptions Parse(string[] args)
@@ -92,6 +116,10 @@ public sealed record InspectorOptions
 
 					options = options with { TargetProcessId = targetPid };
 					i++;
+					break;
+
+				case "--inspect":
+					options = options with { Inspect = true };
 					break;
 
 				default:

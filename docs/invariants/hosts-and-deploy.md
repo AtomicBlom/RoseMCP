@@ -75,7 +75,7 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   rather than paid for on every PR.
 - **`promote` builds the whole tree before it stops anything.** Every publish, and every native
   provider, goes into `artifacts/promote/<rid>` while the running instance keeps serving; only then
-  are the inspector, tray and stdio servers stopped, the stage copied over the install, and the tray
+  are the RoseMCP app, tray and stdio servers stopped, the stage copied over the install, and the tray
   restarted. The relays are the exception, below. Stopping first means Rose is gone for the length of a build, and a build that fails
   partway leaves nothing running and a half-written install that may not start. Keep anything that
   can fail -- a publish, a provider build, a layout check -- ahead of the first `Stop-*` call; after
@@ -105,7 +105,7 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   publishes the layout, `build-installer.ps1` checks a stage of it, `install.ps1` and `rosemcp.iss`
   lay it down from a package, and the C# resolvers look for things in it. Two of those are packaged
   content that runs on somebody else's machine, so a disagreement does not turn a build red; it is an
-  install that cannot find its worker, its inspector or a debug host. Hence one file, and no path
+  install that cannot find its worker, its RoseMCP app or a debug host. Hence one file, and no path
   literal in any script: the PowerShell reads it through `Get-PublishedLayout` and the helpers beside
   it in `RoseMcp.Deploy.ps1`; `Assert-PackagedRuntime` holds a package to it both when packaging and
   again when installing; `PublishedLayoutTests` stages it and drives every resolver with the
@@ -132,7 +132,7 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   `BuildIdentity.ToHandshake()` as its `ServerInfo.Version` -- the version with the commit as build
   metadata, and `.dirty` after a dirty build's commit -- and each party that receives one compares it
   with `BuildIdentity`: the broker against its workers and live-app hosts (`ChildHostVersion`), the
-  relay against the tray, the inspector against `/operator/hello`. Two local builds of different code
+  relay against the tray, the RoseMCP app against `/operator/hello`. Two local builds of different code
   share a MinVer version, so a version compare passes a stale `bin` as the same build. A new host
   sends the handshake; a new hop that starts one compares it, and says a mismatch naming both
   commits rather than refusing. The stamps come from `Directory.Build.props`, and every one degrades

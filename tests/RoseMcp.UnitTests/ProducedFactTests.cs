@@ -11,8 +11,8 @@ namespace RoseMcp.UnitTests;
 /// Four reviewers found the same shape in four subsystems without looking for it: the expensive
 /// half was built and the cheap half was not, and nothing failed, because a producer with no
 /// consumer breaks nothing. A workspace key on every result, described as fit for a caller to
-/// quote back, is worth its characters only where an argument accepts it back.
-/// <c>InfoAge</c> and <c>InstallLocation</c> are computed for a window that does not render them.
+/// quote back, is worth its characters only where an argument accepts it back; a session's report age,
+/// computed on every session for a window to show, is worth nothing until one does.
 /// </para>
 /// <para>
 /// So a fact and its consumer have to exist together, or the fact appears below with a reason. The
@@ -34,7 +34,7 @@ public sealed class ProducedFactTests
 	[
 		"src/RoseMcp.Ui.Core",
 		"src/RoseMcp.Tray",
-		"src/RoseMcp.Inspector",
+		"src/RoseMcp.App",
 	];
 
 	/// <summary>
@@ -97,6 +97,10 @@ public sealed class ProducedFactTests
 		typeof(WorkerMemory),
 		typeof(LiveAppMemory),
 		typeof(MachineMemory),
+		typeof(AgentNote),
+		typeof(NoteSubject),
+		typeof(NoteReply),
+		typeof(NoteList),
 	];
 
 	/// <summary>
@@ -127,96 +131,13 @@ public sealed class ProducedFactTests
 		["LiveDebugEvent.Variables"] = "The frame at a stop, read with the event rather than asked about.",
 		["LiveDebugEvent.Logged"] = "The values a tracepoint was asked to log, read with the event.",
 
-		// Card 22: the cheapest wins in the repository, and the reason a window can report a healthy
-		// workspace that is not one.
-		["WorkspaceSummary.StartedUtc"] = "Uptime is rendered instead, and is derived from it.",
-		["WorkspaceSummary.PrivateMemoryBytes"] = "Card 22: one of three memory figures, of which the window shows two.",
-		["LiveAppSessionSummary.StartedUtc"] = "Card 22: no window says how long a session has been attached.",
-		["LiveAppSessionSummary.InfoAge"] = "Card 22: how stale the report is, which is what makes the rest of it readable.",
-		["LiveAppSessionSummary.InstallLocation"] = "Card 22: where a packaged target was installed from.",
-		["WorkerActivity.StartedUtc"] = "Card 22: an activity's age, where the window shows only its name.",
-		["ProjectStatus.FilePath"] = "Card 22: no window renders per-project health at all.",
-		["ProjectStatus.TargetFramework"] = "Card 22: no window renders per-project health at all.",
-		["ProjectStatus.LoadedSuccessfully"] = "Card 22: no window renders per-project health at all.",
-		["ProjectStatus.DocumentCount"] = "Card 22: no window renders per-project health at all.",
-		["ProjectStatus.AdditionalDocumentCount"] = "Card 22: no window renders per-project health at all.",
-		["ProjectStatus.AnalyzerReferenceCount"] = "Card 22: no window renders per-project health at all.",
-		["ProjectStatus.GeneratorCount"] = "Card 22: no window renders per-project health at all.",
-		["ProjectStatus.GeneratedDocumentCount"] = "Card 22: no window renders per-project health at all.",
-		["ProjectStatus.MissingAnalyzerOutputs"] = "Card 22: a generator that produced nothing, which is the degraded case.",
-		["ProjectStatus.XamlMarkupCount"] = "Card 22: no window renders per-project health at all.",
-		["ProjectStatus.XamlStubbedCount"] = "Card 22: no window renders per-project health at all.",
-		["ProjectStatus.XamlDialect"] = "Card 22: no window renders per-project health at all.",
-		["ProjectStatus.UnresolvedXamlTypes"] = "Card 22: the stub generator's own failures, invisible to a person.",
+		// Facts the RoseMCP window has an equivalent of rather than the fact itself.
+		["WorkerActivity.StartedUtc"] = "A worker's own activity list is the Inspector's, by name; the RoseMCP window shows the activity record's times instead.",
+		["OperatorWorkspace.IdleFor"] = "The window counts idle time on from LastUsedUtc, which holds still between reads; IdleFor is the same figure as of one read.",
 
-		// The whole build identity is for the RoseMCP window; the tray's tooltip has room for the
-		// version and short commit only.
-		["BuildIdentity.Commit"] = "Shown as its short commit, which the tray's tooltip names.",
-		["BuildIdentity.BuiltUtc"] = "Card 5.9: the RoseMCP window says when the running build was made.",
-		["BuildIdentity.Checkout"] = "Card 5.9: the RoseMCP window says which checkout a local build came from.",
-		["OperatorHello.Checkout"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
-		["CheckoutDistance.Checkout"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
-		["CheckoutDistance.Head"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
-		["CheckoutDistance.OriginMain"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
-		["CheckoutDistance.CheckedUtc"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
-		["CommitsPast.Ref"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
-		["CommitsPast.Count"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
-		["CommitsPast.Unknown"] = "Card 5.9: the RoseMCP window says why it cannot say how far.",
-
-		// The activity record is read by the RoseMCP window's Activity view, which shows what each agent did.
-		["ActivityEntry.StartedUtc"] = ActivityView,
-		["ActivityEntry.FinishedUtc"] = ActivityView,
-		["ActivityEntry.BrokerBuild"] = ActivityView,
-		["ActivityEntry.BrokerProcessId"] = ActivityView,
-		["ActivityEntry.CorrelationId"] = ActivityView,
-		["ActivityEntry.ClientId"] = ActivityView,
-		["ActivityEntry.ClientKey"] = ActivityView,
-		["ActivityEntry.ClientName"] = ActivityView,
-		["ActivityEntry.ClientLabel"] = ActivityView,
-		["ActivityEntry.WorkspaceKey"] = ActivityView,
-		["ActivityEntry.DebugSession"] = ActivityView,
-		["ActivityEntry.Tool"] = ActivityView,
-		["ActivityEntry.Revision"] = ActivityView,
-		["ActivityEntry.ArgumentsFullLength"] = ActivityView,
-		["ActivityEntry.ResponseFullLength"] = ActivityView,
-		["ActivityEntry.Notes"] = ActivityView,
-		["ActivityEntry.ErrorFullLength"] = ActivityView,
-		["ActivityPage.OlderNotListed"] = ActivityView,
-		["ActivityFileChange.FilePath"] = ActivityView,
-		["ActivityFileChange.Created"] = ActivityView,
-		["ActivityFileChange.Normalised"] = ActivityView,
-		["ActivityFileChange.Diff"] = ActivityView,
-		["ActivityFileChange.DiffFullLength"] = ActivityView,
-		["ActivityPage.Entries"] = ActivityView,
-		["ActivityPage.Bodies"] = ActivityView,
-		["ActivityPage.Retention"] = ActivityView,
-		["ActivityPage.Next"] = ActivityView,
-
-		// The operator API's views, read by the RoseMCP window rather than from the broker's objects.
-		["ClientList.Clients"] = "Card 5.9: the RoseMCP window's Agents view shows each client, read at /operator/clients.",
-		["OperatorWorkspace.Summary"] = WorkspacesView,
-		["OperatorWorkspace.Configuration"] = WorkspacesView,
-		["OperatorWorkspace.Platform"] = WorkspacesView,
-		["OperatorWorkspace.BuildProperties"] = WorkspacesView,
-		["OperatorWorkspace.LastUsedUtc"] = WorkspacesView,
-		["OperatorWorkspace.IdleFor"] = WorkspacesView,
-		["OperatorWorkspace.InUse"] = WorkspacesView,
-		["OperatorWorkspace.ClosesAtUtc"] = WorkspacesView,
-		["OperatorWorkspace.RebuiltAnalyzers"] = WorkspacesView,
-		["MemoryReport.SampledUtc"] = MemoryBar,
-		["MemoryReport.LiveApps"] = MemoryBar,
-		["MemoryReport.Machine"] = MemoryBar,
-		["ProcessMemory.PrivateMemoryBytes"] = MemoryBar,
-		["WorkerMemory.WorkspaceKey"] = MemoryBar,
-		["MachineMemory.TotalBytes"] = MemoryBar,
-		["MachineMemory.AvailableBytes"] = MemoryBar,
+		// The tray's tooltip has room for the version and short commit only; the RoseMCP window names the rest.
+		["BuildIdentity.Commit"] = "Shown as its short commit, which the tray's tooltip and the RoseMCP window both name.",
 	};
-
-	private const string ActivityView = "Card 5.9: the RoseMCP window's Activity view shows what each agent did, read at /operator/activity.";
-
-	private const string WorkspacesView = "Card 5.9: the RoseMCP window's Workspaces view shows each workspace, read at /operator/workspaces.";
-
-	private const string MemoryBar = "Card 5.9: the RoseMCP window's memory bar shows what Rose and the debugged apps hold, read at /operator/memory.";
 
 	/// <summary>
 	/// Every facet of an answer can be selected on. A result field with no argument of the same
@@ -288,7 +209,7 @@ public sealed class ProducedFactTests
 			.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
 			.Select(property => ($"{type.Name}.{property.Name}", property.Name)));
 
-	/// <summary>Everything the three windows are written in, as one string to search.</summary>
+	/// <summary>Everything the windows are written in, as one string to search.</summary>
 	private static string WindowSources() => string.Join('\n', Windows.Select(Sources));
 
 	/// <summary>

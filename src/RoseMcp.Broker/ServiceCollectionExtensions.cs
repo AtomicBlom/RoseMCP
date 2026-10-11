@@ -160,6 +160,13 @@ public static class ServiceCollectionExtensions
 		// sessions, read by the admin and operator routes.
 		services.AddSingleton<ConnectedClients>();
 
+		// The notes a person sends agent sessions from a window, each waiting for its session's next answer: written by
+		// the operator routes and by rose_reply, claimed by every call. In memory, so a restart forgets them.
+		services.AddSingleton(provider => new AgentNotes(
+			provider.GetRequiredService<ConnectedClients>(),
+			provider.GetRequiredService<IOptions<BrokerOptions>>(),
+			provider.GetService<ILogger<AgentNotes>>()));
+
 		// Every call each client made, kept on disk: written by every call, read by the operator routes, and
 		// disposed with the host, which writes what is still queued. The host's lifetime, where there is one,
 		// flushes it as the host stops, for a host that stops without disposing its services.
@@ -185,8 +192,8 @@ public static class ServiceCollectionExtensions
 		// finds out at the call, having already chosen the approach the tool implied was available.
 		// The same gate decides what is registered below and what is read for aliases here.
 		Type[] toolTypes = OperatingSystem.IsWindows()
-			? [typeof(BrokerTools), typeof(BrokerAnalysisTools), typeof(LiveAppDebugTools)]
-			: [typeof(BrokerTools), typeof(BrokerAnalysisTools)];
+			? [typeof(BrokerTools), typeof(BrokerAnalysisTools), typeof(NoteTools), typeof(LiveAppDebugTools)]
+			: [typeof(BrokerTools), typeof(BrokerAnalysisTools), typeof(NoteTools)];
 
 		// One instance, shared by the filter that applies it and by anything asking what a tool
 		// accepts, so a test cannot pass against a map the running server does not use.
@@ -207,13 +214,15 @@ public static class ServiceCollectionExtensions
 					: Instructions;
 			})
 			.WithTools<BrokerTools>(ToolSerializerOptions)
-			.WithTools<BrokerAnalysisTools>(ToolSerializerOptions);
+			.WithTools<BrokerAnalysisTools>(ToolSerializerOptions)
+			.WithTools<NoteTools>(ToolSerializerOptions);
 
 		if (OperatingSystem.IsWindows()) builder = builder.WithTools<LiveAppDebugTools>(ToolSerializerOptions);
 
 		return builder
 			.WithCallCorrelation()
 			.WithActivityRecord()
+			.WithWaitingNotes()
 			.WithArgumentAliases(aliases)
 			.WithIgnoredArgumentNotices()
 			.WithCallOrigin()

@@ -72,7 +72,7 @@ public sealed class LiveAppSessionManager(
 
 	/// <summary>
 	/// One row per session the caller owns, which is what an agent-facing list may show.
-	/// <see cref="Describe"/> is the whole picture, for the tray window and GET /admin/sessions, where
+	/// <see cref="Describe"/> is the whole picture, for a RoseMCP window and GET /admin/sessions, where
 	/// the reader is the person running the broker rather than one of its clients.
 	/// <para>
 	/// Scoped for the same reason <see cref="Find"/> is, and because the refusal there sends the caller

@@ -1,0 +1,59 @@
+<UserControl
+	x:Class="RoseMcp.App.Views.NoteComposerView"
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	xmlns:core="using:RoseMcp.Ui.Core.Views">
+
+	<!-- A note to an agent about what this sits under. The same control on a call and on a workspace's reason, so a
+	     note is written one way wherever it is. It says the note arrives with the session's next Rose call, because
+	     nothing pushes it sooner. -->
+	<StackPanel Spacing="6">
+		<StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind Composer.IsClosed, Mode=OneWay}">
+			<HyperlinkButton Content="{x:Bind OpenLabel, Mode=OneWay}" Click="OnToggle" Padding="4,0"
+				ToolTipService.ToolTip="Write the agent a note about this. It arrives with its next Rose call." />
+			<TextBlock Text="{x:Bind Composer.Status, Mode=OneWay}" Visibility="{x:Bind Composer.HasStatus, Mode=OneWay}"
+				VerticalAlignment="Center" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+				Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+		</StackPanel>
+
+		<Border Visibility="{x:Bind Composer.IsOpen, Mode=OneWay}" Style="{StaticResource CardStyle}" Padding="10,8">
+			<StackPanel Spacing="6">
+				<TextBlock TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+					Foreground="{ThemeResource TextFillColorTertiaryBrush}">
+					<Run Text="About" />
+					<Run Text="{x:Bind Composer.About, Mode=OneWay}" />
+				</TextBlock>
+
+				<ComboBox ItemsSource="{x:Bind Composer.Recipients, Mode=OneWay}" SelectedIndex="{x:Bind Composer.RecipientIndex, Mode=TwoWay}"
+					Visibility="{x:Bind Composer.HasChoice, Mode=OneWay}" MinWidth="240"
+					ToolTipService.ToolTip="Which agent session the note goes to">
+					<ComboBox.ItemTemplate>
+						<DataTemplate x:DataType="core:NoteRecipient">
+							<TextBlock Text="{x:Bind Name}" />
+						</DataTemplate>
+					</ComboBox.ItemTemplate>
+				</ComboBox>
+
+				<TextBlock Text="{x:Bind Composer.Destination, Mode=OneWay}" TextWrapping="Wrap"
+					Style="{StaticResource CaptionTextBlockStyle}" />
+
+				<TextBox Text="{x:Bind Composer.Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+					AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64" MaxHeight="220"
+					MaxLength="{x:Bind core:NoteComposer.MaxText}" IsEnabled="{x:Bind Composer.CanReach, Mode=OneWay}"
+					AutomationProperties.Name="Your note to the agent"
+					PlaceholderText="What should the agent know, or look at?" />
+
+				<StackPanel Orientation="Horizontal" Spacing="8">
+					<Button Content="Send" Style="{StaticResource AccentButtonStyle}" Click="OnSend"
+						IsEnabled="{x:Bind Composer.CanSend, Mode=OneWay}" />
+					<Button Content="Cancel" Click="OnToggle" ToolTipService.ToolTip="Close the note, keeping what is written" />
+					<ProgressRing IsActive="{x:Bind Composer.IsSending, Mode=OneWay}" Width="16" Height="16" />
+				</StackPanel>
+
+				<TextBlock Text="{x:Bind Composer.Problem, Mode=OneWay}" Visibility="{x:Bind Composer.HasProblem, Mode=OneWay}"
+					TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+					Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+			</StackPanel>
+		</Border>
+	</StackPanel>
+</UserControl>

@@ -20,7 +20,7 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   that is what the logging test below is for. `RoseMcp.Logging` adds the file sink -- Serilog behind the existing
   `Microsoft.Extensions.Logging` call sites, never a console sink, and there is a regression test
   asserting the pipeline writes nothing to stdout at all. Logs land in
-  `%LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{Server,Worker,Tray,Inspector}/[{solution}-]{yyyyMMdd-HHmmss}.log`
+  `%LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{Server,Worker,LiveApp,Tray,App}/[{solution}-]{yyyyMMdd-HHmmss}.log`
   -- under their own `Logs` folder, separate from the install that shares the same vendor/product
   parent, so promoting a build never touches a session's log files. UTC in the name and UTC in
   every line so the two cannot disagree. A worker's file names the
@@ -68,7 +68,7 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   [the decision](../decisions/a-relay-names-its-session-to-the-broker.md).
   An http broker serves every repository on the machine and, with two solutions open, cannot know
   which one a bare call means; a stdio process cannot not know. Relaying buys both that and one warm
-  worker per solution shared across sessions, and it keeps the tray's window reading a live
+  worker per solution shared across sessions, and it keeps the RoseMCP windows reading one live
   `WorkspaceManager` rather than a pushed copy that could drift. With no tray, a relay running from an
   install's relay folder starts the install root's server as a child with `--no-relay` and relays to
   it, rather than hosting a broker from its own assemblies, which are as old as the last relay
@@ -137,7 +137,7 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   stdio hop is ordered, being one reader.
 - **Every slow path says where it has got to.** Workers report progress on the operations that take
   real time, the broker records every call it forwards in an `ActivityLog`, and `WorkspaceSummary`
-  carries both the running and the recently finished ones. The tray window and
+  carries both the running and the recently finished ones. A RoseMCP window and
   `GET /admin/workspaces` read that same model, so they cannot disagree. A percentage is per
   operation and only ever rises; no percentage means "cannot say", which shows as an indeterminate
   bar rather than one frozen at a number that has stopped meaning anything. A worker tool reaches
@@ -184,7 +184,7 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   reason as a degraded reason, and that nothing was started -- because starting a worker there would reload the solution and wipe the reason, and
   a session checking status now and then would keep it warm and never learn it was evicted. A
   stopped row is not *open*: anything saying which workspaces are open or loaded -- the routing
-  failure's list, a change's sibling notice, the tray's headline -- reads `IsAlive`, not the
+  failure's list, a change's sibling notice, the tray icon's tooltip -- reads `IsAlive`, not the
   registry. A stopped row reports no memory figures either: Windows hands a dead process's id to
   the next process it starts, so sampling it would show somebody else's memory as the solution's.
   The manager stops the sweep, and waits for it, before it disposes the gate the sweep
@@ -217,7 +217,10 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   later of the client's last word and the relay letting go -- counted from the stop, so a quiet session
   whose relay is only re-opening its watch keeps its row -- an unnamed client's after the two idle hours, and the table is capped, since every row is
   made at a client's say-so. Calls without a session share one unnamed row rather than being refused,
-  because a row says only that somebody called.
+  because a row says only that somebody called. A note the person sent a session is the exception that outlives
+  its row: it is the person's words rather than the session's state, so once its session has gone it reads as
+  gone, is still delivered if that session calls again, and goes a day after the later of its session going and
+  anything last happening to it, in a store bounded like the table.
 - **Every tool call is recorded once, by the filter, and nothing else is.** `WithActivityRecord`, second
   in the broker's pipeline after the correlation id, makes a `CallRecording` ambient for the call and
   finishes it with the answer the client was given, the failure in the caller's words, or a
@@ -234,10 +237,20 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   to write it; the host stopping flushes it first, for a host that stops without disposing its services.
   Each broker run writes files of its own, so brokers sharing the folder never share a file or a lock.
   See [the decision](../decisions/every-call-an-agent-makes-is-recorded-and-kept-on-disk.md).
+- **A note rides on exactly one answer, and only on an answer.** `WaitingNotes`, inside the activity record's
+  filter, claims the notes waiting for the calling session once the tool has answered -- under `AgentNotes`'s
+  gate, so two calls answered together never both carry one -- and adds them to that answer's notices, marking
+  each delivered with the call's activity entry. A refused, failed or cancelled call delivers nothing, since its
+  error is written by the SDK after every filter has finished; a relay's own read carries nothing; and an answer
+  the notices cannot be added to gives its notes back. So a note is never counted as delivered to an agent that
+  could not have seen it. It is held under the key the client table files its session under rather than the row's
+  id, because a row goes and is made again with a new id while the session is the same one, and a note to the one
+  unnamed row is refused, since it could reach any client without a relay. See
+  [the decision](../decisions/a-note-to-an-agent-rides-on-its-sessions-next-answer.md).
 - **A window's long poll holds nothing past its request, and never holds up a stop.** The operator views
-  a window reads -- clients, workspaces, activity, sessions -- answer `after=<version>&waitSeconds=N` by
-  `LongPoll` reading the view again every second, and on the activity record's or the client table's
-  `ChangeSignal`, until its version differs. A wait is the request's own linked token, a timer and a
+  a window reads -- clients, workspaces, activity, sessions, notes -- answer `after=<version>&waitSeconds=N` by
+  `LongPoll` reading the view again every second, and on the activity record's, the client table's or the
+  notes' `ChangeSignal`, until its version differs. A wait is the request's own linked token, a timer and a
   reference to the signal's current task, so it holds nothing on a singleton once the request ends.
   `IHostApplicationLifetime.ApplicationStopping` is linked into every wait and answers it with the view as
   it is, or a window's open poll would hold a deploy for the rest of its minute; the reader going away
@@ -246,6 +259,16 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   second for as long as a window is open. Every view goes inside the `/operator` group, where the token
   and the call id apply, and none on `/admin`, which nothing gates: memory and process ids included.
   See [the decision](../decisions/a-window-reads-the-broker-over-the-operator-api-and-waits-on-what-a-view-holds.md).
+- **The RoseMCP app holds a poll only while a window can show what it reads, and never spins on a broker
+  that is not there.** The RoseMCP window's `RoseFeed` is started when the window is on screen and stopped,
+  cancelling every request it holds, when it is minimised or closed; a view not on screen does no work on
+  what arrives, and the Activity view's own poll runs only while it is the view shown. Every long poll is a
+  `ViewWatch`: a read that fails is reported, forgets its version and pauses before the next -- a refused
+  connection answers at once, and without the pause a closed port is a core spinning for as long as the
+  window stays open -- and `Kick` ends the pause, which is what a new token from the tray's next launch
+  does through `OperatorClient.Reauthorise`. The client is the app's, shared by every window and disposed
+  with none of them. An Inspector window still releases its hold before it closes.
+  See [the decision](../decisions/one-rosemcp-app-per-broker-holds-every-window.md).
 - **A live-app session whose host has died is dropped by the session manager, and only that one.**
   A poll that finds the host's transport gone marks the session ended; nothing else would ever
   remove it -- no caller closes a session it can no longer reach -- so the registry would carry it

@@ -79,6 +79,7 @@ public sealed class ToolDescriptionTests
 	[Arguments(ToolNames.BuildFreshness, "a green build")]
 	[Arguments(ToolNames.AddUsing, "rather than editing the import block")]
 	[Arguments(ToolNames.ResolveName, "not reachable through rose_apply_code_fix")]
+	[Arguments(ToolNames.Reply, "only in the conversation")]
 	public void Says_what_the_caller_would_otherwise_have_done(string tool, string expected)
 	{
 		var descriptions = Describe(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly);

@@ -205,6 +205,43 @@ public sealed class OperatorViewsRouteTests : IDisposable
 			.ShouldNotBeNull().Version.ShouldBe(workspaces.Version);
 	}
 
+	/// <summary>
+	/// What a person does to a workspace -- reading its full status, reloading it, closing it -- needs the token, and
+	/// names a workspace the broker holds a row for: any other is refused saying where the list is, and nothing is
+	/// started for it, since a click on a window must not load a solution nobody had open. None of it is a tool call,
+	/// so the record holds none of it.
+	/// </summary>
+	[Test]
+	public async Task Workspace_actions_need_the_token_and_a_workspace_the_broker_holds(CancellationToken cancellationToken)
+	{
+		await using var tray = await Tray.StartAsync(_directory, cancellationToken);
+		var solution = Path.Combine(_directory, "Nobody", "Nobody.slnx");
+		var body = new OperatorWorkspaceRequest { Workspace = solution };
+
+		(await tray.Anonymous.PostAsJsonAsync("/operator/workspaces/reload", body, ContractJson.Options, cancellationToken))
+			.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+
+		foreach (var route in new[] { "/operator/workspaces/reload", "/operator/workspaces/close" })
+		{
+			using var refused = await tray.Operator.PostAsJsonAsync(route, body, ContractJson.Options, cancellationToken);
+
+			refused.StatusCode.ShouldBe(HttpStatusCode.NotFound, route);
+			(await refused.Content.ReadFromJsonAsync<OperatorError>(ContractJson.Options, cancellationToken))!.Message
+				.ShouldContain("GET /operator/workspaces lists the ones there are");
+		}
+
+		using var status = await tray.Operator.GetAsync(
+			$"/operator/workspaces/status?workspace={Uri.EscapeDataString(solution)}", cancellationToken);
+		status.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+
+		(await tray.GetAsync<OperatorWorkspaceList>("/operator/workspaces", cancellationToken)).Workspaces
+			.ShouldBeEmpty("a refused action starts nothing");
+
+		await tray.Record.FlushAsync(cancellationToken);
+		(await tray.GetAsync<ActivityPage>("/operator/activity", cancellationToken)).Entries
+			.ShouldAllBe(entry => entry.Kind == ActivityEntryKind.BrokerStarted, "a window's actions are not calls an agent made");
+	}
+
 	/// <summary>Tools to call, standing in for the broker's own, which need a worker this suite does not start.</summary>
 	[McpServerToolType]
 	public sealed class Echo

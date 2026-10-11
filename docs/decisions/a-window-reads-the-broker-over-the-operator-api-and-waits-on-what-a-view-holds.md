@@ -44,6 +44,13 @@ close time and the rebuilt analyzers are a person's questions, so `OperatorWorks
 beside the summary rather than every agent paying for them. Configuration and platform are what the
 worker reported loading, and what it was started with only until it reports.
 
+**What a window asks once, rather than waits on.** A workspace's full status -- every project, the
+analyzers that would not load, the restore -- is `GET /operator/workspaces/status`, read when a person
+opens the detail, never polled: it is the longest thing a worker says, and it is about one workspace a
+person is looking at. It, `POST /operator/workspaces/reload` and `/close` each name a workspace the broker
+holds a row for and refuse any other, so nothing a window does starts a worker for a solution nobody had
+open; the status holds its worker without counting as use.
+
 **What a stop does to a wait.** A wait is one request's linked token, a timer and a reference to a
 signal's current task, all released when the request ends; nothing is held on a singleton. The host
 stopping ends every open wait with an answer, so a window's poll never holds a deploy for its minute;

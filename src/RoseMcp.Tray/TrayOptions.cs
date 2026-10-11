@@ -10,10 +10,10 @@ public sealed record TrayOptions
 	public string? WorkerPath { get; init; }
 
 	/// <summary>
-	/// Where the inspector executable is, when it is somewhere the usual search would not look.
+	/// Where the RoseMCP app's executable is, when it is somewhere the usual search would not look.
 	/// Null means look: beside this install, then in the repository.
 	/// </summary>
-	public string? InspectorPath { get; init; }
+	public string? AppPath { get; init; }
 
 	public static TrayOptions Parse(string[] args)
 	{
@@ -26,7 +26,7 @@ public sealed record TrayOptions
 				"--host" => options with { Host = args[i + 1] },
 				"--port" when int.TryParse(args[i + 1], out var port) => options with { Port = port },
 				"--worker" => options with { WorkerPath = args[i + 1] },
-				"--inspector" => options with { InspectorPath = args[i + 1] },
+				"--app" => options with { AppPath = args[i + 1] },
 				_ => options,
 			};
 		}

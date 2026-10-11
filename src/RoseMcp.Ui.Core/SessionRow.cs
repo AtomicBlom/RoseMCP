@@ -37,6 +37,9 @@ public sealed class SessionRow : Observable
 	private bool _hasRunning;
 	private bool _hasRecent;
 	private string _recentHeader = string.Empty;
+	private string _reportAge = string.Empty;
+	private string _installLocation = string.Empty;
+	private TimeSpan? _infoAge;
 
 	// What Tick recomputes between polls, and when the poll they came from answered. An age is only
 	// true at the instant it was read, so ticking it means adding what has passed since.
@@ -203,6 +206,33 @@ public sealed class SessionRow : Observable
 		private set => Set(ref _stopSequence, value);
 	}
 
+	/// <summary>
+	/// How old the host's report of this session is, counted on between polls. What makes the rest of the row
+	/// readable: a stop, a state or a XAML fact from a report a minute old is a minute old, and a host that has
+	/// stopped reporting looks exactly like one with nothing new to say unless the age is shown.
+	/// </summary>
+	public string ReportAge
+	{
+		get => _reportAge;
+		private set => Set(ref _reportAge, value);
+	}
+
+	/// <summary>When the session attached or launched, local time.</summary>
+	public string Attached { get; private set; } = string.Empty;
+
+	/// <summary>Where a packaged target was installed from; empty for any other target.</summary>
+	public string InstallLocation
+	{
+		get => _installLocation;
+		private set
+		{
+			Set(ref _installLocation, value);
+			OnPropertyChanged(nameof(HasInstallLocation));
+		}
+	}
+
+	public bool HasInstallLocation => InstallLocation.Length > 0;
+
 	/// <summary>Calls in flight against this session, in the order they started.</summary>
 	public ObservableCollection<ActivityRow> Running { get; } = [];
 
@@ -254,6 +284,10 @@ public sealed class SessionRow : Observable
 		IsEnded = summary.State == LiveAppSessionState.Ended;
 		HostLogPath = summary.HostLogPath;
 
+		InstallLocation = summary.InstallLocation ?? string.Empty;
+		Attached = DateTime.SpecifyKind(summary.StartedUtc, DateTimeKind.Utc).ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+
+		_infoAge = summary.InfoAge;
 		_lastEventAge = summary.LastEventAge;
 		_resumeDeadlineUtc = summary.Stop?.ResumeDeadlineUtc;
 		_readAtUtc = DateTime.UtcNow;
@@ -281,6 +315,7 @@ public sealed class SessionRow : Observable
 		var since = utcNow - _readAtUtc;
 
 		Heartbeat = _lastEventAge is { } age ? $"last event {Format.Age(age + since)}" : "no events yet";
+		ReportAge = _infoAge is { } info ? $"reported {Format.Age(info + since)}" : "no report from the host yet";
 
 		ResumeLabel = _resumeDeadlineUtc is { } deadline
 			? DescribeResume(IsHeld, deadline - utcNow)

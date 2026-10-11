@@ -84,7 +84,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 	/// already is.
 	/// </para>
 	/// <para>
-	/// A notice rather than a field on <see cref="WorkspaceSummary"/>, because the tray window and
+	/// A notice rather than a field on <see cref="WorkspaceSummary"/>, because a RoseMCP window and
 	/// <c>GET /admin/workspaces</c> read the same record through <c>Describe</c>, and "call this tool
 	/// again" is advice to one caller rather than a fact about the workspace.
 	/// </para>

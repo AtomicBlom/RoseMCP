@@ -50,6 +50,9 @@ public sealed class OperatorClient : IDisposable
 
 	private readonly HttpClient _http;
 
+	/// <summary>The token each request presents, read as it is sent; see <see cref="Reauthorise"/>.</summary>
+	private string? _token;
+
 	/// <param name="baseAddress">Where the tray is listening.</param>
 	/// <param name="token">The tray's operator token, or null when there is none to present.</param>
 	/// <param name="handler">
@@ -66,19 +69,99 @@ public sealed class OperatorClient : IDisposable
 		// and telling those apart is the whole reason the budget is imposed with a linked token.
 		_http.Timeout = Timeout.InfiniteTimeSpan;
 
-		if (!string.IsNullOrWhiteSpace(token))
-		{
-			_http.DefaultRequestHeaders.Authorization = new("Bearer", token);
-		}
-
 		BaseAddress = baseAddress;
-		HasToken = !string.IsNullOrWhiteSpace(token);
+		_ = Reauthorise(token);
 	}
 
 	public Uri BaseAddress { get; }
 
 	/// <summary>Whether this client has a token at all, which decides which empty state to show.</summary>
-	public bool HasToken { get; }
+	public bool HasToken => !string.IsNullOrWhiteSpace(Volatile.Read(ref _token));
+
+	/// <summary>
+	/// The token every request from here on presents, in place of the one this client was made with.
+	/// <para>
+	/// A broker mints its token per run, so a window left open across a restart is refused until somebody opens
+	/// RoseMCP from the tray again -- and that launch is handed to the app already running, carrying the new run's
+	/// token. Taking it here rather than making a new client is what lets every window and every poll in the app
+	/// carry on with the requests they already hold; each request reads the token as it is sent, so one in flight
+	/// keeps the token it went with and the next takes the new one.
+	/// </para>
+	/// </summary>
+	/// <returns>Whether the token is a different one from the token this client held.</returns>
+	public bool Reauthorise(string? token)
+	{
+		var next = string.IsNullOrWhiteSpace(token) ? null : token;
+		var previous = Interlocked.Exchange(ref _token, next);
+
+		return !string.Equals(previous, next, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// What a request that waits on a workspace gets: reading a status, which answers once the solution has loaded,
+	/// and reloading or closing one, which stops a worker and starts another. Minutes, because a large solution's
+	/// load is.
+	/// </summary>
+	public static readonly TimeSpan WorkspaceWait = TimeSpan.FromMinutes(3);
+
+	/// <summary>
+	/// A workspace's full status, its projects included: what a degraded row's detail reads when somebody opens it.
+	/// Nothing is started for it, and reading it does not count as using the workspace.
+	/// </summary>
+	public Task<WorkspaceStatusReport> WorkspaceStatusAsync(string workspace, CancellationToken cancellationToken) =>
+		GetAsync<WorkspaceStatusReport>(
+			$"/operator/workspaces/status?workspace={Uri.EscapeDataString(workspace)}&projects=true", WorkspaceWait, cancellationToken);
+
+	/// <summary>Reloads a workspace: a fresh worker, under the build it was last asked for. Answers with the new row, before its load.</summary>
+	public Task<OperatorWorkspace> ReloadWorkspaceAsync(string workspace, CancellationToken cancellationToken) =>
+		PostAsync<OperatorWorkspaceRequest, OperatorWorkspace>(
+			"/operator/workspaces/reload", new OperatorWorkspaceRequest { Workspace = workspace }, WorkspaceWait, cancellationToken);
+
+	/// <summary>Closes a workspace, stopping its worker for every agent that shares it.</summary>
+	public Task<WorkspaceClosed> CloseWorkspaceAsync(string workspace, CancellationToken cancellationToken) =>
+		PostAsync<OperatorWorkspaceRequest, WorkspaceClosed>(
+			"/operator/workspaces/close", new OperatorWorkspaceRequest { Workspace = workspace }, WorkspaceWait, cancellationToken);
+
+	/// <summary>Every reason the person has accepted for one solution, with what agents read about each.</summary>
+	public Task<AcceptedReasons> AcceptedAsync(string workspace, CancellationToken cancellationToken) =>
+		GetAsync<AcceptedReasons>($"/operator/health/accepted?workspace={Uri.EscapeDataString(workspace)}", Quick, cancellationToken);
+
+	/// <summary>Accepts a reason for the projects or subjects it covers, choosing what agents read about it.</summary>
+	public Task<AcceptedReasons> AcceptAsync(AcceptReasonRequest request, CancellationToken cancellationToken) =>
+		PostAsync<AcceptReasonRequest, AcceptedReasons>("/operator/health/accept", request, Quick, cancellationToken);
+
+	/// <summary>Stops accepting a reason, so it draws attention and agents hear Rose's line again.</summary>
+	public Task<AcceptedReasons> StopAcceptingAsync(StopAcceptingRequest request, CancellationToken cancellationToken) =>
+		PostAsync<StopAcceptingRequest, AcceptedReasons>("/operator/health/stop-accepting", request, Quick, cancellationToken);
+
+	/// <summary>Every reason an agent has proposed the person accept, waiting to be decided.</summary>
+	public Task<IReadOnlyList<ReasonProposal>> ProposalsAsync(CancellationToken cancellationToken) =>
+		GetAsync<IReadOnlyList<ReasonProposal>>("/operator/health/proposals", Quick, cancellationToken);
+
+	/// <summary>Accepts what a proposal proposed, with what agents read changed where <paramref name="request"/> says.</summary>
+	public Task<AcceptedReasons> ConfirmProposalAsync(string proposalId, ConfirmProposalRequest? request, CancellationToken cancellationToken) =>
+		PostAsync<ConfirmProposalRequest?, AcceptedReasons>(
+			$"/operator/health/proposals/{Uri.EscapeDataString(proposalId)}/confirm", request, Quick, cancellationToken);
+
+	/// <summary>Drops a proposal without accepting anything.</summary>
+	public Task<ReasonProposal> RejectProposalAsync(string proposalId, CancellationToken cancellationToken) =>
+		PostAsync<object?, ReasonProposal>(
+			$"/operator/health/proposals/{Uri.EscapeDataString(proposalId)}/reject", null, Quick, cancellationToken);
+
+	/// <summary>
+	/// Sends a note to an agent session, to ride on the answer to its next Rose call of any tool. Answers with the
+	/// note as the broker holds it, waiting for that call.
+	/// </summary>
+	public Task<AgentNote> SendNoteAsync(NoteRequest request, CancellationToken cancellationToken) =>
+		PostAsync<NoteRequest, AgentNote>("/operator/notes", request, Quick, cancellationToken);
+
+	/// <summary>
+	/// Every note the broker holds, with where each one's delivery has got to and what the agent answered. A long poll
+	/// where <paramref name="after"/> and <paramref name="waitSeconds"/> say, answered when a note is sent, delivered or
+	/// answered, or its session goes.
+	/// </summary>
+	public Task<NoteList> NotesAsync(string? after, int waitSeconds, CancellationToken cancellationToken) =>
+		GetAsync<NoteList>(Watched("/operator/notes", after, waitSeconds), PollBudget(waitSeconds), cancellationToken);
 
 	/// <summary>
 	/// Which build the broker is, and how far its checkout has moved on. Given the read budget: the
@@ -392,6 +475,8 @@ public sealed class OperatorClient : IDisposable
 		try
 		{
 			using var request = compose();
+			if (Volatile.Read(ref _token) is { } token) request.Headers.Authorization = new("Bearer", token);
+
 			using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budgeted.Token);
 
 			if (!response.IsSuccessStatusCode) throw await RefusalAsync(response, budgeted.Token);

@@ -75,8 +75,12 @@ public sealed class ToolBudgetTests
 	/// later answer -- the volume that teaches a caller to read past the notice channel -- and of an agent
 	/// being able to ask the person to accept one rather than leaving it to be noticed.
 	/// </para>
+	/// <para>
+	/// rose_reply costs about 750 more, the price of an agent being able to answer a note the person sent it into
+	/// the window they are reading, rather than only in a conversation they may not be watching.
+	/// </para>
 	/// </summary>
-	private const int ModelFacing = 84500;
+	private const int ModelFacing = 85500;
 
 	[Test]
 	public void No_description_is_longer_than_its_ceiling()

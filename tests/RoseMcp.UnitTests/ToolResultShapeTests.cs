@@ -132,6 +132,38 @@ public sealed class ToolResultShapeTests
 	};
 
 	/// <summary>
+	/// Tools that answer about something belonging to no workspace at all, and why. Each still answers with a
+	/// record naming what it answered about, which <see cref="Every_tool_answers_with_a_record"/> holds; none
+	/// claims a workspace, which <see cref="A_tool_about_no_workspace_claims_none"/> holds.
+	/// </summary>
+	private static readonly Dictionary<string, string> AboutNoWorkspace = new(StringComparer.Ordinal)
+	{
+		[ToolNames.Reply] =
+			"rose_reply answers a note the person sent the calling session, which belongs to that session rather "
+				+ "than to any workspace; its result names the note.",
+	};
+
+	/// <summary>
+	/// An exemption names a tool that exists, with a reason, whose result does not claim a workspace answered --
+	/// one that did would pass through unattributed, with a workspace field naming nothing.
+	/// </summary>
+	[Test]
+	public void A_tool_about_no_workspace_claims_none()
+	{
+		var declared = DeclaredSurface.Tools().ToDictionary(tool => tool.Name, tool => tool.Method, StringComparer.Ordinal);
+
+		foreach (var (name, reason) in AboutNoWorkspace)
+		{
+			reason.ShouldNotBeEmpty();
+			declared.ShouldContainKey(name);
+
+			var result = DeclaredSurface.Returned(declared[name]);
+			typeof(WorkspaceScopedResult).IsAssignableFrom(result).ShouldBeFalse(
+				$"{name} answers about no workspace with {result.Name}, which derives from WorkspaceScopedResult.");
+		}
+	}
+
+	/// <summary>
 	/// Every tool that answers about a solution answers with something the broker can attribute.
 	/// The run-time half of attribution is a type test, and a result that fails it is passed through
 	/// silently, so this is the only thing standing between "attributed" and "attributed in
@@ -256,6 +288,7 @@ public sealed class ToolResultShapeTests
 		DeclaredSurface.Tools()
 			.Where(tool => !IsLiveApp(tool.Name))
 			.Where(tool => !AcrossWorkspaces.ContainsKey(tool.Name))
+			.Where(tool => !AboutNoWorkspace.ContainsKey(tool.Name))
 			.Select(tool => (tool.Name, Result: DeclaredSurface.Returned(tool.Method)));
 
 	/// <summary>

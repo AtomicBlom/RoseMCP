@@ -413,42 +413,9 @@ at all.
 
 ## Findings
 
-### USE-01 The tray can say a workspace is degraded but never why, because `WorkspaceSummary` throws away the report that says why
-
-- **Severity:** High   (blocks the stated goal: the project exists to stop confidently wrong answers)
-- **Effort:** M
-- **Where:** `src/RoseMcp.Contracts/WorkspaceSummary.cs`, `src/RoseMcp.Contracts/WorkspaceStatusReport.cs:45-70`,
-  `src/RoseMcp.Tray/WorkspaceRow.cs:253-310`
-- **What:** `WorkspaceStatusReport` carries `Projects` (a full `ProjectStatus` each),
-  `AnalyzerLoadFailures` (assembly, wanted version, HRESULT), `Restore`, `LoadDiagnostics` with a
-  pre-fold count, and `AvailableConfigurations`. `WorkspaceSummary` -- the only thing a window ever
-  sees -- carries none of them. It keeps `DegradedReasons` (already folded to one line per kind),
-  `FailedProjects` as a list of names, and `ProjectCount`. `WorkspaceRow.DescribeFacts` then reduces
-  even the names to `$"{failed} failed to load"`, so the names are computed, transported, and thrown
-  away in the last line before the screen.
-
-  The fold is deliberate and well argued -- `DegradedReasons` documents it: "a reason is an index
-  into this report rather than a second copy of it", listing `ProjectStatus.UnresolvedXamlTypes`,
-  `ProjectStatus.MissingAnalyzerOutputs`, `AnalyzerLoadFailures` and `RestoreReport.Unrestored` as
-  where the particulars live. The same docstring says "The tray draws this whole list into a single
-  information bar". Both halves are true and together they are a bug: the tray is given the index and
-  not the thing indexed, so the fold has nowhere to unfold to.
-- **Why it matters:** This repository's own `rose_workspace_status` reports Degraded because two
-  generator assemblies fail a manifest version check (10.0.14 located against a pinned 10.0.11). The
-  tray can show "Answers may be incomplete" and one folded sentence. It cannot show which assembly,
-  which version, or the HRESULT -- and it cannot show that three specific projects failed their
-  design-time build, which is the fact that decides whether the answer an agent just acted on was
-  about real code or about an empty project. A person who suspects a wrong answer has exactly one
-  next step, which is to open a log folder and read Serilog output. The single most valuable thing
-  RoseMCP knows is one hop from the screen and does not make it.
-- **Suggested change:** Add an expandable per-workspace detail section fed by a real
-  `WorkspaceStatusReport`, fetched on demand rather than on every poll (a "Details" disclosure on the
-  health InfoBar, one `GET /admin/workspaces/{key}/status`). Inside it: a project list with the
-  failed ones first and each carrying `TargetFramework`, `GeneratorCount` vs `GeneratedDocumentCount`,
-  `MissingAnalyzerOutputs`, `XamlStubbedCount` and `UnresolvedXamlTypes`; then `AnalyzerLoadFailures`
-  verbatim; then `Restore`. Pattern: *master-detail on demand* -- the summary stays cheap enough to
-  poll at 400ms and the report is read only when a person asks. The minimum viable version is three
-  lines: show `FailedProjects` as names in the health InfoBar instead of as a count.
+### ~~USE-01 The tray can say a workspace is degraded but never why, because `WorkspaceSummary` throws away the report that says why~~
+**#462, #463.** A window could say a workspace was degraded but not why. A workspace's detail reads its
+full status on request: its failed projects, its analyzers that would not load, its restore.
 
 ### USE-02 The inspector -- the window for watching an agent debug -- shows nothing about what the agent is doing, and holds the data
 
@@ -696,25 +663,9 @@ running or finished, names its client and the directory it came from.
   saying when the tree was read, visually distinct from a live one -- is what makes it safe. Properties
   stay unavailable during the stop, scoped to the property pane rather than the whole tab.
 
-### USE-13 "Open log folder" is the escape hatch from every unanswered question in the product, and it opens a folder
-
-- **Severity:** Medium
-- **Effort:** M
-- **Where:** `src/RoseMcp.Tray/MainWindow.xaml.cs:454-461`, `WorkspaceRow.DescribeHealth` (three of
-  four branches end by pointing at the log folder)
-- **What:** `DescribeHealth` says "Its log, under Open log folder, says why" for a crashed worker and
-  "The worker's log, under Open log folder, has the details" for a failed load. `OnOpenHostLog` falls
-  back to a directory when no file is named. `OnOpenLogs` deliberately opens the *parent* of the
-  tray's own folder "because the question that brings someone here is usually which of them has the
-  answer" -- an accurate description of the problem and a statement that the window is not solving it.
-- **Why it matters:** Every dead end in the tray terminates at an Explorer window containing several
-  Serilog files from several processes. The person then greps. That is the point at which a status window has stopped being
-  a product and become a shortcut to the file system.
-- **Suggested change:** Pick the file, not the folder, wherever one is known -- a workspace row and a
-  session row each have a button that opens their own file, and a workspace's health message points
-  there. Beyond that, the real
-  fix is USE-04: if the activity list held a few hundred entries with their errors, most trips to the
-  log folder stop happening.
+### ~~USE-13 "Open log folder" is the escape hatch from every unanswered question in the product, and it opens a folder~~
+**#462, #463.** A window sent every unanswered question to a folder of logs. Each workspace and each
+debug session opens its own log file.
 
 ### USE-14 Rulers produces the numbers a layout conversation is about, and they cannot leave the app
 
@@ -734,23 +685,9 @@ running or finished, names its client and the directory it came from.
   `rose_xaml_selection` returns anchor, target and the four gaps. That turns a picture into a fact
   the agent can act on, which is the difference between this tool and a screenshot.
 
-### USE-15 The tray's two menus are maintained as two hand-written copies and already differ
-
-- **Severity:** Low
-- **Effort:** S
-- **Where:** `src/RoseMcp.Tray/MainWindow.xaml:75-89` (tray flyout) and `:121-159` (window flyout);
-  `MainWindow.xaml.cs:469-507` (`OnMenuOpening` loops over pairs of named controls)
-- **What:** Six items appear in both menus, declared twice in XAML with different icon markup, and
-  kept in sync at runtime by `OnMenuOpening` iterating explicit arrays of paired controls
-  (`[TrayStartWithWindows, WindowStartWithWindows]` and two more). The tray menu additionally carries
-  "Show workspaces", which the window menu does not and should not.
-- **Why it matters:** Mostly a maintenance cost (structural cause: the same duplication UIP-10 finds
-  between the two windows), but it has a product edge: the next item added will be added to one menu,
-  and a person who learned it from the tray icon will not find it in the window. The runtime sync
-  code is already the shape that only works while somebody remembers to extend the arrays.
-- **Suggested change:** One `MenuFlyout` built once in code or declared once as a resource and
-  referenced twice, with "Show workspaces" conditionally prepended. Pattern: *one declaration, two
-  attachment points*.
+### ~~USE-15 The tray's two menus are maintained as two hand-written copies and already differ~~
+**#462.** The tray's window carried a second, hand-kept copy of its icon's menu. The tray has no window,
+and its icon has one menu.
 
 ### USE-16 The wiki pitch and the shipped windows disagree about what the inspector is and about what the panel is for
 
@@ -773,20 +710,8 @@ running or finished, names its client and the directory it came from.
   magnifier smooths pixels and cannot be told not to, so it can neither read a colour nor show a
   one-pixel gap (USE-08).
 
-### USE-17 The tray spends 44px of a 400px minimum-height window on its own name
-
-- **Severity:** Low
-- **Effort:** S
-- **Where:** `src/RoseMcp.Tray/MainWindow.xaml:94-99`, `MainWindow.xaml.cs:46-49`
-- **What:** A 44px title bar containing a 18px mark and the caption "RoseMCP", all of it drag region.
-  The word also appears in the taskbar, in the tray tooltip (`DescribeTooltip`), and 6px below in the
-  headline's context. The inspector's equivalent is 40px and earns it, because its title names the
-  process being debugged and that is how a person picks between two inspector windows.
-- **Why it matters:** Small, but it is the top 11% of the minimum window and it is the only element
-  in the tray that shows nothing. Everything below it is information.
-- **Suggested change:** Shrink to 32px and put the endpoint or the state summary in it, or make the
-  headline row itself the drag region (`SetTitleBar` accepts any element). Either way the space goes
-  to something a reader acts on.
+### ~~USE-17 The tray spends 44px of a 400px minimum-height window on its own name~~
+**#462.** The tray's window spent the top of its height on an empty title bar. The tray has no window.
 
 ---
 
@@ -800,9 +725,9 @@ less than it costs, in maintenance, in screen space, or in risk to somebody's ru
 | ~~The pixel lens and the hex colour readout~~ **Withdrawn.** | `tap_tool_zoom.h` | -- | The first draft cut this as an OS duplicate. It is not one: Windows Magnifier filters bilinearly with no way to disable it, so it cannot read an exact colour or show a one-pixel gap at a corner radius. Keep the feature; write down why it exists (USE-08). |
 | **The Threads pane** | `ThreadsPane.xaml` + `.xaml.cs` + `ThreadRow` | ~245 lines | A strict subset of Visual Studio's Threads window, answering no supervision question, and the only pane that freezes somebody's application as a side effect of being on screen. |
 | **The Breakpoints compose form's position** (not the form) | `BreakpointsPane.xaml:17-150` | reorder only | Keep the flow -- it is good -- but it is a driving feature sitting where the supervision view should be. Demote to a disclosure. |
-| **The tray's 44px title bar** | `MainWindow.xaml:94-99` | 6 lines | The only element in the tray that shows nothing, occupying 11% of the minimum window. |
-| **The second copy of the tray menu** | `MainWindow.xaml:121-159` | ~40 lines | Two hand-maintained copies already differ; `OnMenuOpening` syncs them by iterating named pairs. |
-| **`loaded in 24.3s` in the permanent facts line** | `WorkspaceRow.DescribeFacts` | 1 line | Actionable once, noise for the rest of the worker's life. Belongs in the on-demand detail (USE-01), not on the card forever. |
+| ~~The tray's 44px title bar~~ **#462.** | -- | -- | The tray has no window. |
+| ~~The second copy of the tray menu~~ **#462.** | -- | -- | The tray has one menu, on its icon. |
+| ~~`loaded in 24.3s` in the permanent facts line~~ **#462.** | -- | -- | Deleted with the tray's window; the load time is in a workspace's detail (#463). |
 
 Two things I considered cutting and would keep:
 
@@ -818,17 +743,10 @@ Two things I considered cutting and would keep:
 
 ## Redesign proposals, smallest change first
 
-### The tray -- three changes, none of them structural
+### ~~The tray -- three changes, none of them structural~~
 
-1. **Unfold the health InfoBar.** Add a "Details" disclosure that fetches a real
-   `WorkspaceStatusReport` on demand and lists the failed projects by name with their per-project
-   status, then the analyzer load failures verbatim. The minimum version is one line:
-   `DescribeFacts` shows the names in `FailedProjects` instead of their count. (USE-01)
-2. ~~**Promote the activity list.**~~ **#459.** Every call is kept, attributed, for a window to show.
-3. **Say when the report is stale.** `InfoAge` beside the heartbeat, silent under a threshold.
-   `Notice` into an Informational InfoBar on the session card. (USE-03)
-
-That is the whole tray redesign. It is close enough to its job that nothing else is needed.
+**#462, #463.** The tray has no window to change. A degraded workspace's details on demand and a session
+report's age are in the RoseMCP window.
 
 ### The in-app panel -- explain one feature, add one button
 
@@ -969,7 +887,7 @@ in the top half of the pane.
 | ~~Attribution on an activity would be remembered by each call site.~~ **#459.** | One call filter records every call against its client, and the routing adds to the call's ambient recording, so no tool or call site can forget. |
 | A pane takes a hold on somebody's application as a side effect of becoming visible, and whether that is justified is a judgement per pane (see also UIP-08). | Make the hold an explicit window-level state with one visible control and one owner. A pane declares "I can only answer while held" and the *window* decides, so adding a pane cannot silently freeze a user's app. |
 | Facts are rendered into bare `TextBlock`s, so copyability is per-element and mostly absent. | One `FactTextBlockStyle` in `RoseMcp.Ui/Themes/Rose.xaml` with `IsTextSelectionEnabled="True"`, and a convention that anything carrying a fact uses it. The styled resource is the only spelling, so the default is selectable. |
-| Two menus and two windows keep their shared parts in sync by hand (`OnMenuOpening` iterating named pairs; UIP-10 finds the same shape across windows). | Declare the shared flyout once as a resource in `RoseMcp.Ui` and attach it twice. One declaration, two attachment points. |
+| ~~Two menus and two windows keep their shared parts in sync by hand.~~ **#462.** | The tray has one menu, on its icon, and no window to carry a second. |
 | An empty state is written inline in XAML in the tray and in one testable file in the inspector. | Move the tray's to an `TrayText` beside `InspectorText`. The file that exists is the better pattern and it is already proven. |
 
 ---

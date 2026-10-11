@@ -129,12 +129,11 @@ public sealed class CallRecording : IDisposable
 	/// table files the client under, hashed, so the record can say which client across a broker restart without
 	/// carrying the session's name, which scopes what that session acknowledges.
 	/// </summary>
-	public static string KeyOf(string? relayed, string? transportSession)
-	{
-		var key = ConnectedClients.KeyOf(relayed, string.IsNullOrWhiteSpace(transportSession) ? null : transportSession);
+	public static string KeyOf(string? relayed, string? transportSession) => Hashed(ConnectedClients.KeyOf(relayed, string.IsNullOrWhiteSpace(transportSession) ? null : transportSession));
 
-		return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key)).AsSpan(0, 8));
-	}
+	/// <summary>A key the client table files a client under, hashed as <see cref="KeyOf"/> hashes it.</summary>
+	internal static string Hashed(string tableKey) =>
+		Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(tableKey)).AsSpan(0, 8));
 
 	/// <summary>
 	/// Says where the call was routed: the workspace or the debug session that serves it, and what it is aimed

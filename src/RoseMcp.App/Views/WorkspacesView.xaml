@@ -1,0 +1,262 @@
+<UserControl
+	x:Class="RoseMcp.App.Views.WorkspacesView"
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	xmlns:core="using:RoseMcp.Ui.Core.Views"
+	xmlns:views="using:RoseMcp.App.Views">
+
+	<Grid RowDefinitions="Auto,Auto,*">
+		<StackPanel Grid.Row="0" Spacing="2" Margin="0,0,0,10">
+			<TextBlock Text="Workspaces" Style="{StaticResource SubtitleTextBlockStyle}" />
+			<TextBlock x:Name="Summary" Style="{StaticResource CaptionTextBlockStyle}"
+				Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+		</StackPanel>
+
+		<!-- Column heads, at the widths every row below uses. -->
+		<Grid Grid.Row="1" Padding="10,0,10,6" ColumnSpacing="10">
+			<Grid.ColumnDefinitions>
+				<ColumnDefinition Width="2*" />
+				<ColumnDefinition Width="2*" />
+				<ColumnDefinition Width="*" />
+				<ColumnDefinition Width="80" />
+				<ColumnDefinition Width="70" />
+				<ColumnDefinition Width="3*" />
+				<ColumnDefinition Width="80" />
+				<ColumnDefinition Width="150" />
+				<ColumnDefinition Width="16" />
+			</Grid.ColumnDefinitions>
+			<TextBlock Grid.Column="0" Text="Solution" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+			<TextBlock Grid.Column="1" Text="Folder" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+			<TextBlock Grid.Column="2" Text="Used by" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+			<TextBlock Grid.Column="3" Text="Configuration" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+			<TextBlock Grid.Column="4" Text="Platform" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+			<TextBlock Grid.Column="5" Text="Health" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+			<TextBlock Grid.Column="6" Text="Memory" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+			<TextBlock Grid.Column="7" Text="Unused for" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+		</Grid>
+
+		<ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+			<ItemsRepeater x:Name="Rows">
+				<ItemsRepeater.Layout>
+					<StackLayout Spacing="6" />
+				</ItemsRepeater.Layout>
+				<ItemsRepeater.ItemTemplate>
+					<DataTemplate x:DataType="core:WorkspaceRow">
+						<Border Style="{StaticResource CardStyle}">
+							<StackPanel>
+								<Grid Padding="10,8" ColumnSpacing="10">
+									<Grid.ColumnDefinitions>
+										<ColumnDefinition Width="2*" />
+										<ColumnDefinition Width="2*" />
+										<ColumnDefinition Width="*" />
+										<ColumnDefinition Width="80" />
+										<ColumnDefinition Width="70" />
+										<ColumnDefinition Width="3*" />
+										<ColumnDefinition Width="80" />
+										<ColumnDefinition Width="150" />
+										<ColumnDefinition Width="16" />
+									</Grid.ColumnDefinitions>
+
+									<TextBlock Grid.Column="0" Text="{x:Bind Solution, Mode=OneWay}" TextTrimming="CharacterEllipsis"
+										VerticalAlignment="Center" Style="{StaticResource BodyStrongTextBlockStyle}"
+										ToolTipService.ToolTip="{x:Bind Path}" />
+									<HyperlinkButton Grid.Column="1" Click="OnOpenFolder" Tag="{x:Bind}" Padding="0" VerticalAlignment="Center"
+										ToolTipService.ToolTip="Open in Explorer">
+										<TextBlock Text="{x:Bind Folder, Mode=OneWay}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+											Style="{StaticResource MonoCaptionTextBlockStyle}" />
+									</HyperlinkButton>
+									<TextBlock Grid.Column="2" Text="{x:Bind UsedBy, Mode=OneWay}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+										VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
+										ToolTipService.ToolTip="{x:Bind UsedByDetail, Mode=OneWay}" />
+									<TextBlock Grid.Column="3" Text="{x:Bind Configuration, Mode=OneWay}" VerticalAlignment="Center"
+										Style="{StaticResource CaptionTextBlockStyle}" />
+									<TextBlock Grid.Column="4" Text="{x:Bind Platform, Mode=OneWay}" VerticalAlignment="Center"
+										Style="{StaticResource CaptionTextBlockStyle}" />
+
+									<!-- Coloured only when somebody can act. -->
+									<Grid Grid.Column="5" VerticalAlignment="Center" ToolTipService.ToolTip="{x:Bind Health, Mode=OneWay}">
+										<TextBlock Text="{x:Bind Health, Mode=OneWay}" Visibility="{x:Bind IsCritical, Mode=OneWay}"
+											TextTrimming="CharacterEllipsis" Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+										<TextBlock Text="{x:Bind Health, Mode=OneWay}" Visibility="{x:Bind IsCaution, Mode=OneWay}"
+											TextTrimming="CharacterEllipsis" Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+										<TextBlock Text="{x:Bind Health, Mode=OneWay}" Visibility="{x:Bind IsWorking, Mode=OneWay}"
+											TextTrimming="CharacterEllipsis" Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource RoseAccentBrush}" />
+										<TextBlock Text="{x:Bind Health, Mode=OneWay}" Visibility="{x:Bind IsQuiet, Mode=OneWay}"
+											TextTrimming="CharacterEllipsis" Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+									</Grid>
+
+									<TextBlock Grid.Column="6" Text="{x:Bind Memory, Mode=OneWay}" VerticalAlignment="Center"
+										Style="{StaticResource MonoCaptionTextBlockStyle}"
+										ToolTipService.ToolTip="{x:Bind MemoryDetail, Mode=OneWay}" />
+									<TextBlock Grid.Column="7" Text="{x:Bind Unused, Mode=OneWay}" VerticalAlignment="Center"
+										TextTrimming="CharacterEllipsis" Style="{StaticResource CaptionTextBlockStyle}" />
+									<Button Grid.Column="8" Click="OnToggle" Tag="{x:Bind}" Padding="0" AutomationProperties.Name="Open or close the detail" Background="Transparent" BorderThickness="0"
+										VerticalAlignment="Center" ToolTipService.ToolTip="Detail">
+										<FontIcon Glyph="&#xE70D;" FontSize="11" />
+									</Button>
+								</Grid>
+
+								<!-- The detail, on request. -->
+								<StackPanel Visibility="{x:Bind IsExpanded, Mode=OneWay}" Padding="14,4,14,14" Spacing="10">
+									<TextBlock Text="{x:Bind DetailHeader, Mode=OneWay}" TextWrapping="Wrap" IsTextSelectionEnabled="True"
+										Style="{StaticResource MonoCaptionTextBlockStyle}"
+										Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+									<TextBlock Text="{x:Bind ExitReason, Mode=OneWay}" Visibility="{x:Bind HasExitReason, Mode=OneWay}"
+										TextWrapping="Wrap" Style="{StaticResource BodyTextBlockStyle}" />
+
+									<StackPanel Spacing="4" Visibility="{x:Bind HasRebuiltAnalyzers, Mode=OneWay}">
+										<TextBlock Text="Rebuilt since this workspace loaded. Its answers use the old build until it is reloaded."
+											TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+										<ItemsControl ItemsSource="{x:Bind RebuiltAnalyzers}">
+											<ItemsControl.ItemTemplate>
+												<DataTemplate x:DataType="x:String">
+													<TextBlock Text="{x:Bind}" Style="{StaticResource MonoCaptionTextBlockStyle}" />
+												</DataTemplate>
+											</ItemsControl.ItemTemplate>
+										</ItemsControl>
+										<CheckBox Content="Reload a workspace once it is idle when its analyzers are rebuilt"
+											Loaded="OnReloadWhenIdleLoaded" Click="OnReloadWhenIdle" />
+									</StackPanel>
+
+									<ItemsRepeater ItemsSource="{x:Bind Reasons}" Visibility="{x:Bind HasReasons, Mode=OneWay}">
+										<ItemsRepeater.Layout>
+											<StackLayout Spacing="8" />
+										</ItemsRepeater.Layout>
+										<ItemsRepeater.ItemTemplate>
+											<DataTemplate x:DataType="core:ReasonRow">
+												<Border Style="{StaticResource CardStyle}" Padding="10,8">
+													<StackPanel Spacing="4">
+														<TextBlock Text="{x:Bind Line, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource BodyStrongTextBlockStyle}" />
+														<TextBlock Text="{x:Bind Effect, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+															Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+														<TextBlock Text="{x:Bind Facts, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+															Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+														<TextBlock Text="{x:Bind Acceptance, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}" />
+														<StackPanel Orientation="Horizontal" Spacing="6">
+															<TextBlock Text="What agents are told, on each read:" Style="{StaticResource CaptionTextBlockStyle}"
+																Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+														</StackPanel>
+														<TextBlock Text="{x:Bind AgentsTold, Mode=OneWay}" TextWrapping="Wrap" FontStyle="Italic"
+															Style="{StaticResource CaptionTextBlockStyle}" />
+
+														<StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind IsNotAccepted, Mode=OneWay}">
+															<ComboBox SelectedIndex="{x:Bind ChosenIndex, Mode=TwoWay}" MinWidth="150"
+																ToolTipService.ToolTip="What agents read about it once you accept it">
+																<x:String>Rose's line</x:String>
+																<x:String>Your note</x:String>
+																<x:String>Nothing</x:String>
+															</ComboBox>
+															<TextBox Text="{x:Bind Note, Mode=TwoWay}" Width="320" PlaceholderText="Your note, where agents read one" />
+															<Button Content="Accept" Click="OnAccept" Tag="{x:Bind}" />
+														</StackPanel>
+														<Button Content="Stop accepting" Click="OnStopAccepting" Tag="{x:Bind}" Visibility="{x:Bind IsAccepted, Mode=OneWay}" />
+
+														<!-- A note asking an agent about this reason, the workspace's users offered first. -->
+														<views:NoteComposerView Composer="{x:Bind Composer}" OpenLabel="Ask an agent why…" />
+													</StackPanel>
+												</Border>
+											</DataTemplate>
+										</ItemsRepeater.ItemTemplate>
+									</ItemsRepeater>
+
+									<ItemsControl ItemsSource="{x:Bind UnshapedReasons}" Visibility="{x:Bind HasUnshapedReasons, Mode=OneWay}">
+										<ItemsControl.ItemTemplate>
+											<DataTemplate x:DataType="x:String">
+												<TextBlock Text="{x:Bind}" TextWrapping="Wrap" IsTextSelectionEnabled="True" Margin="0,0,0,6"
+													Style="{StaticResource CaptionTextBlockStyle}" />
+											</DataTemplate>
+										</ItemsControl.ItemTemplate>
+									</ItemsControl>
+
+									<StackPanel Spacing="4" Visibility="{x:Bind HasProposals, Mode=OneWay}">
+										<TextBlock Text="Proposed by an agent, for you to decide" Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+										<ItemsControl ItemsSource="{x:Bind Proposals}">
+											<ItemsControl.ItemTemplate>
+												<DataTemplate x:DataType="core:ProposalRow">
+													<Grid ColumnSpacing="8" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,6">
+														<StackPanel Grid.Column="0">
+															<TextBlock Text="{x:Bind Line}" TextWrapping="Wrap" Style="{StaticResource BodyTextBlockStyle}" />
+															<TextBlock Text="{x:Bind Facts}" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+																Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+														</StackPanel>
+														<Button Grid.Column="1" Content="Accept as proposed" Click="OnConfirm" Tag="{x:Bind}" VerticalAlignment="Center" />
+														<Button Grid.Column="2" Content="Reject" Click="OnReject" Tag="{x:Bind}" VerticalAlignment="Center" />
+													</Grid>
+												</DataTemplate>
+											</ItemsControl.ItemTemplate>
+										</ItemsControl>
+									</StackPanel>
+
+									<StackPanel Spacing="4" Visibility="{x:Bind HasAccepted, Mode=OneWay}">
+										<TextBlock Text="You have accepted, for this solution" Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+										<ItemsControl ItemsSource="{x:Bind Accepted}">
+											<ItemsControl.ItemTemplate>
+												<DataTemplate x:DataType="core:AcceptedRow">
+													<Grid ColumnSpacing="8" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,4">
+														<TextBlock Grid.Column="0" VerticalAlignment="Center" Style="{StaticResource MonoCaptionTextBlockStyle}">
+															<Run Text="{x:Bind Kind}" />
+															<Run Text=" · " />
+															<Run Text="{x:Bind Covering}" />
+														</TextBlock>
+														<TextBlock Grid.Column="1" Text="{x:Bind Facts}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+															Style="{StaticResource CaptionTextBlockStyle}"
+															Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+														<Button Grid.Column="2" Content="Stop accepting" Click="OnStopAcceptingAccepted" Tag="{x:Bind}" />
+													</Grid>
+												</DataTemplate>
+											</ItemsControl.ItemTemplate>
+										</ItemsControl>
+									</StackPanel>
+
+									<ItemsControl ItemsSource="{x:Bind Load}" Visibility="{x:Bind HasLoad, Mode=OneWay}">
+										<ItemsControl.ItemTemplate>
+											<DataTemplate x:DataType="core:LoadSection">
+												<StackPanel Spacing="2" Margin="0,0,0,8">
+													<TextBlock Text="{x:Bind Title}" Style="{StaticResource CaptionTextBlockStyle}"
+														Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+													<ItemsControl ItemsSource="{x:Bind Lines}">
+														<ItemsControl.ItemTemplate>
+															<DataTemplate x:DataType="x:String">
+																<TextBlock Text="{x:Bind}" TextWrapping="Wrap" IsTextSelectionEnabled="True"
+																	Style="{StaticResource MonoCaptionTextBlockStyle}" />
+															</DataTemplate>
+														</ItemsControl.ItemTemplate>
+													</ItemsControl>
+												</StackPanel>
+											</DataTemplate>
+										</ItemsControl.ItemTemplate>
+									</ItemsControl>
+
+									<TextBlock Text="{x:Bind Problem, Mode=OneWay}" Visibility="{x:Bind HasProblem, Mode=OneWay}"
+										TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+										Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+
+									<StackPanel Orientation="Horizontal" Spacing="8">
+										<Button Content="Show why it loaded as it did" Click="OnShowLoad" Tag="{x:Bind}"
+											ToolTipService.ToolTip="Read the workspace's full status: failed projects, analyzers that would not load, the restore, every project" />
+										<Button Content="Open folder" Click="OnOpenFolder" Tag="{x:Bind}" />
+										<Button Content="Reload" Click="OnReload" Tag="{x:Bind}" />
+										<Button Content="Close" Click="OnClose" Tag="{x:Bind}" />
+										<Button Content="Open its log" Click="OnOpenLog" Tag="{x:Bind}" IsEnabled="{x:Bind HasLog, Mode=OneWay}" />
+										<ProgressRing IsActive="{x:Bind IsBusy, Mode=OneWay}" Width="16" Height="16" />
+									</StackPanel>
+								</StackPanel>
+							</StackPanel>
+						</Border>
+					</DataTemplate>
+				</ItemsRepeater.ItemTemplate>
+			</ItemsRepeater>
+		</ScrollViewer>
+
+		<TextBlock x:Name="Empty" Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="460"
+			TextWrapping="Wrap" TextAlignment="Center" Style="{StaticResource BodyTextBlockStyle}"
+			Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+	</Grid>
+</UserControl>

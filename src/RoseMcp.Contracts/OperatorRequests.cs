@@ -152,3 +152,19 @@ public sealed record ConfirmProposalRequest
 	/// <summary>The note, in place of the one the agent proposed; null keeps the proposal's.</summary>
 	public string? Note { get; init; }
 }
+
+/// <summary>
+/// A note a person sends an agent session: whom it is for, what it is about and what it says. It rides on that
+/// session's next answer, of any tool.
+/// </summary>
+public sealed record NoteRequest
+{
+	/// <summary>The client it is for, by the id <c>/operator/clients</c> lists it under.</summary>
+	public required string Client { get; init; }
+
+	/// <summary>What it is about.</summary>
+	public required NoteSubject Subject { get; init; }
+
+	/// <summary>What the person has to say.</summary>
+	public required string Text { get; init; }
+}

@@ -6,7 +6,7 @@ using RoseMcp.Contracts;
 namespace RoseMcp.UnitTests;
 
 /// <summary>
-/// The activity log is what the tray window and GET /admin/workspaces read, so what matters is
+/// The activity log is what a RoseMCP window and GET /admin/workspaces read, so what matters is
 /// that a row appears while work is in flight, says something true about it, and does not linger
 /// once it is over.
 /// </summary>
@@ -134,7 +134,7 @@ public sealed class ActivityLogTests
 	}
 
 	/// <summary>
-	/// GET /admin/workspaces is meant to return exactly what the tray window renders. It cannot do
+	/// GET /admin/workspaces is meant to return exactly what a RoseMCP window renders. It cannot do
 	/// that while an outcome goes over the wire as "1", which is what the framework default gives.
 	/// </summary>
 	[Test]

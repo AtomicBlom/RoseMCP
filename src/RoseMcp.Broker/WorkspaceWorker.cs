@@ -162,7 +162,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// The last status report to pass through, whoever asked for it. The broker asks on connect, so
 	/// one arrives the moment the load finishes; every rose_workspace_status a client makes after
 	/// that replaces it. Kept because the configuration, the project count and the reasons a
-	/// workspace is degraded are otherwise a round trip away, and the tray window, which wants them
+	/// workspace is degraded are otherwise a round trip away, and a RoseMCP window, which wants them
 	/// every two seconds, has no business making that trip.
 	/// </summary>
 	public WorkspaceStatusReport? LastStatus { get; private set; }

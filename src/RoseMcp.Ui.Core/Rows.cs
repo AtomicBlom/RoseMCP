@@ -25,20 +25,28 @@ public static class Rows
 	/// <param name="sourceKey">A source's identity, comparable with a row's.</param>
 	/// <param name="create">Builds a row for a source that has no row yet.</param>
 	/// <param name="update">Brings an existing row in line with its source.</param>
+	/// <param name="comparer">
+	/// How two keys are the same, where that is not the key's own equality: a solution path, which the broker
+	/// matches ignoring case on Windows, so a row keyed by one spelling must survive a list that spells it another
+	/// rather than being replaced, and its open detail closed, every time the spelling changes.
+	/// </param>
 	public static void Merge<TRow, TSource, TKey>(
 		ObservableCollection<TRow> rows,
 		IReadOnlyList<TSource> sources,
 		Func<TRow, TKey> rowKey,
 		Func<TSource, TKey> sourceKey,
 		Func<TSource, TRow> create,
-		Action<TRow, TSource> update)
+		Action<TRow, TSource> update,
+		IEqualityComparer<TKey>? comparer = null)
 		where TKey : notnull
 	{
+		var same = comparer ?? EqualityComparer<TKey>.Default;
+
 		// Backwards, because removing shifts every index after it.
 		for (var index = rows.Count - 1; index >= 0; index--)
 		{
 			var key = rowKey(rows[index]);
-			var stillThere = sources.Any(source => sourceKey(source).Equals(key));
+			var stillThere = sources.Any(source => same.Equals(sourceKey(source), key));
 
 			if (!stillThere) rows.RemoveAt(index);
 		}
@@ -47,7 +55,7 @@ public static class Rows
 		{
 			var source = sources[index];
 			var key = sourceKey(source);
-			var existing = rows.FirstOrDefault(row => rowKey(row).Equals(key));
+			var existing = rows.FirstOrDefault(row => same.Equals(rowKey(row), key));
 
 			if (existing is null)
 			{
@@ -58,6 +66,23 @@ public static class Rows
 			}
 
 			update(existing, source);
+		}
+
+		// The inserts above put new rows where they belong, but a row that survived stays where it was; a source that
+		// moved -- a call that finished, an agent that called last -- is put right here. Moved rather than removed and
+		// added, so the row keeps what a reader did to it: an open expander, a selection.
+		for (var index = 0; index < sources.Count && index < rows.Count; index++)
+		{
+			var key = sourceKey(sources[index]);
+			if (same.Equals(rowKey(rows[index]), key)) continue;
+
+			for (var at = index + 1; at < rows.Count; at++)
+			{
+				if (!same.Equals(rowKey(rows[at]), key)) continue;
+
+				rows.Move(at, index);
+				break;
+			}
 		}
 	}
 }

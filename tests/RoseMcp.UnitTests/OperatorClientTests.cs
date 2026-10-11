@@ -49,6 +49,163 @@ public sealed class OperatorClientTests
 	}
 
 	/// <summary>
+	/// A broker that restarted has a new token, which reaches the app with the tray's next launch. Taking it on the
+	/// client the windows already hold is what reconnects them: the next request carries it, and one with no token
+	/// given sends none rather than the old one.
+	/// </summary>
+	[Test]
+	public async Task A_new_token_is_presented_from_the_next_request()
+	{
+		using var handler = new FakeHandler(_ => Json(new LiveBreakpointList()));
+		using var client = new OperatorClient(Tray, "old-run", handler);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		client.Reauthorise("old-run").ShouldBeFalse("the same token is no change");
+		client.Reauthorise("new-run").ShouldBeTrue();
+		await client.BreakpointsAsync("s1", cancellationToken);
+		(handler.Last!.Headers.Authorization?.Parameter).ShouldBe("new-run");
+
+		client.Reauthorise(null).ShouldBeTrue();
+		client.HasToken.ShouldBeFalse();
+		await client.BreakpointsAsync("s1", cancellationToken);
+		handler.Last!.Headers.Authorization.ShouldBeNull();
+	}
+
+	/// <summary>
+	/// What a person does to a workspace names it by its path, which carries backslashes and a colon: in the body
+	/// for reload and close, escaped in the query for the status read -- never as a route segment.
+	/// </summary>
+	[Test]
+	public async Task Workspace_actions_name_the_solution_by_its_path()
+	{
+		const string Solution = @"D:\Drawboard\PDF\Drawboard.All.slnx";
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var handler = new FakeHandler(request => request.RequestUri!.AbsolutePath switch
+		{
+			"/operator/workspaces/status" => Json(new WorkspaceStatusReport
+			{
+				SolutionPath = Solution,
+				State = WorkspaceState.Loaded,
+				Revision = 3,
+				Projects = [],
+				LoadDiagnostics = [],
+				DegradedReasons = [],
+			}),
+			"/operator/workspaces/close" => Json(new WorkspaceClosed { Workspace = Solution, Closed = true }),
+			_ => Json(new OperatorWorkspace
+			{
+				Summary = new WorkspaceSummary
+				{
+					DisplayName = "Drawboard.All.slnx",
+					Alive = true,
+					ExitReason = string.Empty,
+					State = WorkspaceState.Loading,
+					StartedUtc = DateTime.UtcNow,
+					Uptime = TimeSpan.Zero,
+				},
+				Folder = @"D:\Drawboard\PDF",
+				LastUsedUtc = DateTime.UtcNow,
+				IdleFor = TimeSpan.Zero,
+				InUse = true,
+			}),
+		});
+		using var client = new OperatorClient(Tray, "tok-1", handler);
+
+		(await client.WorkspaceStatusAsync(Solution, cancellationToken)).Revision.ShouldBe(3);
+		handler.Last!.Method.ShouldBe(HttpMethod.Get);
+		handler.Last.RequestUri!.Query.ShouldBe($"?workspace={Uri.EscapeDataString(Solution)}&projects=true");
+
+		(await client.ReloadWorkspaceAsync(Solution, cancellationToken)).InUse.ShouldBeTrue();
+		handler.Last!.Method.ShouldBe(HttpMethod.Post);
+		handler.Last.RequestUri!.AbsolutePath.ShouldBe("/operator/workspaces/reload");
+		JsonSerializer.Deserialize<OperatorWorkspaceRequest>(handler.LastBody!, ContractJson.Options)!.Workspace.ShouldBe(Solution);
+
+		(await client.CloseWorkspaceAsync(Solution, cancellationToken)).Closed.ShouldBeTrue();
+		handler.Last!.RequestUri!.AbsolutePath.ShouldBe("/operator/workspaces/close");
+		JsonSerializer.Deserialize<OperatorWorkspaceRequest>(handler.LastBody!, ContractJson.Options)!.Workspace.ShouldBe(Solution);
+	}
+
+	/// <summary>The person's side of a workspace's health is read and changed at the routes the broker maps for it.</summary>
+	[Test]
+	public async Task Health_decisions_go_to_the_health_routes()
+	{
+		const string Solution = @"D:\repo\A.slnx";
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var accepted = new AcceptedReasons { Workspace = Solution, Accepted = [] };
+		var proposal = new ReasonProposal
+		{
+			Id = "p 1",
+			Kind = "project-not-loaded",
+			Line = "Core did not load.",
+			AgentsRead = AgentsRead.RoseLine,
+			ProposedUtc = DateTime.UtcNow,
+		};
+
+		using var handler = new FakeHandler(request => request.RequestUri!.AbsolutePath switch
+		{
+			"/operator/health/proposals" => Json<IReadOnlyList<ReasonProposal>>([proposal]),
+			var path when path.EndsWith("/reject", StringComparison.Ordinal) => Json(proposal),
+			_ => Json(accepted),
+		});
+		using var client = new OperatorClient(Tray, "tok-1", handler);
+
+		await client.AcceptedAsync(Solution, cancellationToken);
+		handler.Last!.RequestUri!.PathAndQuery.ShouldBe($"/operator/health/accepted?workspace={Uri.EscapeDataString(Solution)}");
+
+		await client.AcceptAsync(new AcceptReasonRequest { Workspace = Solution, Kind = "k", Projects = ["Core"], AgentsRead = AgentsRead.Nothing }, cancellationToken);
+		handler.Last!.RequestUri!.AbsolutePath.ShouldBe("/operator/health/accept");
+		handler.LastBody!.ShouldContain("\"Nothing\"", Case.Sensitive, "a person's choice travels by name, which is how the route binds it");
+
+		await client.StopAcceptingAsync(new StopAcceptingRequest { Workspace = Solution, Kind = "k", Projects = ["Core"] }, cancellationToken);
+		handler.Last!.RequestUri!.AbsolutePath.ShouldBe("/operator/health/stop-accepting");
+
+		(await client.ProposalsAsync(cancellationToken)).ShouldHaveSingleItem().Id.ShouldBe("p 1");
+
+		await client.ConfirmProposalAsync("p 1", request: null, cancellationToken);
+		handler.Last!.RequestUri!.AbsolutePath.ShouldBe("/operator/health/proposals/p%201/confirm");
+
+		await client.RejectProposalAsync("p 1", cancellationToken);
+		handler.Last!.RequestUri!.AbsolutePath.ShouldBe("/operator/health/proposals/p%201/reject");
+	}
+
+	/// <summary>
+	/// A note goes to the notes route with its subject's kind by name, which is how the route binds it; and the notes
+	/// are read there, waiting only when given a version and a wait.
+	/// </summary>
+	[Test]
+	public async Task Notes_are_sent_and_read_at_the_notes_route()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var note = new AgentNote
+		{
+			Id = "note-0123456789abcdef",
+			ClientId = "client-01234567",
+			ClientKey = "0123456789abcdef",
+			Subject = new NoteSubject { Kind = NoteSubjectKind.ActivityCall, Readable = "rose_outline A", ActivityEntry = "0123456789abcdef" },
+			Text = "Why?",
+			PostedUtc = DateTimeOffset.UtcNow,
+			Delivery = NoteDelivery.Waiting,
+		};
+
+		using var handler = new FakeHandler(request => request.Method == HttpMethod.Post
+			? Json(note)
+			: Json(new NoteList { Notes = [note], Version = "v2" }));
+		using var client = new OperatorClient(Tray, "tok-1", handler);
+
+		var sent = await client.SendNoteAsync(new NoteRequest { Client = note.ClientId, Subject = note.Subject, Text = note.Text }, cancellationToken);
+		sent.Id.ShouldBe(note.Id);
+		handler.Last!.RequestUri!.AbsolutePath.ShouldBe("/operator/notes");
+		handler.LastBody!.ShouldContain("\"ActivityCall\"", Case.Sensitive, "a subject's kind travels by name");
+
+		(await client.NotesAsync(after: null, waitSeconds: 30, cancellationToken)).Version.ShouldBe("v2");
+		handler.Last!.RequestUri!.PathAndQuery.ShouldBe("/operator/notes");
+
+		await client.NotesAsync(after: "v1", waitSeconds: 30, cancellationToken);
+		handler.Last!.RequestUri!.PathAndQuery.ShouldBe("/operator/notes?after=v1&waitSeconds=30");
+	}
+
+	/// <summary>
 	/// Hello reads the broker's build back whole, commit and checkout distance included: the window
 	/// that shows them reads nothing else to learn which build it is talking to.
 	/// </summary>

@@ -47,35 +47,35 @@ public sealed class InspectorOptionsTests
 	}
 
 	/// <summary>
-	/// What one inspector is one of. The process rather than the session, so detaching and
-	/// attaching again reaches the window already open on that program -- and because the title
-	/// names the process, two windows keyed on sessions would be two windows with one name.
+	/// What one RoseMCP app is one of: the broker it reads. Every window -- the RoseMCP window, and an Inspector
+	/// window for each debugged process -- lives in the one app, so a second launch against the same broker is
+	/// handed to it whatever window it asks for, and a broker on another port is another app.
 	/// </summary>
 	[Test]
-	public void The_instance_key_is_the_process_being_debugged()
+	public void The_instance_key_is_the_broker()
 	{
-		var byProcess = InspectorOptions.Parse(["--session", "s1", "--target-pid", "4242"]);
-		byProcess.TargetProcessId.ShouldBe(4242);
-		byProcess.InstanceKey.ShouldBe("RoseMcp.Inspector:pid:4242");
+		var rose = InspectorOptions.Parse(["--port", "5077"]);
+		rose.InstanceKey.ShouldBe("RoseMcp.App:127.0.0.1:5077");
 
-		// Two sessions over one process are one window, which is the whole point of keying on it.
-		InspectorOptions.Parse(["--session", "s2", "--target-pid", "4242"]).InstanceKey.ShouldBe(
-			byProcess.InstanceKey);
-
-		// Two processes are two windows.
-		InspectorOptions.Parse(["--session", "s1", "--target-pid", "77"]).InstanceKey.ShouldNotBe(
-			byProcess.InstanceKey);
+		InspectorOptions.Parse(["--port", "5077", "--session", "s1", "--target-pid", "4242"]).InstanceKey.ShouldBe(rose.InstanceKey);
+		InspectorOptions.Parse(["--host", "127.0.0.1", "--port", "5079"]).InstanceKey.ShouldNotBe(rose.InstanceKey);
 	}
 
 	/// <summary>
-	/// With no process named, the session is the next best identity, and with neither there is one
-	/// inspector. Both are fallbacks for a launch that did not come from the tray.
+	/// A launch naming a session, a process or <c>--inspect</c> opens an Inspector window; one naming none of
+	/// them opens the RoseMCP window, which is what the tray's icon asks for.
 	/// </summary>
 	[Test]
-	public void Without_a_process_the_key_falls_back()
+	public void Only_a_launch_about_debugging_opens_an_inspector()
 	{
-		InspectorOptions.Parse(["--session", "s1"]).InstanceKey.ShouldBe("RoseMcp.Inspector:session:s1");
-		InspectorOptions.Parse([]).InstanceKey.ShouldBe("RoseMcp.Inspector");
+		InspectorOptions.Parse([]).OpensInspector.ShouldBeFalse();
+		InspectorOptions.Parse(["--session", "s1"]).OpensInspector.ShouldBeTrue();
+		InspectorOptions.Parse(["--target-pid", "4242"]).OpensInspector.ShouldBeTrue();
+
+		var debugAnApp = InspectorOptions.Parse(["--inspect"]);
+		debugAnApp.Inspect.ShouldBeTrue();
+		debugAnApp.OpensInspector.ShouldBeTrue();
+		debugAnApp.SessionId.ShouldBeNull();
 	}
 
 	[Test]

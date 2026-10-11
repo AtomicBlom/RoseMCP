@@ -73,7 +73,7 @@ public sealed class ProgressReportingTests
 
 	/// <summary>
 	/// The end-to-end check: a worker's progress notifications have to reach the broker's activity
-	/// log, because that log is the only thing the tray window and the admin endpoint can read.
+	/// log, because that log is the only thing a RoseMCP window and the admin endpoint can read.
 	/// </summary>
 	[Test]
 	public async Task The_broker_records_the_load_a_worker_does_before_anyone_calls_it()

@@ -148,7 +148,7 @@ flowchart LR
 
     workers["RoseMcp.Worker<br/>one per solution"]
     host["RoseMcp.LiveApp<br/>one per debug session"]
-    inspector["RoseMcp.Inspector"]
+    inspector["RoseMcp.App<br/>RoseMCP window + Inspectors"]
 
     subgraph app["Debugged app"]
         tap["XAML tap<br/>+ Rose panel"]
@@ -224,7 +224,7 @@ Register it as stdio and the two stop being alternatives. With a tray already ru
 starts no workers of its own and relays to the tray, which owns them, so every session shares one
 warm worker per solution and still resolves a bare call against its own working directory.
 [Why that is the arrangement worth having](https://github.com/AtomicBlom/RoseMCP/wiki/Transports-and-the-tray),
-and what the tray window shows.
+and what a RoseMCP window shows.
 
 ### Debugging and XAML
 
@@ -235,11 +235,11 @@ A debug session can be driven three ways at once, and all three see the same ses
   the agent to work on, show its margins and padding and measure gaps, or magnify the app or its
   pixels.
   [Details and screenshots](https://github.com/AtomicBlom/RoseMCP/wiki/The-Rose-panel).
-- **The inspector**, `RoseMcp.Inspector.exe`, a window beside the app with the event tail,
+- **The inspector**, an Inspector window of the RoseMCP app (`RoseMcp.App.exe`), beside the app with the event tail,
   breakpoints and tracepoints, the call stack with its source and values, threads, and the live visual
   tree. It reads the session from the tray over a token-protected http API, so it can be closed and
   reopened while the session carries on, and it shows sessions an agent started. Open it with
-  **Inspect** on a session in the tray.
+  **Open** on a session in the RoseMCP window's Debugging view, or **Debug an app** on the tray's icon.
   [Details and screenshots](https://github.com/AtomicBlom/RoseMCP/wiki/The-inspector).
 
 ## Building from source

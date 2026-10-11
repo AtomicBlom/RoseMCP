@@ -191,6 +191,20 @@ public sealed class ConnectedClients
 		}
 	}
 
+	/// <summary>Every row the table keeps, by the key it is filed under: which of the note store's clients are still here.</summary>
+	internal IReadOnlyDictionary<string, ClientSummary> ByKey()
+	{
+		var watchers = _relays.Watchers();
+		var now = Now;
+
+		lock (_gate)
+		{
+			Expire(watchers, now);
+
+			return _rows.ToDictionary(pair => pair.Key, pair => pair.Value.Describe(watchers), StringComparer.Ordinal);
+		}
+	}
+
 	/// <summary>
 	/// <paramref name="client"/> as the broker keeps it: each string without control or formatting characters
 	/// and cut to a length, at most <see cref="MaxRoots"/> roots, a process id only where it is positive, and a

@@ -81,10 +81,9 @@ because the broker's may not exist yet; `CrashHandler` hooks all three sinks and
 handled with a stated rationale (`src/RoseMcp.Ui/CrashHandler.cs:36-63`). For a process that owns
 every warm Roslyn worker on the machine, that is the right call.
 
-**The tray reads live state, not a copy.** `MainWindow.Manager` and `MainWindow.SessionManager`
-resolve `WorkspaceManager` and `LiveAppSessionManager` straight out of the in-process broker's
-container (`src/RoseMcp.Tray/MainWindow.xaml.cs:119,182`) and `App.xaml.cs:16-21` states this as the
-reason the tray hosts the broker at all. There is no second copy to drift and no push protocol. The
+**The tray reads live state, not a copy.** `TrayIconHost.Poll` resolves `ConnectedClients`,
+`WorkspaceManager` and `LiveAppSessionManager` straight out of the in-process broker's container,
+which is why the tray hosts the broker in its own process. There is no second copy to drift and no push protocol. The
 `/admin/*` and `/operator/*` endpoints are mapped off the *same* managers (`App.xaml.cs:96-110`),
 with a comment saying two hosts serving one broker must not answer different questions.
 
@@ -115,11 +114,10 @@ needed instead of `Wait()` because redirection completes through a COM call back
   the broker re-sorts, or a session list is ordered by anything but insertion, the window shows a
   stale order forever, since every subsequent merge also declines to move anything.
 
-  Worse than a plain bug: **the five call sites disagree about what the helper is for, and the
+  Worse than a plain bug: **the call sites disagree about what the helper is for, and the
   helper does not say.** `rose_find_references` on `Rows.Merge` returns
-  `src/RoseMcp.Tray/MainWindow.xaml.cs:186`, `src/RoseMcp.Tray/WorkspaceRow.cs:216`,
-  `src/RoseMcp.Ui.Core/SessionRow.cs:292`, and `src/RoseMcp.Ui.Core/Inspector/InspectedSession.cs:119`
-  and `:128`. The last two carry the comment "Merges the host's breakpoints in place, **so a row a
+  `src/RoseMcp.Ui.Core/SessionRow.cs:292` and `src/RoseMcp.Ui.Core/Inspector/InspectedSession.cs:119`
+  and `:128`; the tray's two went with its window in #462. The last two carry the comment "Merges the host's breakpoints in place, **so a row a
   reader is about to click stays put**" -- which is the *opposite* of the docstring's promise and is
   satisfied only by the current, buggy behaviour. One helper, two contradictory contracts, and the
   code happens to implement the undocumented one.
@@ -161,73 +159,32 @@ needed instead of `Wait()` because redirection completes through a COM call back
 - **Suggested change:** Build a `Dictionary<TKey, TRow>` of the existing rows once per merge and
   index into it. Same work as the correctness fix in UIP-01, so do them together.
 
-### UIP-04 The tray hand-rolls its own merge because `Rows.Merge` cannot take a comparer
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Tray/MainWindow.xaml.cs:330-350`, `:424` (`Same`)
-- **What:** `MergeSessions` (`:185`) calls the shared `Rows.Merge`. `MergeRows` immediately below it
-  is a copy-paste of the same algorithm, because the workspace key is a file path that must compare
-  `OrdinalIgnoreCase` and `Rows.Merge` is hard-wired to `TKey.Equals`. The tray's copy is worse
-  still: it `Add`s rather than inserting at the source index, so it does not even attempt the order
-  promise.
-- **Why it matters:** Two windows, three merge implementations, one of which will not receive the
-  #221 fix because nobody grepping for `Rows.Merge` will find it. A case-sensitive path comparison
-  is also a real defect class on Windows: a client that asks with a differently-cased path produces
-  a duplicate card.
-- **Suggested change:** Add an optional `IEqualityComparer<TKey>? comparer = null` parameter to
-  `Rows.Merge` and delete `MergeRows` and `Same`. That is the whole fix, and it removes the only
-  reason a second implementation exists.
+### ~~UIP-04 The tray hand-rolls its own merge because `Rows.Merge` cannot take a comparer~~
+**#462, #463.** A window's workspace rows were merged by a copy of the shared merge, which took no
+comparer for a path. The shared merge takes one, and workspace rows are keyed by path as the broker compares paths.
 
-### UIP-05 `WorkspaceRow` is stranded in the WinUI project by a single enum, so five pure functions cannot be tested
-- **Severity:** Medium
-- **Effort:** M
-- **Where:** `src/RoseMcp.Tray/WorkspaceRow.cs:3` (`using Microsoft.UI.Xaml.Controls;`), `:284` (`DescribeHealth` returns `InfoBarSeverity`)
-- **What:** `WorkspaceRow` is the exact counterpart of `SessionRow`, which lives in `Ui.Core` and has
-  a test file. The only thing keeping it out is that `DescribeHealth` returns a tuple containing
-  `InfoBarSeverity`. The decision record names this: "What stays in the tray: `WorkspaceRow`,
-  because it reaches for `InfoBarSeverity`" (`docs/decisions/debugging-ui.md`). But the consequence
-  is not stated there: `ToneOf`, `DescribeState`, `DescribeFacts`, `DescribeHealth` and
-  `DescribeRecent` -- the whole of what the tray tells a person about a broken workspace -- are
-  untestable, while the identical shapes in `SessionRow` are covered.
-- **Why it matters:** These are the sentences a user reads when something has gone wrong, which is
-  the moment wording matters most, and they are the only part of the row model with no test. The
-  decision made an accidental exclusion sound like a choice.
-- **Suggested change:** Declare a four-value `RoseSeverity` enum in `Ui.Core`, return that, and map
-  it to `InfoBarSeverity` in one XAML converter or one line of code-behind. `WorkspaceRow` then
-  moves to `Ui.Core` beside `SessionRow` and the exception in the decision record disappears rather
-  than being documented.
+### ~~UIP-05 `WorkspaceRow` is stranded in the WinUI project by a single enum, so five pure functions cannot be tested~~
+**#462, #463.** The workspace row lived in the WinUI project over one enum, so its wording could not be tested.
+It is a `Ui.Core` type, and its tone is tested.
 
-### UIP-06 Four pure `public static` functions sit on a WinUI `Window` where nothing can reach them
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Tray/MainWindow.xaml.cs:356` `DescribeHeadline`, `:375` `DescribeSubtitle`, `:407` `DescribeTooltip`, `:422` `RegistrationCommand`
-- **What:** All four are static, pure, take only DTOs and ints, and are `public` -- the signature of
-  code somebody intended to test. They are members of `MainWindow : Window` in a
-  `net10.0-windows` project, so `RoseMcp.UnitTests` cannot reference them at all. `RegistrationCommand`
-  produces the `claude mcp add` line a user copies out of the window; nothing verifies its shape.
-- **Why it matters:** This is the same leak as UIP-05 in a more obvious form: the project's own rule
-  is that anything a test can see belongs in `Ui.Core`, and `public static` on a `Window` is the
-  shape that rule exists to prevent. It is also the surface most likely to be reworded.
-- **Suggested change:** Move all four to a `TrayText` static class in `RoseMcp.Ui.Core`, beside
-  `InspectorText` which already holds exactly this kind of wording for the other window. Then make
-  the rule structural: an analyzer or a review checklist item saying a `public static` member on a
-  `Window` or `UserControl` is a mislocation.
+### ~~UIP-06 Four pure `public static` functions sit on a WinUI `Window` where nothing can reach them~~
+**#462.** The tray's lines sat on its `Window`, where no test could reach them. The window is gone, and
+what the icon says is in `Ui.Core` with tests.
 
-### UIP-07 The tray polls with a hand-driven `DispatcherQueueTimer`; the tested `PollLoop` is right there
+### UIP-07 The tray polls with hand-driven `DispatcherQueueTimer`s; the tested `PollLoop` is right there
 - **Severity:** Low
 - **Effort:** S
-- **Where:** `src/RoseMcp.Tray/MainWindow.xaml.cs:103-111`, `:152-179`
-- **What:** The tray runs two `DispatcherQueueTimer`s and switches the refresh interval by hand
-  (`:177-178`), with a comment explaining that setting `Interval` restarts the timer. The inspector
-  does the same job with `PollLoop` (`src/RoseMcp.Inspector/MainWindow.xaml.cs:99`), which exists in
-  the shared project, has its own tests, and already handles re-entrancy, error reporting and `Kick`.
-- **Why it matters:** Two windows, two polling mechanisms. `Refresh()` is also called re-entrantly
-  from five `async void` handlers, so an in-flight refresh and a tick can interleave in a way
-  `PollLoop` is specifically written to prevent. Low today only because the tray's read is
-  in-process and synchronous.
-- **Suggested change:** Use `PollLoop` in the tray too, with `Kick()` where the handlers call
-  `Refresh()`. The idle/active interval is the one thing `PollLoop` lacks; add a settable `Interval`
-  to it rather than keeping a second mechanism.
+- **Where:** `src/RoseMcp.Tray/TrayIconHost.cs` (the constructor's poll, checkout, update and icon-retry timers; `Poll`, `ReadCheckout`)
+- **What:** The tray icon runs its own `DispatcherQueueTimer`s -- a two-second poll of the broker's tables,
+  a half-minute checkout read guarded by a flag against overlapping itself, the update check, and a retry
+  for an icon Windows would not add. The inspector does the same job with `PollLoop`
+  (`src/RoseMcp.Inspector/MainWindow.xaml.cs:99`), which exists in the shared project, has its own
+  tests, and already handles re-entrancy, error reporting and `Kick`.
+- **Why it matters:** Two processes, two polling mechanisms, and the tray's re-entrancy and failure
+  handling are written by hand for each timer. Low because the tray's reads are in-process and cheap.
+- **Suggested change:** Use `PollLoop` in the tray too, with `Kick()` where `Serving` reads at once.
+  The differing intervals are the one thing `PollLoop` lacks; give it one rather than keeping a second
+  mechanism.
 
 ### UIP-08 A hold is forgotten rather than given back when a stop ends
 - **Severity:** Low
@@ -248,24 +205,14 @@ needed instead of `Wait()` because redirection completes through a COM call back
   worst, and it removes a whole class. Add the missing test --
   `A_stop_that_ends_gives_the_hold_back` -- beside the nine that are already there.
 
-### UIP-09 `WorkspaceRow` and `SessionRow` are the same class twice
-- **Severity:** Low
-- **Effort:** M
-- **Where:** `src/RoseMcp.Tray/WorkspaceRow.cs:225-237` vs `src/RoseMcp.Ui.Core/SessionRow.cs:300-321` (the `Tone` enum); `WorkspaceRow.cs:305-310` vs `SessionRow.cs:406-413` (`DescribeRecent`); `WorkspaceRow.cs:211-222` vs `SessionRow.cs:290-298` (the activity `Merge` wrapper, identical but for a comment)
-- **What:** Both carry a five-value `Tone` enum with four shared names, `HasRunning`/`HasRecent`/
-  `RecentHeader`, an identical private `Merge` over `ObservableCollection<ActivityRow>`, and a
-  `DescribeRecent` that differs only in the noun ("recent operation" vs "recent call").
-- **Why it matters:** Not a bug; a maintenance tax with a wrong-answer tail. The two `DescribeRecent`
-  implementations already disagree about what to call the thing being counted, which is how two
-  windows end up describing the same activity list differently.
-- **Suggested change:** Extract an `ActivityList` (or a small `RowWithActivity` base) into `Ui.Core`
-  holding `Running`, `Recent`, `HasRunning`, `HasRecent`, `RecentHeader` and the merge, parameterised
-  by the noun. Depends on UIP-05 landing first.
+### ~~UIP-09 `WorkspaceRow` and `SessionRow` are the same class twice~~
+**#462, #463.** The workspace row and the session row each carried their own activity list. The workspace
+row carries none: a workspace's calls are read from the activity record.
 
 ### UIP-10 Two windows, two copies of three platform interactions
 - **Severity:** Low
 - **Effort:** S
-- **Where:** `src/RoseMcp.Tray/MainWindow.xaml.cs:518-533` vs `src/RoseMcp.Inspector/MainWindow.xaml.cs:511-523` (the `ShowInspectorOnAttach` toggle, including its "put it back to what the file says" rationale, written out twice); `Tray/MainWindow.xaml.cs:631-641` vs `Inspector/MainWindow.xaml.cs:480,486,541` (`Process.Start("explorer.exe", "/select,...")`, four sites); `Tray/MainWindow.xaml.cs:312-327` vs `Inspector/MainWindow.xaml.cs:472-492` (open the host log for a session, same fall-back-to-the-folder rule)
+- **Where:** `src/RoseMcp.Tray/TrayIconHost.cs` (`OpenInExplorer`, `OpenFailureLog`, `OpenLogFolder`) vs `src/RoseMcp.Inspector/MainWindow.xaml.cs:480,486,541` (`Process.Start("explorer.exe", "/select,...")`). The tray's copies of the `ShowInspectorOnAttach` toggle and of opening a session's host log went with its window in #462.
 - **What:** The tray's `OpenInExplorer` wraps `Process.Start` and narrows the catch to
   `Win32Exception` / `InvalidOperationException` with a comment. The inspector's three sites do not;
   they sit inside a broad `catch (Exception)` that reports to the notice bar. The `/select` argument
@@ -640,8 +587,8 @@ forgetting it impossible. The repository already does this four times for the to
 inversion below is that same trick applied somewhere else.
 
 **1. "Testable UI logic lives in `Ui.Core`" -> an analyzer or a test that a WinUI type has no public
-static members.** Today the rule is honoured by intention and broken in two places
-(`MainWindow.DescribeHeadline` and friends, `WorkspaceRow`'s five `Describe*`). `public static` on a
+static members.** Today the rule is honoured by intention; the two places that broke it, the tray's
+window and its workspace row, were deleted in #462. `public static` on a
 `Window` or `UserControl` is the exact syntactic shape of the violation, so a Roslyn analyzer or a
 reflective test over the two WinUI assemblies catches every future one at the moment it is written.
 *(UIP-05, UIP-06)*
@@ -695,9 +642,8 @@ a test that writes. *(UIP-13)*
 4. **Does anything measure the live-app flake rate?** `live-app-tests.md` says green once is not
    green and that a flake rate needs more than one sample, but nothing in the repository runs the
    suite repeatedly or records the result. Is that done by hand, and is the number written anywhere?
-5. **Is `WorkspaceRow` staying in the tray on purpose?** The decision record states it as a
-   consequence of `InfoBarSeverity`, but never weighs it against losing five pure functions'
-   testability. One enum in `Ui.Core` would end it.
+5. ~~**Is `WorkspaceRow` staying in the tray on purpose?**~~ **#462.** It was deleted with the tray's
+   window.
 6. **Is `xunit.v3.assert` on TUnit a settled choice?** It reads as migration residue and is in fact
    a good decision; without a record, somebody will "clean it up".
 

@@ -38,7 +38,7 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 | `RoseMcp.Ui.Core` | The half of both windows that is not WinUI: rows, formatting, the poll loop, the in-place merge, and `OperatorClient`. Plain `net10.0`, so it runs in the fast suite. |
 | `RoseMcp.Ui` | WinUI class library. Themes, window chrome, the crash handler and the icon assets, shared so a second window is the same product rather than a lookalike. |
 | `RoseMcp.Tray` | WinUI 3 tray app for http mode. Hosts the broker in-process, so its window reads the live `WorkspaceManager` rather than a pushed copy. |
-| `RoseMcp.Inspector` | WinUI 3 window for one debugged process. A **client** of the broker over the http operator API, owning no session of its own, because a process has one debugger. See [the decision](docs/decisions/the-inspector-is-a-client-of-the-broker.md). |
+| `RoseMcp.App` | The RoseMCP app, WinUI 3, one per broker: the RoseMCP window, organised by agent, and an Inspector window per debugged process. A **client** of the broker over the http operator API, owning no session of its own, because a process has one debugger. See [the decision](docs/decisions/one-rosemcp-app-per-broker-holds-every-window.md) and [why an Inspector is a client](docs/decisions/the-inspector-is-a-client-of-the-broker.md). |
 
 Logic goes in `Contracts` only when a test needs it and the host that owns it cannot be referenced.
 `XamlStackModules`, `ToolArgumentShape`, `PathArguments`, `XamlProviderPath`, `ValuePath`,
@@ -125,6 +125,13 @@ dotnet run --project src/RoseMcp.Tray                                    # tray 
 The broker finds the worker binary next to itself, then via `ROSEMCP_WORKER`, then in the sibling
 project output, so running from source works without publishing first. Non-loopback http binds are
 refused unless `ROSEMCP_TOKEN` is set.
+
+Anything you start from a checkout -- a tray, a server, a window -- runs from its `bin` and holds it
+open until it exits. Give a tray or server a port other than 5077, which an installed tray holds, and
+stop what you started before you finish: start it with `Start-Process -PassThru` and end it with
+`.Kill($true)` on what that returns, so a `dotnet run` takes its child with it, or run it under a
+timeout. One left running fails the next build in that checkout and keeps the checkout from being
+removed.
 
 Deploy over the running instance, or build release zips:
 

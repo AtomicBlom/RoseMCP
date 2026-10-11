@@ -1,0 +1,104 @@
+<Window
+	x:Class="RoseMcp.App.RoseWindow"
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	xmlns:views="using:RoseMcp.App.Views"
+	Title="RoseMCP">
+
+	<Window.SystemBackdrop>
+		<MicaBackdrop />
+	</Window.SystemBackdrop>
+
+	<Grid RowDefinitions="Auto,*,Auto">
+
+		<!-- Title bar. A draggable region only, so nothing in it eats the drag. -->
+		<Grid x:Name="TitleBarArea" Grid.Row="0" Height="40" Padding="14,0" ColumnDefinitions="Auto,*">
+			<Image x:Name="TitleMark" Grid.Column="0" Width="16" Height="16" VerticalAlignment="Center" />
+			<TextBlock Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center" Text="RoseMCP"
+				Style="{StaticResource CaptionTextBlockStyle}" />
+		</Grid>
+
+		<!-- The rail picks the view. Agents first, because what each agent is doing is the question the window is for. -->
+		<NavigationView x:Name="Nav" Grid.Row="1" PaneDisplayMode="Left" IsBackButtonVisible="Collapsed"
+			IsSettingsVisible="False" IsPaneToggleButtonVisible="False" OpenPaneLength="240"
+			SelectionChanged="OnViewChosen">
+			<NavigationView.MenuItems>
+				<NavigationViewItem x:Name="AgentsItem" Content="Agents" IsSelected="True">
+					<NavigationViewItem.Icon>
+						<FontIcon Glyph="&#xE716;" />
+					</NavigationViewItem.Icon>
+					<NavigationViewItem.InfoBadge>
+						<InfoBadge x:Name="AgentsBadge" Visibility="Collapsed" />
+					</NavigationViewItem.InfoBadge>
+				</NavigationViewItem>
+				<NavigationViewItem x:Name="ActivityItem" Content="Activity">
+					<NavigationViewItem.Icon>
+						<FontIcon Glyph="&#xE81C;" />
+					</NavigationViewItem.Icon>
+				</NavigationViewItem>
+				<NavigationViewItem x:Name="WorkspacesItem" Content="Workspaces">
+					<NavigationViewItem.Icon>
+						<FontIcon Glyph="&#xE8B7;" />
+					</NavigationViewItem.Icon>
+					<NavigationViewItem.InfoBadge>
+						<InfoBadge x:Name="WorkspacesBadge" Visibility="Collapsed" />
+					</NavigationViewItem.InfoBadge>
+				</NavigationViewItem>
+				<NavigationViewItem x:Name="DebuggingItem" Content="Debugging">
+					<NavigationViewItem.Icon>
+						<FontIcon Glyph="&#xEBE8;" />
+					</NavigationViewItem.Icon>
+					<NavigationViewItem.InfoBadge>
+						<InfoBadge x:Name="DebuggingBadge" Visibility="Collapsed" />
+					</NavigationViewItem.InfoBadge>
+				</NavigationViewItem>
+			</NavigationView.MenuItems>
+
+			<!-- Which build Rose is, and how far its checkout has moved on, under the views. -->
+			<NavigationView.PaneFooter>
+				<StackPanel Padding="14,10" Spacing="4">
+					<TextBlock x:Name="BuildText" TextWrapping="Wrap" IsTextSelectionEnabled="True"
+						Style="{StaticResource MonoCaptionTextBlockStyle}"
+						Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+					<TextBlock x:Name="CheckoutText" TextWrapping="Wrap" Visibility="Collapsed"
+						Style="{StaticResource CaptionTextBlockStyle}"
+						Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+					<TextBlock x:Name="MismatchText" TextWrapping="Wrap" Visibility="Collapsed"
+						Style="{StaticResource CaptionTextBlockStyle}"
+						Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+
+					<!-- The preferences with no other home, and the actions about all of Rose rather than one view. -->
+					<Button Margin="0,6,0,0" Style="{StaticResource ChipButtonStyle}" Content="Settings">
+						<Button.Flyout>
+							<MenuFlyout Opening="OnSettingsOpening">
+								<ToggleMenuFlyoutItem x:Name="ShowOnAttach"
+									Text="Show the Inspector when an agent attaches the debugger" Click="OnToggleShowOnAttach" />
+								<ToggleMenuFlyoutItem x:Name="ReloadWhenIdle"
+									Text="Reload a workspace once idle when its analyzers are rebuilt" Click="OnToggleReloadWhenIdle" />
+								<MenuFlyoutSeparator />
+								<MenuFlyoutItem Text="Close every workspace…" Click="OnCloseEveryWorkspace" />
+								<MenuFlyoutItem Text="Copy the command that opens this window" Click="OnCopyCommand" />
+								<MenuFlyoutItem Text="Open the settings file" Click="OnOpenSettingsFile" />
+							</MenuFlyout>
+						</Button.Flyout>
+					</Button>
+				</StackPanel>
+			</NavigationView.PaneFooter>
+
+			<Grid Padding="18,8,18,10" RowDefinitions="Auto,*">
+				<InfoBar x:Name="Notice" Grid.Row="0" Margin="0,0,0,10" IsOpen="False" IsClosable="True" />
+
+				<!-- Views are toggled by visibility rather than navigated to, so each keeps the reader's place: an
+				     opened operation, an opened workspace, the scroll position. -->
+				<Grid Grid.Row="1">
+					<views:AgentsView x:Name="Agents" />
+					<views:ActivityView x:Name="Activity" Visibility="Collapsed" />
+					<views:WorkspacesView x:Name="Workspaces" Visibility="Collapsed" />
+					<views:DebuggingView x:Name="Debugging" Visibility="Collapsed" />
+				</Grid>
+			</Grid>
+		</NavigationView>
+
+		<views:MemoryBar x:Name="Memory" Grid.Row="2" />
+	</Grid>
+</Window>

@@ -238,8 +238,11 @@ A debug session can be driven three ways at once, and all three see the same ses
 - **The inspector**, an Inspector window of the RoseMCP app (`RoseMcp.App.exe`), beside the app with the event tail,
   breakpoints and tracepoints, the call stack with its source and values, threads, and the live visual
   tree. It reads the session from the tray over a token-protected http API, so it can be closed and
-  reopened while the session carries on, and it shows sessions an agent started. Open it with
-  **Open** on a session in the RoseMCP window's Debugging view, or **Debug an app** on the tray's icon.
+  reopened while the session carries on. It shows the sessions agents started, and starts sessions of
+  your own: **Debug an app** on the tray's icon or in the RoseMCP window opens it on a page listing the
+  running .NET apps to attach to, a launch form for an installed app or a program with arguments, and
+  what you debugged lately. A session you start is yours until you share it with one agent session
+  from its header. **Open** on a session in the RoseMCP window's Debugging view opens it on that session.
   [Details and screenshots](https://github.com/AtomicBlom/RoseMCP/wiki/The-inspector).
 
 ## Building from source

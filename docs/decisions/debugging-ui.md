@@ -12,7 +12,10 @@ drops every loaded solution and detaches every debug session, so iterating on a 
 costs a full reload each time. A tree over several thousand nodes with a property grid is also a much
 larger crash surface than a status panel, and an unhandled binding exception there would take the
 workers with it. What the inspector may never be is a debugger of its own: a process has one
-debugger, so the inspector is always a client of a session some agent started.
+debugger, so the inspector is always a client of a session the broker holds -- one an agent started,
+or one the person started from the Inspector's start page, which asks the broker to attach or launch
+rather than attaching anything itself (see
+[the decision](the-inspector-is-a-client-of-the-broker.md)).
 
 **Why it requires the tray.** A stdio broker has no listener to connect to, and its session lives and
 dies with one client. The inspector says so plainly when no tray answers rather than starting
@@ -34,6 +37,16 @@ characters and the ownership check exists precisely because guessing one reaches
 debugger. An endpoint that bypasses that check reintroduces the hole for any process running as this
 user, so it gets a secret that agents never see. Minted per run rather than persisted: an inspector
 holding yesterday's token should be told to relaunch from the tray, not silently authorised.
+
+**The token is also all that stands between a request and starting a debugger.** `/operator/debug`
+attaches to any of this user's processes and launches any program a request names, as this user, so
+it sits behind the same token, keeps every rule the agent's attach keeps -- being the same attach --
+and refuses the broker's own process and its hosts. A program is named by its full path, an `.exe`
+that exists, since a window has no folder to measure a relative path from. None of it is offered on
+the MCP surface: a session these start is the person's, and an agent able to start one would be making
+sessions in the person's name that no tool call could then end. The running
+apps and installed packages it lists are read broker-side behind an interface (`IRunningApps`,
+`IInstalledApps`), so the routes run in the unit suite against a desktop a test describes.
 
 ## Execution state is orthogonal to session lifecycle
 

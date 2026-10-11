@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
+using RoseMcp.Broker;
 using RoseMcp.Contracts;
 using RoseMcp.Logging;
 using static RoseMcp.IntegrationTests.ProbeTargetSession;
@@ -365,6 +368,85 @@ public sealed class OperatorApiTests
 		var clients = await broker.GetAsync<ClientList>("/operator/clients", cancellationToken);
 		clients.Clients.ShouldContain(client => client.Calls >= 2);
 	}
+
+	/// <summary>
+	/// A note rides on a real call through the real broker: sent at <c>/operator/notes</c> to a session its relay
+	/// names, it is in the notices of that session's next answer -- a workspace's status, from a real worker -- and of
+	/// no answer after it; the call that carried it holds it in its record; and the agent's <c>rose_reply</c> shows
+	/// under it.
+	/// </summary>
+	[Test]
+	public async Task A_note_rides_on_its_sessions_next_real_call_and_is_answered()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		await using var agent = await McpClient.CreateAsync(
+			new HttpClientTransport(new HttpClientTransportOptions
+			{
+				Endpoint = new Uri(broker.Url("/")),
+				AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {Token}" },
+			}),
+			new McpClientOptions { DiscoverProbeTimeout = Timeout.InfiniteTimeSpan },
+			cancellationToken: cancellationToken);
+
+		// What a relay sends with every call, naming the session it serves.
+		var session = new RequestOptions { Meta = new JsonObject { [CallSession.MetaKey] = CallSession.Mint() } };
+		var workspace = new Dictionary<string, object?> { ["workspace"] = fixture.SolutionPath };
+
+		await agent.CallToolAsync(ToolNames.WorkspaceOpen, workspace, options: session, cancellationToken: cancellationToken);
+
+		var row = (await broker.GetAsync<ClientList>("/operator/clients", cancellationToken)).Clients.Single(client => client.Named);
+
+		using var posted = await broker.Client.PostAsJsonAsync(
+			broker.Url("/operator/notes"),
+			new NoteRequest
+			{
+				Client = row.Id,
+				Text = "Is Simple loading the configuration you expect?",
+				Subject = new NoteSubject
+				{
+					Kind = NoteSubjectKind.WorkspaceReason,
+					Readable = "Simple's configuration",
+					Workspace = fixture.SolutionPath,
+					ReasonKind = ReasonKinds.WrongPlatform,
+				},
+			},
+			ContractJson.Options,
+			cancellationToken);
+		posted.StatusCode.ShouldBe(HttpStatusCode.OK, await posted.Content.ReadAsStringAsync(cancellationToken));
+		var note = (await posted.Content.ReadFromJsonAsync<AgentNote>(ContractJson.Options, cancellationToken)).ShouldNotBeNull();
+
+		var carried = await agent.CallToolAsync(ToolNames.WorkspaceStatus, workspace, options: session, cancellationToken: cancellationToken);
+		carried.IsError.ShouldNotBe(true);
+		Notices(carried).ShouldContain(notice => notice.Contains(note.Id, StringComparison.Ordinal), "the session's next answer carries it");
+
+		var after = await agent.CallToolAsync(ToolNames.WorkspaceStatus, workspace, options: session, cancellationToken: cancellationToken);
+		Notices(after).ShouldNotContain(notice => notice.Contains(note.Id, StringComparison.Ordinal), "a note rides on one answer");
+
+		var answered = await agent.CallToolAsync(
+			ToolNames.Reply,
+			new Dictionary<string, object?> { ["noteId"] = note.Id, ["text"] = "Debug, as the solution declares." },
+			options: session,
+			cancellationToken: cancellationToken);
+		answered.IsError.ShouldNotBe(true);
+
+		var held = (await broker.GetAsync<NoteList>("/operator/notes", cancellationToken)).Notes.ShouldHaveSingleItem();
+		held.Delivery.ShouldBe(NoteDelivery.Delivered);
+		held.DeliveredTool.ShouldBe(ToolNames.WorkspaceStatus);
+		held.Replies.ShouldHaveSingleItem().Text.ShouldBe("Debug, as the solution declares.");
+
+		var entry = await broker.GetAsync<ActivityEntry>($"/operator/activity/{held.DeliveredWith.ShouldNotBeNull()}", cancellationToken);
+		entry.Tool.ShouldBe(ToolNames.WorkspaceStatus);
+		entry.Response.ShouldNotBeNull().ShouldContain(note.Id, customMessage: "the record holds the answer the agent was given, the note in it");
+	}
+
+	/// <summary>The notices an answer's structured content carries.</summary>
+	private static IReadOnlyList<string> Notices(ModelContextProtocol.Protocol.CallToolResult result) =>
+		result.StructuredContent is { } content && content.TryGetProperty("notices", out var notices)
+			? [.. notices.EnumerateArray().Select(notice => notice.GetString() ?? string.Empty)]
+			: [];
 
 	/// <summary>
 	/// What a person does to a workspace through the real broker: its full status read on request, its projects

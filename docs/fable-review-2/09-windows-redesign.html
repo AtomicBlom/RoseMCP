@@ -957,11 +957,8 @@ flowchart LR
       <div class="fd"><h3><span class="k">U4</span><s>The activity record</s></h3>
         <p><a href="https://github.com/AtomicBlom/RoseMCP/issues/459">#459</a>. The only record of what an agent did was eight unattributed entries per workspace, forgotten on close. Every call is kept on disk for a week, attributed, with its arguments, response and an edit's diff, past reloads and restarts.</p>
         <span class="serves">Serves B3, B4, C3</span></div>
-      <div class="fd"><h3><span class="k">U5</span>Notes to an agent</h3>
-        <ul><li>A route takes a note: to whom, about what (structured), and your text. The broker queues it per client.</li>
-        <li><b>Always:</b> it's attached to that client's next Rose call of any kind, using the notices mechanism results already have.</li>
-        <li><b>When the session listens (a stretch goal):</b> it's pushed at once as a Claude Code channel message through the relay. During the preview, that takes an interactive session started with the development-channels flag, or Rose installed as a plugin. Headless sessions get notes on the next call.</li>
-        <li>An optional <code>rose_reply</code> tool lets the agent answer into the window.</li></ul>
+      <div class="fd"><h3><span class="k">U5</span><s>Notes to an agent</s></h3>
+        <p><a href="https://github.com/AtomicBlom/RoseMCP/issues/464">#464</a>. A window could not tell an agent anything. A note queues per session and rides on its next Rose call, and <code>rose_reply</code> answers it into the window.</p>
         <span class="serves">Serves C8, D8, D1</span></div>
       <div class="fd"><h3><span class="k">U6</span>Debug sessions you start</h3>
         <ul><li>Operator routes to list running .NET apps with windows and installed packages, and to attach and launch.</li>
@@ -1054,7 +1051,7 @@ sequenceDiagram
     <ol class="steps cards">
       <li data-id="5.8"><div class="body"><b><s>The tray process keeps only its icon.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/462">#462</a>. The tray opened its window at every start, sign-in and deploy, and the window repeated the icon's menu. The tray has no window: its icon has three states and one menu, and it notifies only for a release, a restart's effect on agents, a failure and an answer to a note.</span></div></li>
       <li data-id="5.9"><div class="body"><b><s>The RoseMCP window.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/463">#463</a>. The window was organised by solution worker and said nothing of what each agent was doing. One RoseMCP app per broker holds the RoseMCP window -- Agents, Activity, Workspaces and Debugging, with a memory bar -- and the Inspector windows.</span></div></li>
-      <li data-id="5.10"><div class="body"><b>Notes to an agent.</b><span>A queue per client, delivered with the next Rose call, with the composer and <code>rose_reply</code>. A channel push stays a stretch goal, last in this PR or after it.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/464">#464</a> · C8, D8 · U5 · M · supersedes #391</span></div></li>
+      <li data-id="5.10"><div class="body"><b><s>Notes to an agent.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/464">#464</a>. Nothing in a window could tell an agent anything. A person sends a session a note from a call or a workspace reason, it rides on the session's next answer, and the agent answers it under the note with <code>rose_reply</code>; a channel push was left for its own change.</span></div></li>
     </ol></div>
 
     <div class="subtier"><h3>5c · The Inspector and the panel <span>one PR</span></h3>

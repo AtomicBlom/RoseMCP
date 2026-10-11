@@ -179,6 +179,17 @@ public sealed class StartPageTests
 		several.ShouldNotBeNull().ShouldContain("2 copies");
 	}
 
+	/// <summary>A start that opened the session already debugging the app says whose session it opened, and why there is not a new one.</summary>
+	[Test]
+	public void Opening_an_app_already_being_debugged_says_whose_session_it_is()
+	{
+		var agents = SessionRowTests.Session();
+
+		StartPage.AlreadyDebugged(agents).ShouldBe(
+			"Widget.exe (launched) was already being debugged, so this is an agent's session on it: a process has one debugger.");
+		StartPage.AlreadyDebugged(agents with { StartedBy = LiveAppStarter.Person }).ShouldContain("this is your session");
+	}
+
 	/// <summary>Only an agent session behind a relay can be shared with; the unnamed client could be any client without one.</summary>
 	[Test]
 	public void Only_a_session_behind_a_relay_can_be_shared_with()

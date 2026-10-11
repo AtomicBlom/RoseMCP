@@ -49,15 +49,9 @@ public static class InspectorText
 		"This inspector was started without a token, so the tray will not answer it. Open RoseMCP from the "
 			+ "tray's icon, which starts it with this run's token.";
 
-	/// <summary>The tray is answering and has no debug sessions.</summary>
-	public const string NoSessions =
-		"No debug sessions. An agent starts one with rose_debug_attach or rose_debug_launch, and it "
-			+ "appears here within a second.";
-
 	/// <summary>The session this window was opened on is not in the list any more.</summary>
-	public static string SessionGone(string sessionId) =>
-		$"Session {sessionId} is not there any more -- it was detached, or its host ended. Pick another "
-			+ "from the list.";
+	public static string SessionGone(string sessionId) => $"Session {sessionId} is not there any more -- it was detached, or its host ended. Attach to the app again, "
+		+ "or pick another, from the list below.";
 
 	/// <summary>Waiting for a session the tray has not listed yet, which a fresh attach produces.</summary>
 	public static string WaitingForSession(string sessionId) =>

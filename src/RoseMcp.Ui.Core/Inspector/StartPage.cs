@@ -21,6 +21,16 @@ public static class StartPage
 		"A session you start is yours. An agent sees it only after you share it with that agent's session, from the "
 			+ "session's header, and you can stop sharing whenever you like.";
 
+	/// <summary>What the window says when a start opened the session already debugging the app rather than starting one.</summary>
+	public static string AlreadyDebugged(LiveAppSessionSummary session)
+	{
+		ArgumentNullException.ThrowIfNull(session);
+
+		var whose = session.StartedBy == LiveAppStarter.Person ? "your session" : "an agent's session";
+
+		return $"{session.TargetDescription} was already being debugged, so this is {whose} on it: a process has one debugger.";
+	}
+
 	/// <summary>
 	/// A program to launch, from what the form holds: its path in full, quotes around it dropped, and its arguments as
 	/// typed. Null with a reason where the path is not one the broker will take, so the form says so before asking.

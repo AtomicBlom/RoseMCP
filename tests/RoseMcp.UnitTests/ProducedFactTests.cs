@@ -101,6 +101,14 @@ public sealed class ProducedFactTests
 		typeof(NoteSubject),
 		typeof(NoteReply),
 		typeof(NoteList),
+		typeof(LiveAppShare),
+		typeof(RunningApp),
+		typeof(RunningAppList),
+		typeof(InstalledApp),
+		typeof(InstalledAppList),
+		typeof(RecentTarget),
+		typeof(RecentTargetList),
+		typeof(DebugStart),
 	];
 
 	/// <summary>
@@ -137,6 +145,9 @@ public sealed class ProducedFactTests
 
 		// The tray's tooltip has room for the version and short commit only; the RoseMCP window names the rest.
 		["BuildIdentity.Commit"] = "Shown as its short commit, which the tray's tooltip and the RoseMCP window both name.",
+
+		// What a person debugging without an agent is offered, read by the route rather than the start page.
+		["InstalledApp.InstallLocation"] = "Where a package was registered from; the launch list names an app by its package family, which says the same to a person and fits a line.",
 	};
 
 	/// <summary>

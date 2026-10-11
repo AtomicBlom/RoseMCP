@@ -220,12 +220,17 @@ public sealed partial class InspectorWindow : Window
 	/// What the start page hands over once a session is started or opened there: another window's, where one is
 	/// already about it, and this window's otherwise.
 	/// </summary>
-	private void Open(LiveAppSessionSummary session)
+	private void Open(DebugStart started)
 	{
+		var session = started.Session;
 		if (_shownElsewhere(session.SessionId, session.TargetProcessId)) return;
 
 		_targetProcessId = session.TargetProcessId;
 		ShowSession(session.SessionId);
+
+		// A process has one debugger, so attaching to one already being debugged opened that session; said, so a
+		// person who expected a session of their own is not left wondering why it is an agent's.
+		if (started.Existing) ShowNotice(StartPage.AlreadyDebugged(session), InfoBarSeverity.Informational);
 	}
 
 	/// <summary>

@@ -34,7 +34,7 @@ public sealed partial class StartPane : UserControl
 
 	private OperatorClient? _client;
 	private Action<Exception>? _report;
-	private Action<LiveAppSessionSummary>? _opened;
+	private Action<DebugStart>? _opened;
 	private PollLoop? _poll;
 	private CancellationTokenSource? _starting;
 	private CancellationTokenSource? _reading;
@@ -57,7 +57,7 @@ public sealed partial class StartPane : UserControl
 	/// Gives the page the client it reads through, somewhere to report a failure, and what to do with a session once
 	/// one is started or opened.
 	/// </summary>
-	public void Attach(OperatorClient client, Action<Exception> report, Action<LiveAppSessionSummary> opened)
+	public void Attach(OperatorClient client, Action<Exception> report, Action<DebugStart> opened)
 	{
 		_client = client;
 		_report = report;
@@ -255,7 +255,7 @@ public sealed partial class StartPane : UserControl
 		try
 		{
 			var started = await start(starting.Token);
-			_opened?.Invoke(started.Session);
+			_opened?.Invoke(started);
 		}
 		catch (OperationCanceledException) when (starting.IsCancellationRequested)
 		{

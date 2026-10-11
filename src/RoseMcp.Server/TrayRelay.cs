@@ -154,7 +154,8 @@ public sealed class TrayRelay : IAsyncDisposable
 	public Task Ended => _ended.Task;
 
 	/// <summary>
-	/// Connects to a tray if one is listening, or returns null so the caller can run its own broker.
+	/// Connects to a tray if one is listening, or returns null so the caller can serve the session
+	/// another way: a broker of its own, or for an installed relay the install's broker.
 	/// </summary>
 	public static async Task<TrayRelay?> TryConnectAsync(
 		ServerOptions options,
@@ -166,7 +167,7 @@ public sealed class TrayRelay : IAsyncDisposable
 
 		if (!await IsListeningAsync(options, cancellationToken))
 		{
-			logger.LogInformation("No tray at {Endpoint}; this session will own its workers.", endpoint);
+			logger.LogInformation("No tray at {Endpoint}; this session is served another way.", endpoint);
 			return null;
 		}
 
@@ -186,7 +187,7 @@ public sealed class TrayRelay : IAsyncDisposable
 			await upstream.DisposeAsync();
 
 			logger.LogInformation(
-				"No tray at {Endpoint} ({Reason}); this session will own its workers.", endpoint, exception.Message);
+				"The tray at {Endpoint} did not take this session ({Reason}); it is served another way.", endpoint, exception.Message);
 
 			return null;
 		}

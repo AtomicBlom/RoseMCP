@@ -36,6 +36,12 @@ public sealed class RoseServerProcess : IDisposable
 
 	public bool HasExited => _process.HasExited;
 
+	/// <summary>The exit code, once <see cref="HasExited"/>.</summary>
+	public int ExitCode => _process.ExitCode;
+
+	/// <summary>Everything the process wrote to stderr, complete once it has exited.</summary>
+	public Task<string> StandardError => _draining;
+
 	/// <summary>The method of every notification read past on the way to a reply, in the order they came.</summary>
 	public IReadOnlyCollection<string> Notifications => _notifications;
 

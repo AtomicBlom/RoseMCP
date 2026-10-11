@@ -64,8 +64,11 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   install's relay folder starts the install root's server as a child with `--no-relay` and relays to
   it, rather than hosting a broker from its own assemblies, which are as old as the last relay
   protocol change; it ends when that child does, which a deploy makes happen, rather than starting
-  another while the deploy may still be copying over its files. Anywhere else -- a build output, a
-  Linux install -- the process owns its workers as before.
+  another while the deploy may still be copying over its files. An installed relay never hosts the
+  broker, whatever fails: `RelayInstall.RoutesFor` sends a tray that refuses the session on to the
+  child broker, and where that will not start the relay ends with the reason on stderr. A relay that
+  hosted would hold workers a deploy waits for while keeping the relay running, and the deploy would
+  abort. Anywhere else -- a build output, a Linux install -- the process owns its workers as before.
 - **A relay outlives the broker it forwards to, and tells its client only what changed.** It holds
   `/admin/relays/watch` open, which a killed broker ends at once, and reconnects by itself, so an idle
   session hears of a deploy without making a call. A watch ending is a reason to look, not proof: the

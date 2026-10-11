@@ -299,6 +299,240 @@ public sealed class RelayTests
 		}
 	}
 
+	/// <summary>
+	/// An installed relay that finds a tray answering its probe and then refusing the session moves on
+	/// to the install root's broker, rather than hosting a broker from its own folder.
+	/// </summary>
+	/// <remarks>
+	/// Hosting is what made a deploy abort: the relay's broker served an older build and started the
+	/// install's workers, and the deploy, which keeps the relay's processes running, waited for those
+	/// workers and gave up. What shows the child served the call is the child process at the install
+	/// root, and the tray's log of requests shows the relay tried the tray first.
+	/// </remarks>
+	[Test]
+	public async Task An_installed_relay_a_tray_refuses_relays_to_the_install_broker_rather_than_hosting()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var tray = new RefusingTray();
+
+		var install = StageInstall(withBroker: true);
+
+		try
+		{
+			var relayExecutable = Path.Combine(install, RelayProtocol.Folder, Path.GetFileName(RoseServerProcess.ExecutablePath()));
+			using var session = RoseServerProcess.StartExecutable(
+				relayExecutable, Path.GetDirectoryName(fixture.SolutionPath), "--port", tray.Port.ToString());
+
+			await session.InitializeAsync(cancellationToken);
+
+			using (var answer = await session.CallToolAsync(ToolNames.WorkspaceList, "{}", cancellationToken))
+			{
+				Structured(answer);
+			}
+
+			tray.Requests.ShouldContain(request => request != "GET /admin/workspaces", "the relay tried to open MCP to the tray first");
+
+			var broker = ProcessesRunningFrom(install).ShouldHaveSingleItem("the install root's broker serves the session as its child");
+			broker.Dispose();
+		}
+		finally
+		{
+			RemoveInstall(install);
+		}
+	}
+
+	/// <summary>
+	/// An installed relay that can be served neither by the tray nor by the install's broker ends,
+	/// saying why on stderr, rather than hosting a broker from its own folder. An install whose broker
+	/// is not there is one a deploy is copying.
+	/// </summary>
+	[Test]
+	public async Task An_installed_relay_with_no_broker_to_reach_ends_and_says_why()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var tray = new RefusingTray();
+
+		var install = StageInstall(withBroker: false);
+
+		try
+		{
+			var relayExecutable = Path.Combine(install, RelayProtocol.Folder, Path.GetFileName(RoseServerProcess.ExecutablePath()));
+			using var session = RoseServerProcess.StartExecutable(relayExecutable, install, "--port", tray.Port.ToString());
+
+			(await session.WaitForExitAsync(TimeSpan.FromSeconds(60), cancellationToken)).ShouldBeTrue(
+				"a relay with nothing to relay to ends, rather than hosting a broker from its own assemblies");
+
+			var said = await session.StandardError;
+
+			session.ExitCode.ShouldNotBe(0, said);
+			said.ShouldContain("does not host a broker from its own assemblies", Case.Sensitive);
+			said.ShouldContain("is missing from", Case.Sensitive);
+		}
+		finally
+		{
+			RemoveInstall(install);
+		}
+	}
+
+	/// <summary>
+	/// A deploy counts back only the relays of the install it replaced. Every relay on the port watches
+	/// the same broker -- here one from this build's output beside one staged in an install -- so the
+	/// broker names each by its process, and the deploy script's count is of the ones running from its
+	/// install, in Windows PowerShell 5.1 and PowerShell 7 alike, since an installer may run in either.
+	/// </summary>
+	[Test]
+	public async Task A_deploy_counts_back_only_the_relays_running_from_its_install()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		var directory = Path.GetDirectoryName(fixture.SolutionPath)!;
+		await using var relay = await RelayFixture.StartAsync(directory, cancellationToken);
+
+		var install = StageInstall(withBroker: false);
+
+		try
+		{
+			var relayExecutable = Path.Combine(install, RelayProtocol.Folder, Path.GetFileName(RoseServerProcess.ExecutablePath()));
+			using var installed = RoseServerProcess.StartExecutable(relayExecutable, directory, "--port", relay.Port.ToString());
+			await installed.InitializeAsync(cancellationToken);
+
+			var hello = await relay.WaitForRelaysAsync(2, cancellationToken);
+			hello.RelayProcesses.ShouldBe(
+				[.. new[] { relay.Session.Id, installed.Id }.Order()],
+				"each relay watching is named by its process");
+
+			var script = Path.Combine(RepositoryRoot(), "tools", "RoseMcp.Deploy.ps1");
+
+			foreach (var shell in new[] { "powershell.exe", "pwsh" })
+			{
+				var counted = await CountBackAsync(shell, script, install, relay.Port, cancellationToken);
+				counted.ShouldBe("1 of 1", $"{shell} counts the install's relay and not the build output's");
+			}
+		}
+		finally
+		{
+			RemoveInstall(install);
+		}
+	}
+
+	/// <summary>Runs the deploy script's <c>Wait-RelayReconnect</c> in <paramref name="shell"/>, and returns what a deploy would print.</summary>
+	private static async Task<string> CountBackAsync(string shell, string script, string install, int port, CancellationToken cancellationToken)
+	{
+		var start = new ProcessStartInfo(shell)
+		{
+			RedirectStandardOutput = true,
+			RedirectStandardError = true,
+			UseShellExecute = false,
+		};
+
+		foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command" }) start.ArgumentList.Add(argument);
+		start.ArgumentList.Add(
+			$". '{script}'; $r = Wait-RelayReconnect -Root '{install}' -Port {port} -TimeoutSeconds 20; '{{0}} of {{1}}' -f $r.Connected, $r.Expected");
+
+		Process process;
+		try
+		{
+			process = Process.Start(start) ?? throw new InvalidOperationException($"{shell} did not start.");
+		}
+		catch (System.ComponentModel.Win32Exception exception)
+		{
+			MachineLimit.Reached($"{shell} is not installed: {exception.Message}");
+			throw;
+		}
+
+		using (process)
+		{
+			var output = process.StandardOutput.ReadToEndAsync(cancellationToken);
+			var error = process.StandardError.ReadToEndAsync(cancellationToken);
+
+			await process.WaitForExitAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(90), cancellationToken);
+
+			process.ExitCode.ShouldBe(0, $"{shell} failed: {await error}");
+
+			return (await output).Trim();
+		}
+	}
+
+	/// <summary>
+	/// An install staged from this build's output: the relay folder always, the root's broker beside it
+	/// only where asked, which is the arrangement a deploy produces and the one it passes through.
+	/// </summary>
+	private static string StageInstall(bool withBroker)
+	{
+		var install = Path.Combine(Path.GetTempPath(), $"rosemcp-install-{Guid.NewGuid():N}");
+		var output = Path.GetDirectoryName(RoseServerProcess.ExecutablePath())!;
+
+		if (withBroker) CopyDirectory(output, install);
+		CopyDirectory(output, Path.Combine(install, RelayProtocol.Folder));
+
+		return install;
+	}
+
+	/// <summary>
+	/// Ends whatever still runs from <paramref name="install"/>, its relay folder included, and removes
+	/// it. A process killed a moment ago may still hold its executable, so the removal is tried again
+	/// for a while.
+	/// </summary>
+	private static void RemoveInstall(string install)
+	{
+		var name = Path.GetFileNameWithoutExtension(RoseServerProcess.ExecutablePath());
+
+		foreach (var process in Process.GetProcessesByName(name))
+		{
+			using (process)
+			{
+				string? path;
+				try
+				{
+					path = process.MainModule?.FileName;
+				}
+				catch (Exception)
+				{
+					path = null;
+				}
+
+				var isUnderInstall = path is not null && path.StartsWith(install + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+				if (!isUnderInstall) continue;
+
+				try
+				{
+					process.Kill(entireProcessTree: true);
+					process.WaitForExit(TimeSpan.FromSeconds(10));
+				}
+				catch (Exception)
+				{
+					// Gone between the look and the kill.
+				}
+			}
+		}
+
+		for (var attempt = 1; ; attempt++)
+		{
+			try
+			{
+				if (Directory.Exists(install)) Directory.Delete(install, recursive: true);
+				return;
+			}
+			catch (Exception) when (attempt < 20)
+			{
+				Thread.Sleep(250);
+			}
+		}
+	}
+
+	private static string RepositoryRoot()
+	{
+		var directory = new DirectoryInfo(AppContext.BaseDirectory);
+		while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "RoseMcp.slnx")))
+		{
+			directory = directory.Parent;
+		}
+
+		return directory?.FullName ?? throw new InvalidOperationException($"No RoseMcp.slnx above {AppContext.BaseDirectory}.");
+	}
+
 	/// <summary>The servers running from directly under <paramref name="install"/>, which leaves its relay folder out.</summary>
 	private static IReadOnlyList<Process> ProcessesRunningFrom(string install)
 	{

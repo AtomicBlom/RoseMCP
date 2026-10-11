@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 using RoseMcp.Logging;
@@ -35,25 +36,47 @@ internal static class Program
 	/// one thing only a stdio process has: the directory its client started it in.
 	/// </para>
 	/// <para>
-	/// With no tray, an installed relay hands the session to the install's own broker, started as a
-	/// child, rather than hosting one from its own older assemblies; anything else hosts the broker
-	/// here, as a Linux install or a build output does. See <see cref="RelayInstall"/>.
+	/// An installed relay never hosts the broker from its own older assemblies. With no tray, or a
+	/// tray that answers and then refuses the session, it hands the session to the install's own
+	/// broker, started as a child; where that will not start either, it ends the session and says why
+	/// on stderr. Anything else hosts the broker here, as a Linux install or a build output does. See
+	/// <see cref="RelayInstall"/>.
 	/// </para>
 	/// </summary>
 	private static async Task<int> RunStdioAsync(ServerOptions options)
 	{
+		var installBroker = options.NoRelay ? null : RelayInstall.BrokerFor(AppContext.BaseDirectory);
+
 		// Asked before anything is built, because the answer decides what to build.
-		if (!options.NoRelay && await TrayRelay.IsListeningAsync(options, CancellationToken.None))
+		var trayListening = !options.NoRelay && await TrayRelay.IsListeningAsync(options, CancellationToken.None);
+
+		foreach (var route in RelayInstall.RoutesFor(options.NoRelay, trayListening, installBroker is not null))
 		{
-			var relayed = await RunRelayAsync(logging => TrayRelay.TryConnectAsync(options, logging, CancellationToken.None));
-			if (relayed is { } code) return code;
-		}
-		else if (!options.NoRelay && RelayInstall.BrokerFor(AppContext.BaseDirectory) is { } broker)
-		{
-			var relayed = await RunRelayAsync(logging => ConnectToChildAsync(options, broker, logging));
-			if (relayed is { } code) return code;
+			switch (route)
+			{
+				case StdioRoute.Tray:
+					if (await RunRelayAsync(logging => TrayRelay.TryConnectAsync(options, logging, CancellationToken.None)) is { } relayed) return relayed;
+					break;
+
+				case StdioRoute.ChildBroker:
+					if (await RunRelayAsync(logging => ConnectToChildAsync(options, installBroker!, logging)) is { } child) return child;
+					break;
+
+				case StdioRoute.Refuse:
+					await Console.Error.WriteLineAsync(Refusal(options, installBroker!));
+					return 1;
+
+				default:
+					return await HostBrokerAsync(options);
+			}
 		}
 
+		throw new UnreachableException("Every list of routes ends in one that cannot fall through.");
+	}
+
+	/// <summary>Hosts the broker in this process, for a stdio client that launched it where it stands.</summary>
+	private static async Task<int> HostBrokerAsync(ServerOptions options)
+	{
 		var builder = Host.CreateApplicationBuilder();
 		ConfigureLogging(builder.Logging);
 
@@ -75,6 +98,22 @@ internal static class Program
 	}
 
 	/// <summary>
+	/// What an installed relay says on stderr when it can serve the session neither through the tray
+	/// nor through the install's broker. Never stdout: that carries protocol frames and nothing else.
+	/// </summary>
+	private static string Refusal(ServerOptions options, string installBroker)
+	{
+		var brokerState = File.Exists(installBroker)
+			? $"the install's broker at {installBroker} would not start (its reason is in this session's log)"
+			: $"the install's broker is missing from {installBroker}, as it is while a deploy is copying it";
+
+		return $"RoseMCP relay: no tray on port {options.Port} took this session, and {brokerState}. This relay runs from "
+			+ "an install's relay folder and does not host a broker from its own assemblies, which are older than the "
+			+ "install's and would hold its files through the next deploy. Start the tray, or let the deploy finish, and "
+			+ "reconnect the MCP client (/mcp).";
+	}
+
+	/// <summary>
 	/// Stdio in front, a broker behind. Nothing is declared here: both listing and calling are
 	/// forwarded, so this cannot drift out of step with the tools the broker actually has.
 	/// <para>
@@ -84,7 +123,7 @@ internal static class Program
 	/// the broker's instructions as its own for the same reason.
 	/// </para>
 	/// </summary>
-	/// <param name="connect">Opens the relay, or returns null so the caller can host the broker itself.</param>
+	/// <param name="connect">Opens the relay, or returns null so the caller can try its next route.</param>
 	private static async Task<int?> RunRelayAsync(Func<ILoggerFactory, Task<TrayRelay?>> connect)
 	{
 		// One factory, shared with the host below, so a relayed session writes one log rather than
@@ -94,8 +133,9 @@ internal static class Program
 
 		var relay = await connect(logging);
 
-		// The tray answered the probe and then went away, or the child broker would not start. Rare,
-		// and the honest response is to fall back to owning workers rather than to fail the session.
+		// The tray answered the probe and then went away, or the child broker would not start: the
+		// caller tries its next way of serving the session, which for an installed relay is never
+		// hosting the broker here.
 		if (relay is null) return null;
 
 		await using (relay)
@@ -157,8 +197,8 @@ internal static class Program
 
 	/// <summary>
 	/// Starts the install's broker as a child and relays to it, or returns null where it will not
-	/// start, so the session falls back to hosting a broker of its own -- from older assemblies, which
-	/// is said in the log, but answering rather than dead.
+	/// start, and the session ends saying so: hosting a broker from the relay's own assemblies would
+	/// answer from an older build and hold the install's files through the next deploy.
 	/// </summary>
 	private static async Task<TrayRelay?> ConnectToChildAsync(ServerOptions options, string broker, ILoggerFactory logging)
 	{
@@ -180,8 +220,8 @@ internal static class Program
 
 			logger.LogWarning(
 				exception,
-				"Could not start the install's broker at {Broker}, so this session hosts one from the relay's own assemblies, "
-					+ "which are as old as the last relay protocol change.",
+				"Could not start the install's broker at {Broker}, so this session ends: the relay does not host one from its "
+					+ "own assemblies, which are as old as the last relay protocol change.",
 				broker);
 
 			return null;

@@ -261,6 +261,33 @@ public sealed class PublishedLayoutTests : IDisposable
 	}
 
 	/// <summary>
+	/// An installed relay never hosts the broker, whatever fails. A tray that answers the probe and then
+	/// refuses the session falls back to the install's broker, and where that will not start the session
+	/// ends: a relay hosting from its own folder serves an older build, and its workers hold the install
+	/// through a deploy that keeps the relay running, so the deploy aborts waiting for them. A root with
+	/// no broker in it -- an install mid-copy -- is still an install.
+	/// </summary>
+	[Test]
+	public void An_installed_relay_never_hosts_the_broker_itself()
+	{
+		var nowhere = Path.Combine(Path.GetTempPath(), $"rosemcp-no-install-{Guid.NewGuid():N}", Layout.Relay.Folder);
+		RelayInstall.BrokerFor(nowhere).ShouldNotBeNull("a relay folder is an install's, though its broker is not there yet");
+
+		foreach (var trayListening in new[] { true, false })
+		{
+			var installed = RelayInstall.RoutesFor(noRelay: false, trayListening, installed: true);
+
+			installed.ShouldNotContain(StdioRoute.HostHere, $"tray listening: {trayListening}");
+			installed.TakeLast(2).ShouldBe([StdioRoute.ChildBroker, StdioRoute.Refuse], $"tray listening: {trayListening}");
+		}
+
+		RelayInstall.RoutesFor(noRelay: false, trayListening: true, installed: true)[0].ShouldBe(StdioRoute.Tray);
+		RelayInstall.RoutesFor(noRelay: false, trayListening: true, installed: false).ShouldBe([StdioRoute.Tray, StdioRoute.HostHere]);
+		RelayInstall.RoutesFor(noRelay: false, trayListening: false, installed: false).ShouldBe([StdioRoute.HostHere]);
+		RelayInstall.RoutesFor(noRelay: true, trayListening: true, installed: true).ShouldBe([StdioRoute.HostHere], "the child broker a relay starts hosts");
+	}
+
+	/// <summary>
 	/// The tray's setup command names the installed relay, quoted for the space an install path often
 	/// has, and falls back to the http endpoint only where there is no relay beside it.
 	/// </summary>

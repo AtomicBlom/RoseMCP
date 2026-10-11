@@ -96,14 +96,21 @@ install root's server as a child with `--no-relay` and relays to it, so the code
 the last deploy put down. The child runs out of the files a deploy replaces, so the deploy stops it,
 and the relay ends with it rather than starting another, which would hold those files again while
 the copy was still under way. That session needs `/mcp`, and the deploy says so: it is the one case
-that still costs a connection, and the reason the tray is the way to run RoseMCP. A relay run from
+that still costs a connection, and the reason the tray is the way to run RoseMCP. An installed relay
+never hosts, whatever else fails: a tray that answers the probe and then refuses the session sends it
+to the install's broker too, and where that will not start -- or is not there, as while a deploy
+copies it -- the relay ends with a line on stderr saying why, rather than answering from the old build.
+A relay that hosted would hold workers the deploy waits for while keeping the relay itself running, so
+the deploy would abort on "workers did not exit"; a session that ends can be reconnected. A relay run from
 anywhere but an install's relay folder -- a build output, a Linux install -- hosts the broker itself
 as it always has.
 
 **Counting the relays back.** A relay is counted by the broker while its watch is open, by its own id,
-so the count goes down when a relay goes. After restarting the tray, a deploy waits up to twenty
-seconds for that count to reach the relays still running from the install and says how many
-reconnected, instead of telling the user to `/mcp`. Sessions registered with the root's server, or
+so the count goes down when a relay goes. Each relay sends its process id with the watch, and
+`/admin/relays` names the processes watching, because the count is every relay on the port -- one run
+from a build output, or from another install -- and a deploy wants only its own. After restarting the
+tray, a deploy waits up to twenty seconds until every relay process still running from the install is
+named there, and says how many reconnected, instead of telling the user to `/mcp`. Sessions registered with the root's server, or
 relaying to a child broker, are stopped and named as needing `/mcp`.
 
 **Who registers it.** The tray shows the relay form, as do `install.ps1 -Register`, the Inno finish

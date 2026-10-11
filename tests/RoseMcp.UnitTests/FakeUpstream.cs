@@ -14,10 +14,15 @@ namespace RoseMcp.UnitTests;
 internal sealed class FakeUpstream : RelayUpstream
 {
 	private readonly ConcurrentDictionary<McpClient, FakeBroker> _owners = new();
+	private readonly ConcurrentDictionary<McpClient, int> _numbers = new();
 	private volatile FakeBroker? _current;
 	private volatile FakeBroker? _watching;
+	private volatile TaskCompletionSource? _closedWatchesHeld;
+	private volatile TaskCompletionSource? _silentHello;
+	private int _silentHelloOn;
 	private int _connections;
 	private int _watchesToEndEarly;
+	private int _reachedAnother;
 
 	public FakeUpstream(FakeBroker? current, bool reconnects = true)
 	{
@@ -38,12 +43,37 @@ internal sealed class FakeUpstream : RelayUpstream
 	/// <summary>How many connections the relay has opened.</summary>
 	public int Connections => _connections;
 
+	/// <summary>How many watches ended because they reached another broker than the relay named.</summary>
+	public int WatchesThatReachedAnother => Volatile.Read(ref _reachedAnother);
+
 	public override string Name => "The fake broker";
 
 	public override bool Reconnects { get; }
 
 	/// <summary>Makes the next watch end at once, with its broker still there.</summary>
 	public void EndNextWatchEarly() => Interlocked.Exchange(ref _watchesToEndEarly, 1);
+
+	/// <summary>
+	/// Keeps a watch whose connection closed from saying so until <see cref="ReleaseClosedWatches"/>,
+	/// which lets a call notice the broker gone, and reconnect, before the watch does.
+	/// </summary>
+	public void HoldClosedWatches() =>
+		_closedWatchesHeld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	public void ReleaseClosedWatches() => _closedWatchesHeld?.TrySetResult();
+
+	/// <summary>
+	/// Makes the hello on connection <paramref name="connection"/> wait until the returned source is
+	/// completed and then say nothing, as a tray still starting answers it: late, or not at all.
+	/// </summary>
+	public TaskCompletionSource SilenceHelloOn(int connection)
+	{
+		var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		_silentHello = release;
+		Volatile.Write(ref _silentHelloOn, connection);
+
+		return release;
+	}
 
 	public override async Task<McpClient> ConnectAsync(TimeSpan within, CancellationToken cancellationToken)
 	{
@@ -55,7 +85,7 @@ internal sealed class FakeUpstream : RelayUpstream
 			{
 				var client = await broker.ConnectAsync(cancellationToken);
 				_owners[client] = broker;
-				Interlocked.Increment(ref _connections);
+				_numbers[client] = Interlocked.Increment(ref _connections);
 
 				return client;
 			}
@@ -66,18 +96,25 @@ internal sealed class FakeUpstream : RelayUpstream
 		}
 	}
 
-	public override Task<RelayHello?> HelloAsync(McpClient client, CancellationToken cancellationToken)
+	public override async Task<RelayHello?> HelloAsync(McpClient client, CancellationToken cancellationToken)
 	{
-		if (!_owners.TryGetValue(client, out var broker)) return Task.FromResult<RelayHello?>(null);
+		if (!_owners.TryGetValue(client, out var broker)) return null;
 
-		return Task.FromResult<RelayHello?>(new RelayHello
+		var silenced = _numbers.GetValueOrDefault(client) == Volatile.Read(ref _silentHelloOn);
+		if (silenced && _silentHello is { } release)
+		{
+			await release.Task.WaitAsync(cancellationToken);
+			return null;
+		}
+
+		return new RelayHello
 		{
 			Instance = broker.Instance,
 			StartedUtc = DateTimeOffset.UtcNow,
 			Build = broker.Build,
 			RelayProtocol = broker.RelayProtocol,
 			Relays = 1,
-		});
+		};
 	}
 
 	public override async Task<WatchEnd> WatchAsync(McpClient client, string? instance, CancellationToken cancellationToken)
@@ -91,10 +128,13 @@ internal sealed class FakeUpstream : RelayUpstream
 		// ends the watch at once, as the real one does.
 		if (_current is { } listening && instance is not null && !string.Equals(listening.Instance, instance, StringComparison.Ordinal))
 		{
+			Interlocked.Increment(ref _reachedAnother);
 			return WatchEnd.ReachedAnother(listening.Instance);
 		}
 
 		await client.Completion.WaitAsync(cancellationToken);
+		if (_closedWatchesHeld is { } held) await held.Task.WaitAsync(cancellationToken);
+
 		return WatchEnd.Closed;
 	}
 }

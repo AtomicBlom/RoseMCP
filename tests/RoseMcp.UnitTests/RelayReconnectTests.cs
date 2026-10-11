@@ -267,6 +267,52 @@ public sealed class RelayReconnectTests
 	}
 
 	/// <summary>
+	/// A watch that reaches the broker a call's reconnect is still adopting does not reconnect again,
+	/// even where that adopt learns no instance. The watch can pair the new connection with the old
+	/// instance while the adopt runs, and so find "another" broker that is the one just adopted; a hello
+	/// that says nothing, as a tray still starting may, leaves no instance to tell the two apart by.
+	/// Reconnecting then would drop a healthy connection and say the restart twice.
+	/// </summary>
+	[Test]
+	public async Task A_watch_that_reaches_the_broker_being_adopted_does_not_reconnect_again()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		await using var first = new FakeBroker([FakeBroker.ReadOnly("probe_read")], Instructions, Commit('a'));
+		var upstream = new FakeUpstream(first);
+		await using var relay = await TrayRelay.ConnectAsync(upstream, Directory.GetCurrentDirectory(), NullLoggerFactory.Instance, Patience, cancellationToken);
+		var changes = Count(relay);
+
+		// Watching before the broker changes, or the watch's first look reaches the new one and the watch reconnects, not a call.
+		await Eventually(() => upstream.Watching == first, "the relay watches the first broker", cancellationToken);
+
+		await using var second = new FakeBroker([FakeBroker.ReadOnly("probe_read")], Instructions, Commit('b'));
+		var hello = upstream.SilenceHelloOn(2);
+		upstream.HoldClosedWatches();
+		upstream.Current = second;
+		await first.DropConnectionsAsync();
+
+		// A call finds the broker gone before the watch does, and its adopt waits on the hello.
+		var call = Call(relay, "probe_read", cancellationToken);
+		await Eventually(() => upstream.Connections == 2, "the call reconnects", cancellationToken);
+
+		// The watch notices now, moves to the new connection still naming the old broker, and reaches the new one.
+		upstream.ReleaseClosedWatches();
+		await Eventually(() => upstream.WatchesThatReachedAnother > 0, "the watch reaches the broker being adopted", cancellationToken);
+
+		hello.SetResult();
+
+		Notices(await call).ShouldHaveSingleItem().ShouldStartWith("RoseMCP restarted and is now build 1.3.0 at bbbbbbb", Case.Sensitive);
+
+		// Long enough for a second reconnect, which follows the first at once, to have happened.
+		await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+
+		upstream.Connections.ShouldBe(2, "one reconnect after the restart, though its adopt learned no instance");
+		Notices(await Call(relay, "probe_read", cancellationToken)).ShouldBeEmpty("the restart is said once");
+		changes.Raised.ShouldBe(0);
+	}
+
+	/// <summary>
 	/// A broker the relay started cannot be replaced, so losing it ends the relay rather than leaving
 	/// it answering every call with the same failure.
 	/// </summary>

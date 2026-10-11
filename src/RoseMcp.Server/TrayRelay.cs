@@ -105,6 +105,13 @@ public sealed class TrayRelay : IAsyncDisposable
 	/// <summary>The broker instance the relay is connected to, where the broker said. Written only under the reconnect gate.</summary>
 	private string? _instance;
 
+	/// <summary>
+	/// How many reconnects have finished adopting a broker. Written only under the reconnect gate; the
+	/// watch reads it when it begins, which is how a reconnect tells a watch that reached the broker
+	/// being adopted from one that reached a broker restarted since.
+	/// </summary>
+	private int _adoptions;
+
 	/// <summary>The broker's tools and instructions as last read.</summary>
 	private ToolSurface _surface;
 
@@ -477,7 +484,14 @@ public sealed class TrayRelay : IAsyncDisposable
 	/// attempt rather than a second window of its own.
 	/// </para>
 	/// </summary>
-	private async Task<McpClient> ReconnectAsync(McpClient stale, TimeSpan within, CancellationToken cancellationToken, string? reachedInstance = null)
+	/// <param name="stale">The connection found wanting; one already replaced is not replaced again.</param>
+	/// <param name="within">How long reaching the broker may take, the wait for the gate included.</param>
+	/// <param name="cancellationToken">The caller's token.</param>
+	/// <param name="watchBeganAt">
+	/// For a watch that reached another broker, how many adoptions had finished when it began; an
+	/// adoption finishing since means the broker it reached is the one adopted.
+	/// </param>
+	private async Task<McpClient> ReconnectAsync(McpClient stale, TimeSpan within, CancellationToken cancellationToken, int? watchBeganAt = null)
 	{
 		var asked = Stopwatch.GetTimestamp();
 		await _reconnecting.WaitAsync(cancellationToken);
@@ -486,10 +500,12 @@ public sealed class TrayRelay : IAsyncDisposable
 		{
 			if (!ReferenceEquals(_tray, stale)) return _tray;
 
-			// The watch reads the instance without the gate, so it can pair a new connection with the instance
-			// before it and find "another" broker that is in fact the one a reconnect has just adopted.
-			var reachedTheOneHeld = reachedInstance is not null && string.Equals(reachedInstance, _instance, StringComparison.Ordinal);
-			if (reachedTheOneHeld) return _tray;
+			// The watch reads the connection and the instance without the gate, so it can pair a connection
+			// still being adopted with the instance before it, and find "another" broker that is the one
+			// being adopted. An adoption finishing since the watch began is what says so: the instance
+			// cannot, since an adopt whose hello went unanswered leaves none to compare.
+			var adoptedSinceTheWatchBegan = watchBeganAt is { } began && began != Volatile.Read(ref _adoptions);
+			if (adoptedSinceTheWatchBegan) return _tray;
 
 			await DisposeQuietlyAsync(stale);
 
@@ -525,7 +541,17 @@ public sealed class TrayRelay : IAsyncDisposable
 			// Not the call's work, though a call may have found the broker gone: what it reads serves
 			// every call after this one.
 			var fresh = _tray;
-			await Detached.Run(() => AdoptAsync(fresh));
+
+			try
+			{
+				await Detached.Run(() => AdoptAsync(fresh));
+			}
+			finally
+			{
+				// Counted once the adopt is over, never when the connection is published: a watch that began
+				// in between paired this connection with the instance before it.
+				Interlocked.Increment(ref _adoptions);
+			}
 
 			CancelQuietly(Volatile.Read(ref _watch));
 
@@ -629,6 +655,9 @@ public sealed class TrayRelay : IAsyncDisposable
 
 		while (!token.IsCancellationRequested)
 		{
+			// Read before the connection, so a connection published by a reconnect still adopting it is
+			// paired with the count from before that adopt finished.
+			var began = Volatile.Read(ref _adoptions);
 			var watched = _tray;
 			var ended = WatchEnd.Closed;
 
@@ -656,10 +685,10 @@ public sealed class TrayRelay : IAsyncDisposable
 			if (token.IsCancellationRequested) return;
 			if (!ReferenceEquals(watched, _tray)) continue;
 
-			if (ended.AnotherInstance is { } another)
+			if (ended.AnotherInstance is not null)
 			{
 				_logger.LogWarning("{Upstream} is another broker than this relay is connected to; reconnecting.", _upstream.Name);
-				await ReconnectUntilBackAsync(watched, another, token);
+				await ReconnectUntilBackAsync(watched, began, token);
 
 				continue;
 			}
@@ -679,21 +708,21 @@ public sealed class TrayRelay : IAsyncDisposable
 			}
 
 			_logger.LogWarning("{Upstream} has gone; reconnecting.", _upstream.Name);
-			await ReconnectUntilBackAsync(watched, reachedInstance: null, token);
+			await ReconnectUntilBackAsync(watched, watchBeganAt: null, token);
 		}
 	}
 
 	/// <summary>Reconnects until a broker answers or the relay ends, pausing between attempts.</summary>
 	/// <param name="stale">The connection the watch found wanting.</param>
-	/// <param name="reachedInstance">The broker instance the watch reached, where that is why it ended.</param>
+	/// <param name="watchBeganAt">For a watch that reached another broker, the adoptions it began at.</param>
 	/// <param name="token">The relay's lifetime.</param>
-	private async Task ReconnectUntilBackAsync(McpClient stale, string? reachedInstance, CancellationToken token)
+	private async Task ReconnectUntilBackAsync(McpClient stale, int? watchBeganAt, CancellationToken token)
 	{
 		while (!token.IsCancellationRequested)
 		{
 			try
 			{
-				await ReconnectAsync(stale, ReconnectWindow, token, reachedInstance);
+				await ReconnectAsync(stale, ReconnectWindow, token, watchBeganAt);
 				return;
 			}
 			catch (OperationCanceledException) when (token.IsCancellationRequested)

@@ -123,13 +123,15 @@ internal sealed class FakeBroker : IAsyncDisposable
 		var stop = new CancellationTokenSource();
 		var running = server.RunAsync(stop.Token);
 
+		var writes = new ClientWrites(toServer.Writer.AsStream());
+
 		var client = await McpClient.CreateAsync(
-			new StreamClientTransport(toServer.Writer.AsStream(), toClient.Reader.AsStream()),
+			new StreamClientTransport(writes, toClient.Reader.AsStream()),
 			cancellationToken: cancellationToken);
 
 		lock (_gate)
 		{
-			_connections.Add(new Connection(server, stop, running, toClient, toServer));
+			_connections.Add(new Connection(server, stop, running, toClient, toServer, writes));
 		}
 
 		return client;
@@ -184,10 +186,11 @@ internal sealed class FakeBroker : IAsyncDisposable
 		};
 	}
 
-	private sealed record Connection(McpServer Server, CancellationTokenSource Stop, Task Running, Pipe ToClient, Pipe ToServer)
+	private sealed record Connection(McpServer Server, CancellationTokenSource Stop, Task Running, Pipe ToClient, Pipe ToServer, ClientWrites Writes)
 	{
 		public async Task CloseAsync()
 		{
+			Writes.Sever();
 			await Stop.CancelAsync();
 
 			try
@@ -203,6 +206,73 @@ internal sealed class FakeBroker : IAsyncDisposable
 			await ToServer.Reader.CompleteAsync();
 			await Server.DisposeAsync();
 			Stop.Dispose();
+		}
+	}
+
+	/// <summary>
+	/// What the client writes to the broker, refused once the connection is dropped, as a write to a
+	/// closed socket is. Without it a call on a dropped connection waits for an answer that never comes,
+	/// and the relay never learns from the call that the broker has gone.
+	/// </summary>
+	private sealed class ClientWrites(Stream inner) : Stream
+	{
+		private volatile bool _severed;
+
+		public override bool CanRead => false;
+
+		public override bool CanSeek => false;
+
+		public override bool CanWrite => true;
+
+		public override long Length => throw new NotSupportedException();
+
+		public override long Position
+		{
+			get => throw new NotSupportedException();
+			set => throw new NotSupportedException();
+		}
+
+		public void Sever() => _severed = true;
+
+		public override void Flush()
+		{
+			ThrowIfSevered();
+			inner.Flush();
+		}
+
+		public override Task FlushAsync(CancellationToken cancellationToken)
+		{
+			ThrowIfSevered();
+			return inner.FlushAsync(cancellationToken);
+		}
+
+		public override void Write(byte[] buffer, int offset, int count)
+		{
+			ThrowIfSevered();
+			inner.Write(buffer, offset, count);
+		}
+
+		public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+		{
+			ThrowIfSevered();
+			return inner.WriteAsync(buffer, cancellationToken);
+		}
+
+		public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+		public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+		public override void SetLength(long value) => throw new NotSupportedException();
+
+		protected override void Dispose(bool disposing)
+		{
+			if (disposing) inner.Dispose();
+			base.Dispose(disposing);
+		}
+
+		private void ThrowIfSevered()
+		{
+			if (_severed) throw new IOException("The broker closed the connection.");
 		}
 	}
 }

@@ -548,7 +548,7 @@ public sealed class TrayRelay : IAsyncDisposable
 		try
 		{
 			var listing = await CancellableToolCall.InvokeAsync(
-				tray, ToolNames.DebugList, NoArguments, progress: null, cancellationToken, _workingDirectory, session: _session);
+				tray, ToolNames.DebugList, NoArguments, progress: null, cancellationToken, _workingDirectory, session: _session, relayRead: true);
 
 			_debugSessions.Record(reading, DebugSessionMemory.Read(listing));
 		}
@@ -864,6 +864,10 @@ public sealed class TrayRelay : IAsyncDisposable
 			if (await AnswersAsync(watched, token))
 			{
 				await PauseAsync(token);
+
+				// The same broker, which may have let this session's row go while the watch was down; saying
+				// whom the relay serves again costs one request and puts it back as it was.
+				IntroduceAgain();
 				continue;
 			}
 

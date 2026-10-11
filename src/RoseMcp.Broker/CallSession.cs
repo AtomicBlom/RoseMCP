@@ -35,6 +35,17 @@ public static class CallSession
 	/// </summary>
 	public const string MetaKey = "rosemcp/session";
 
+	/// <summary>
+	/// Where in a call's <c>_meta</c> a relay marks a read it makes for itself under its session's name -- which
+	/// debug sessions are open, after a call that may have changed them -- so the broker does not count it as one
+	/// of the session's calls.
+	/// </summary>
+	public const string RelayReadKey = "rosemcp/relayRead";
+
+	/// <summary>Whether <paramref name="meta"/> marks the call as a relay's own read (<see cref="RelayReadKey"/>).</summary>
+	public static bool IsRelayRead(JsonObject? meta) =>
+		meta?[RelayReadKey] is JsonValue value && value.TryGetValue(out bool marked) && marked;
+
 	private static readonly AsyncLocal<(string? Id, string? Client)> Ambient = new();
 
 	/// <summary>

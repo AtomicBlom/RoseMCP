@@ -23,8 +23,9 @@ namespace RoseMcp.Broker;
 /// </para>
 /// <para>
 /// The broker outlives every client, so a row goes when its client does. A relay is connected while it holds
-/// <see cref="RelayProtocol.WatchRoute"/> open; its row stays while it does, and goes once it has stopped and
-/// been quiet for <see cref="GoneGrace"/>, which covers a relay re-opening its watch. Nothing tells the broker
+/// <see cref="RelayProtocol.WatchRoute"/> open; its row stays while it does, and goes once <see cref="GoneGrace"/>
+/// has passed since the later of the client's last word and the moment its relay let go of the watch, which
+/// covers a relay re-opening its watch however long its client had been quiet before. Nothing tells the broker
 /// an unnamed client has gone, so its row goes once it has been quiet for <see cref="IdleLimit"/>, the limit
 /// the MCP transport holds an idle session to; so does a named row whose relay never said whom it serves,
 /// which has no watch to go by. <see cref="Capacity"/> bounds the whole, since every row is made at a
@@ -77,14 +78,22 @@ public sealed class ConnectedClients
 	/// <param name="clientName">The name in the client's <c>clientInfo</c>, as the transport has it; kept only for an unnamed client.</param>
 	/// <param name="clientVersion">The version in the same.</param>
 	public void Called(string? relayed, string? transportSession, string? clientName, string? clientVersion) =>
-		Touch(relayed, transportSession, clientName, clientVersion, call: true);
+		Touch(relayed, transportSession, clientName, clientVersion, Contact.Call);
 
 	/// <summary>
 	/// Records a tool listing. It makes a row only for an unnamed client, which lists before it calls: a relay
 	/// lists the broker for itself whenever it connects, before its client has asked for anything.
 	/// </summary>
 	public void Listed(string? relayed, string? transportSession, string? clientName, string? clientVersion) =>
-		Touch(relayed, transportSession, clientName, clientVersion, call: false);
+		Touch(relayed, transportSession, clientName, clientVersion, Contact.Listing);
+
+	/// <summary>
+	/// Records a read a relay made for itself under its session's name -- which debug sessions are open, after a
+	/// call that may have changed them. It says the client is still there and is not one of the client's calls,
+	/// so it makes no row and counts nothing.
+	/// </summary>
+	public void ReadByRelay(string? relayed, string? transportSession) =>
+		Touch(relayed, transportSession, clientName: null, clientVersion: null, Contact.RelayRead);
 
 	/// <summary>Takes what relay <paramref name="relayId"/> says of the client it serves, replacing what it said before.</summary>
 	/// <exception cref="ArgumentException">The relay id, or the session it names, is not in the shape a relay mints.</exception>
@@ -211,7 +220,7 @@ public sealed class ConnectedClients
 
 	private static string MintId() => "client-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4));
 
-	private void Touch(string? relayed, string? transportSession, string? clientName, string? clientVersion, bool call)
+	private void Touch(string? relayed, string? transportSession, string? clientName, string? clientVersion, Contact contact)
 	{
 		var named = relayed is not null;
 		var transport = string.IsNullOrWhiteSpace(transportSession) ? null : transportSession;
@@ -225,7 +234,7 @@ public sealed class ConnectedClients
 			var key = KeyOf(relayed, transport);
 			if (!_rows.TryGetValue(key, out var row))
 			{
-				var makesARow = call || !named;
+				var makesARow = contact == Contact.Call || (contact == Contact.Listing && !named);
 				if (!makesARow || !MakeRoom(watchers)) return;
 
 				row = new Row(MintId(), named, now);
@@ -234,12 +243,12 @@ public sealed class ConnectedClients
 
 			row.LastSeenUtc = now;
 
-			if (call)
+			if (contact == Contact.Call)
 			{
 				row.LastCallUtc = now;
 				row.Calls++;
 			}
-			else
+			else if (contact == Contact.Listing)
 			{
 				row.Listed = true;
 			}
@@ -253,7 +262,7 @@ public sealed class ConnectedClients
 	}
 
 	/// <summary>Drops every row whose client has gone, by the rules in the class summary. Under the gate.</summary>
-	private void Expire(IReadOnlyDictionary<string, int?> watchers, DateTimeOffset now)
+	private void Expire(RelayWatchers watchers, DateTimeOffset now)
 	{
 		var gone = _rows
 			.Where(pair => pair.Value.HasGone(watchers, now))
@@ -267,7 +276,7 @@ public sealed class ConnectedClients
 	/// Whether there is room for one more row, making it by dropping the quietest row whose relay is not
 	/// watching where the table is full. Under the gate.
 	/// </summary>
-	private bool MakeRoom(IReadOnlyDictionary<string, int?> watchers)
+	private bool MakeRoom(RelayWatchers watchers)
 	{
 		if (_rows.Count < Capacity) return true;
 
@@ -281,6 +290,19 @@ public sealed class ConnectedClients
 
 		_rows.Remove(quietest);
 		return true;
+	}
+
+	/// <summary>What brought a client to the table's notice.</summary>
+	private enum Contact
+	{
+		/// <summary>A tool call of the client's own: counted, and it makes the client's row.</summary>
+		Call,
+
+		/// <summary>A tool listing: it makes a row only for an unnamed client.</summary>
+		Listing,
+
+		/// <summary>A read its relay made for itself: it says the client is there, and nothing else.</summary>
+		RelayRead,
 	}
 
 	/// <summary>One client. Read and written only under the table's gate.</summary>
@@ -313,18 +335,25 @@ public sealed class ConnectedClients
 
 		public string? ClientVersion { get; set; }
 
-		public bool IsWatching(IReadOnlyDictionary<string, int?> watchers) => RelayId is { } relay && watchers.ContainsKey(relay);
+		public bool IsWatching(RelayWatchers watchers) => RelayId is { } relay && watchers.IsWatching(relay);
 
-		public bool HasGone(IReadOnlyDictionary<string, int?> watchers, DateTimeOffset now)
+		/// <summary>
+		/// Whether the client has gone: never while its relay watches; otherwise once it has been quiet past the
+		/// limit, counted from the later of its last word and its relay letting go, so a client quiet for an hour
+		/// whose relay is re-opening its watch is not taken for gone in the moment between.
+		/// </summary>
+		public bool HasGone(RelayWatchers watchers, DateTimeOffset now)
 		{
 			if (IsWatching(watchers)) return false;
 
+			var stopped = RelayId is { } relay ? watchers.StoppedUtc(relay) : null;
+			var since = stopped is { } ended && ended > LastSeenUtc ? ended : LastSeenUtc;
 			var limit = RelayId is null ? IdleLimit : GoneGrace;
 
-			return now - LastSeenUtc > limit;
+			return now - since > limit;
 		}
 
-		public ClientSummary Describe(IReadOnlyDictionary<string, int?> watchers) => new()
+		public ClientSummary Describe(RelayWatchers watchers) => new()
 		{
 			Id = Id,
 			Named = Named,
@@ -332,7 +361,7 @@ public sealed class ConnectedClients
 			LastCallUtc = LastCallUtc,
 			Calls = Calls,
 			Watching = Named ? IsWatching(watchers) : null,
-			RelayProcessId = RelayId is { } relay && watchers.TryGetValue(relay, out var process) ? process : null,
+			RelayProcessId = RelayId is { } relay && watchers.Watching.TryGetValue(relay, out var process) ? process : null,
 			ToolsCurrent = Named ? Facts?.ToolsCurrent : UnnamedToolsCurrent(),
 			HeldTools = Facts?.HeldTools,
 			WorkingDirectory = Facts?.WorkingDirectory,

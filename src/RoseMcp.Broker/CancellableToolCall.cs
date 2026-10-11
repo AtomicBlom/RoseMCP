@@ -37,10 +37,14 @@ public static class CancellableToolCall
 		CancellationToken cancellationToken,
 		string? originDirectory = null,
 		IReadOnlyList<ReasonHearing>? heard = null,
-		string? session = null)
+		string? session = null,
+		bool relayRead = false)
 	{
 		var requestId = new RequestId(Guid.NewGuid().ToString("N"));
 		var progressToken = new ProgressToken(requestId.ToString());
+
+		var meta = Meta(progressToken, progress, originDirectory, heard, session);
+		if (relayRead) (meta ??= [])[CallSession.RelayReadKey] = JsonValue.Create(true);
 
 		var parameters = new CallToolRequestParams
 		{
@@ -48,7 +52,7 @@ public static class CancellableToolCall
 			Arguments = arguments.ToDictionary(
 				pair => pair.Key,
 				pair => JsonSerializer.SerializeToElement(pair.Value, ContractJson.Options)),
-			Meta = Meta(progressToken, progress, originDirectory, heard, session),
+			Meta = meta,
 		};
 
 		await using var listening = progress is null

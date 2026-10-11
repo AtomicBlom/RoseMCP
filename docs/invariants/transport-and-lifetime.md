@@ -56,9 +56,11 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   life as `_meta["rosemcp/session"]`, and changes nothing else. The id is what tells relayed clients apart:
   the http transport serves each request without a session, so without it every relayed client is the same
   caller, and one agent's acknowledgement is every agent's. It scopes acknowledgements alone: debug-session
-  ownership reads only the transport's session, and is unscoped over stateless http (#458).
+  ownership reads only the transport's session, and so is unscoped over stateless http even though this id
+  reaches the broker with every relayed call.
   It sends the same id with its own listings and reads, so the broker never takes them for an unnamed
-  client. Once its client has made a request it also tells the broker whom it serves, at
+  client, and marks its own reads `_meta["rosemcp/relayRead"]` so they are not counted as the session's
+  calls. Once its client has made a request it also tells the broker whom it serves, at
   `/admin/relays/client` -- folder, roots, branch, process, `clientInfo`, `ROSE_AGENT_LABEL`, and whether
   the client holds the broker's tools -- detached from the request, bounded by a budget and the relay's
   lifetime, and never failing anything; again after every reconnect, since a restarted broker remembers
@@ -212,7 +214,8 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   state taken from it would be every client's, so it is refused rather than shared. `ConnectedClients`, the
   table of who is connected, holds a row per client under the same rule with a sooner end where the broker
   knows one: a relayed client's row stays while its relay holds the watch and goes two minutes after the
-  relay stops, an unnamed client's after the two idle hours, and the table is capped, since every row is
+  later of the client's last word and the relay letting go -- counted from the stop, so a quiet session
+  whose relay is only re-opening its watch keeps its row -- an unnamed client's after the two idle hours, and the table is capped, since every row is
   made at a client's say-so. Calls without a session share one unnamed row rather than being refused,
   because a row says only that somebody called.
 - **A live-app session whose host has died is dropped by the session manager, and only that one.**

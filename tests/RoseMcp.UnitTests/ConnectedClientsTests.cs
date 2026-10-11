@@ -125,9 +125,13 @@ public sealed class ConnectedClientsTests
 		Should.Throw<ArgumentException>(() => clients.Introduce(RelayProtocol.NewRelayId(), Facts("NOT A SESSION")));
 	}
 
-	/// <summary>A relayed client stays while its relay watches however quiet it is, and goes soon after the relay stops.</summary>
+	/// <summary>
+	/// A relayed client stays while its relay watches however quiet it is, and goes a grace after the relay stops --
+	/// counted from the stop, not from its last word, or a quiet client whose relay is only re-opening its watch
+	/// would lose its row, and everything its relay said of it, in the moment between.
+	/// </summary>
 	[Test]
-	public void A_relayed_client_goes_when_its_relay_stops_watching()
+	public void A_relayed_client_goes_a_grace_after_its_relay_stops_watching()
 	{
 		var (clients, relays, clock) = Table();
 		var relay = RelayProtocol.NewRelayId();
@@ -139,7 +143,56 @@ public sealed class ConnectedClientsTests
 		clients.Describe().ShouldHaveSingleItem("its relay is watching, so it is connected however long it is quiet");
 
 		watching.Dispose();
-		clients.Describe().ShouldBeEmpty("it has been quiet past the grace, and its relay has gone");
+		var row = clients.Describe().ShouldHaveSingleItem("its relay let go a moment ago, which may be a re-opening");
+		row.Watching.ShouldBe(false);
+		row.Label.ShouldBe("card 5.4");
+
+		clock.Advance(ConnectedClients.GoneGrace + TimeSpan.FromSeconds(1));
+		clients.Describe().ShouldBeEmpty("its relay has been gone past the grace");
+	}
+
+	/// <summary>A relay that re-opens its watch within the grace keeps its client's row as it was.</summary>
+	[Test]
+	public void A_quiet_client_keeps_its_row_while_its_relay_reopens_the_watch()
+	{
+		var (clients, relays, clock) = Table();
+		var relay = RelayProtocol.NewRelayId();
+
+		var first = relays.Watch(relay);
+		clients.Introduce(relay, Facts(CallSession.Mint()));
+		clock.Advance(TimeSpan.FromHours(1));
+
+		first.Dispose();
+		clock.Advance(TimeSpan.FromSeconds(2));
+		using var again = relays.Watch(relay);
+
+		clock.Advance(ConnectedClients.GoneGrace + TimeSpan.FromMinutes(1));
+		var row = clients.Describe().ShouldHaveSingleItem();
+		row.Watching.ShouldBe(true);
+		row.WorkingDirectory.ShouldBe(Folder);
+	}
+
+	/// <summary>A read the relay makes for itself says its client is there, and is not one of the client's calls.</summary>
+	[Test]
+	public void A_relays_own_read_is_not_counted_as_a_call()
+	{
+		var (clients, relays, _) = Table();
+		var relay = RelayProtocol.NewRelayId();
+		var session = CallSession.Mint();
+		using var watching = relays.Watch(relay);
+
+		clients.ReadByRelay(CallSession.Relayed(session), null);
+		clients.Describe().ShouldBeEmpty("a relay's own read makes no client");
+
+		clients.Introduce(relay, Facts(session));
+		clients.Called(CallSession.Relayed(session), null, null, null);
+		clients.ReadByRelay(CallSession.Relayed(session), null);
+
+		clients.Describe().ShouldHaveSingleItem().Calls.ShouldBe(1);
+
+		CallSession.IsRelayRead(new() { [CallSession.RelayReadKey] = true }).ShouldBeTrue();
+		CallSession.IsRelayRead(new() { [CallSession.RelayReadKey] = "yes" }).ShouldBeFalse();
+		CallSession.IsRelayRead(null).ShouldBeFalse();
 	}
 
 	[Test]
@@ -262,7 +315,7 @@ public sealed class ConnectedClientsTests
 	private static (ConnectedClients Clients, RelayConnections Relays, SteerableClock Clock) Table()
 	{
 		var clock = new SteerableClock(Start);
-		var relays = new RelayConnections();
+		var relays = new RelayConnections(clock);
 		var clients = new ConnectedClients(relays, Options.Create(new BrokerOptions { TimeProvider = clock }));
 
 		return (clients, relays, clock);

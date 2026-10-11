@@ -52,7 +52,8 @@ as building it, and nothing here makes that safer. Only open repositories you wo
   `rose_xaml_*` call on a session it does not own is answered as though the session did not exist.
   `GET /admin/sessions` still lists every session (#160). The http transport serves each request without
   a session of its own, so every http client shares the null owner and live-app ownership over http is
-  **unscoped** until a client identity reaches it (#458).
+  **unscoped**. A client identity does reach the broker -- the session name a relay sends with every call
+  -- but debug-session ownership still keys only on the transport's session, so it does not use it.
 - **A relayed client's acknowledged reasons are its own.** A relay mints an id for its life and sends it as
   `_meta["rosemcp/session"]`, and the broker keys a workspace's acknowledged reasons on it -- and nothing
   else, debug ownership included. A client chooses that id itself, so it is a name rather than a credential:

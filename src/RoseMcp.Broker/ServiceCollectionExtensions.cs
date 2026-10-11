@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
@@ -150,7 +151,8 @@ public static class ServiceCollectionExtensions
 		services.AddSingleton(_ => CheckoutDistanceReader.ForBroker());
 
 		// Which relays are connected, and which instance of the broker this is; read by the admin routes.
-		services.AddSingleton<RelayConnections>();
+		// On the broker's clock, which says when a relay let go of its watch for the client table's grace.
+		services.AddSingleton(provider => new RelayConnections(provider.GetRequiredService<IOptions<BrokerOptions>>().Value.TimeProvider));
 
 		// Who each client is and when it last called: written by every call and by what relays say of their
 		// sessions, read by the admin and operator routes.
@@ -308,8 +310,12 @@ public static class ServiceCollectionExtensions
 			filters.AddCallToolFilter(next => async (context, cancellationToken) =>
 			{
 				var server = context.Server;
-				server.Services?.GetService<ConnectedClients>()?.Called(
-					CallSession.Of(null, context.Params?.Meta), server.SessionId, server.ClientInfo?.Name, server.ClientInfo?.Version);
+				var meta = context.Params?.Meta;
+				var clients = server.Services?.GetService<ConnectedClients>();
+
+				// A relay's own read of what its session has open is not one of the session's calls.
+				if (CallSession.IsRelayRead(meta)) clients?.ReadByRelay(CallSession.Of(null, meta), server.SessionId);
+				else clients?.Called(CallSession.Of(null, meta), server.SessionId, server.ClientInfo?.Name, server.ClientInfo?.Version);
 
 				return await next(context, cancellationToken);
 			});

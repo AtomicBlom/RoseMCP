@@ -51,14 +51,27 @@ a restart changes the tools and again when the client lists them. For an unnamed
 say only whether it has listed tools from this broker: one that calls without listing holds a list an
 earlier broker gave it.
 
+**A relay's own reads are not its session's calls.** After a call that may start or end a debug
+session the relay reads `rose_debug_list` for itself, under its session's name so the broker never
+takes it for an unnamed client, and marks it `_meta["rosemcp/relayRead"]`, so it says the session is
+there without counting as one of its calls.
+
+**Debug ownership is not scoped by this.** The session name reaches the broker with every relayed call,
+but a live-app session's owner is still the transport's session alone, so over stateless http debug
+ownership stays unscoped. Scoping it by the relayed session is its own change.
+
 **Unnamed clients.** The broker's http transport serves each request without a session on the current
 revision, so nothing tells one unnamed client from another: they share one row. A client on an older
 revision has a transport session, and each such session is a row of its own. An unnamed row's
 `clientInfo` is what its transport carried.
 
 **When a row goes.** The broker outlives every client and nothing tells it an http client has gone. A
-named row stays while its relay holds `/admin/relays/watch`, and goes once the relay has stopped and
-the client has been quiet for two minutes, which covers a relay re-opening its watch. An unnamed row,
+named row stays while its relay holds `/admin/relays/watch`, and goes two minutes after the later of
+the client's last word and the moment its relay let go of the watch, which the relay registry records.
+Counting from the client's last word alone would drop a session quiet for an hour whose relay was only
+re-opening its watch, and its next call would make a bare row with nothing its relay had said; the
+relay also introduces itself again whenever it re-opens a watch on a broker that still answers, so a
+row that did go comes back whole. An unnamed row,
 and a named one whose relay never introduced itself, goes after two hours quiet, the MCP transport's
 own idle limit. The table holds at most 256 rows; a newcomer past that replaces the quietest row whose
 relay is not watching.

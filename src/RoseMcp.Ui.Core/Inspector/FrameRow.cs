@@ -65,6 +65,9 @@ public sealed class FrameRow
 
 	public bool HasNote { get; }
 
+	/// <summary>The row as a screen reader names it, since a list item takes its name from its item.</summary>
+	public override string ToString() => HasWhere ? $"frame {Index}, {Method}, {Where}" : $"frame {Index}, {Method}";
+
 	/// <summary>Where the frame is, as a reader reads it: <c>Program.cs:67 · IL_0014</c>.</summary>
 	private static string Describe(LiveStackFrame frame)
 	{

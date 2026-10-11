@@ -462,7 +462,10 @@ public sealed partial class InspectorWindow : Window
 		Breakpoints.Stop();
 		Breakpoints.Showing(false);
 		Xaml.Showing(false);
-		Execution.End();
+		Execution.End(release: false);
+
+		// Nothing is held on a target that has gone, and nothing should try to give it back.
+		_holds = null;
 
 		Execution.Visibility = Visibility.Collapsed;
 		EndedPanel.Visibility = Visibility.Visible;

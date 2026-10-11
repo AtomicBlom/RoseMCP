@@ -173,7 +173,9 @@ public sealed class StreamRow : Observable
 	public static StreamRow Of(string sessionId, EventRow entry)
 	{
 		var at = new DateTimeOffset(DateTime.SpecifyKind(entry.TimestampUtc, DateTimeKind.Utc));
-		var text = entry.HasThread ? $"{entry.Message} ({entry.Thread})" : entry.Message;
+		// The thread is added only where the host's message does not already name it, which most stops and exceptions do.
+		var named = entry.HasThread && entry.Message.Contains(entry.Thread, StringComparison.Ordinal);
+		var text = entry.HasThread && !named ? $"{entry.Message} ({entry.Thread})" : entry.Message;
 
 		return new StreamRow($"e:{entry.Sequence}", StreamKind.Event, at, entry.Sequence, WhoOf(entry.Kind), ToneOf(entry.Kind), text)
 		{

@@ -83,14 +83,19 @@ public sealed partial class ExecutionBar : UserControl
 	/// <summary>Where the stop is, once the stopped thread's stack has been read.</summary>
 	public void Locate(string location) => StopLocation.Text = _stopped ? location : string.Empty;
 
-	/// <summary>The session has ended: nothing to move, and nothing held.</summary>
-	public void End()
+	/// <summary>
+	/// The window is done with this session: nothing to move, and nothing wanted held. A session that has ended is not
+	/// asked to give its hold back -- its target is gone, and the request would only come back as a failure to report --
+	/// while one the window is merely leaving is, where <paramref name="release"/> says so.
+	/// </summary>
+	public void End(bool release = true)
 	{
 		_ended = true;
 		_stopped = false;
 		_pausedAt = -1;
 		_heldAt = -1;
-		_ = _holds?.Want(this, false);
+		if (release) _ = _holds?.Want(this, false);
+		else _holds = null;
 		Buttons();
 	}
 

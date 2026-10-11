@@ -185,6 +185,20 @@ public sealed class SessionStreamTests
 		stream.ExitedUtc.ShouldBe(new DateTimeOffset(At.AddSeconds(1)));
 	}
 
+	/// <summary>An event says its thread once: added where the host's message leaves it out, and not again where it names it.</summary>
+	[Test]
+	public void An_event_names_its_thread_once()
+	{
+		var stream = new SessionStream("s1");
+
+		stream.Absorb(Events(
+			Event(1, LiveDebugEventKind.LogMessage, At) with { ThreadId = 7 },
+			Event(2, LiveDebugEventKind.BreakpointHit, At) with { ThreadId = 7, Message = "Breakpoint hit on thread 7" }));
+
+		stream.Rows[0].Text.ShouldBe("event 1 (thread 7)");
+		stream.Rows[1].Text.ShouldBe("Breakpoint hit on thread 7");
+	}
+
 	private static List<string> Keys(SessionStream stream, StreamFilter filter)
 	{
 		stream.Filter = filter;

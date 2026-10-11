@@ -21,6 +21,7 @@ internal sealed class FakeUpstream : RelayUpstream
 	private volatile TaskCompletionSource? _silentHello;
 	private int _silentHelloOn;
 	private bool _helloAnswersAfterHold;
+	private int _helloHeld;
 	private int _connections;
 	private int _watchesToEndEarly;
 	private int _reachedAnother;
@@ -46,6 +47,12 @@ internal sealed class FakeUpstream : RelayUpstream
 
 	/// <summary>How many watches ended because they reached another broker than the relay named.</summary>
 	public int WatchesThatReachedAnother => Volatile.Read(ref _reachedAnother);
+
+	/// <summary>
+	/// Whether a held hello has been asked: the relay has published the connection it is for and is
+	/// reading that broker, since it asks only once the connection is the one calls use.
+	/// </summary>
+	public bool HelloHeld => Volatile.Read(ref _helloHeld) == 1;
 
 	public override string Name => "The fake broker";
 
@@ -111,6 +118,7 @@ internal sealed class FakeUpstream : RelayUpstream
 		var silenced = _numbers.GetValueOrDefault(client) == Volatile.Read(ref _silentHelloOn);
 		if (silenced && _silentHello is { } release)
 		{
+			Volatile.Write(ref _helloHeld, 1);
 			await release.Task.WaitAsync(cancellationToken);
 			if (!_helloAnswersAfterHold) return null;
 		}

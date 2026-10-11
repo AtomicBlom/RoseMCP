@@ -116,8 +116,16 @@ public sealed class TrayRelay : IAsyncDisposable
 	/// Completed except while a reconnect has published a new connection and is still reading what that
 	/// broker offers. Calls wait on it: one answered by the new broker before the reading is done would
 	/// carry no line, and the client would have an answer from a broker it was not told had restarted.
+	/// Written with the connection, under <see cref="_publishing"/>, so no call reads one without the other.
 	/// </summary>
-	private volatile Task _adopted = Task.CompletedTask;
+	private Task _adopted = Task.CompletedTask;
+
+	/// <summary>
+	/// Guards the connection and its <see cref="_adopted"/> as a pair. Read apart, a call could take the
+	/// finished reading of the connection before and then the new connection, and be answered by a
+	/// broker the relay has not finished reading.
+	/// </summary>
+	private readonly Lock _publishing = new();
 
 	/// <summary>The broker's tools and instructions as last read.</summary>
 	private ToolSurface _surface;
@@ -426,6 +434,15 @@ public sealed class TrayRelay : IAsyncDisposable
 		}
 	}
 
+	/// <summary>The connection calls use now, and the reading of it a reconnect may still be doing.</summary>
+	private (McpClient Tray, Task Adopted) Published()
+	{
+		lock (_publishing)
+		{
+			return (_tray, _adopted);
+		}
+	}
+
 	/// <summary>
 	/// Runs one call against the tray, reconnecting if the connection has died underneath us, and
 	/// trying once more only where re-sending is safe.
@@ -445,9 +462,12 @@ public sealed class TrayRelay : IAsyncDisposable
 	{
 		// A reconnect still reading the broker it reached holds calls back until it has, so the line it
 		// decides on goes on the first result the new broker gives.
-		await _adopted.WaitAsync(cancellationToken);
-
-		var tray = _tray;
+		var (tray, adopted) = Published();
+		while (!adopted.IsCompleted)
+		{
+			await adopted.WaitAsync(cancellationToken);
+			(tray, adopted) = Published();
+		}
 
 		using var cancelling = cancellationToken.Register(
 			() => _logger.LogDebug("The client cancelled this call."));
@@ -549,8 +569,11 @@ public sealed class TrayRelay : IAsyncDisposable
 			// Calls are held from the moment the connection is published until the adopt is over, so none is
 			// answered by the new broker before the relay knows what to tell the client about it.
 			var adopting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-			_adopted = adopting.Task;
-			_tray = fresh;
+			lock (_publishing)
+			{
+				_adopted = adopting.Task;
+				_tray = fresh;
+			}
 
 			try
 			{

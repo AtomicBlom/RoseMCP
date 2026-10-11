@@ -196,7 +196,7 @@ public sealed class RelayReconnectTests
 		await first.DropConnectionsAsync();
 
 		// The watch has reconnected and is reading the new broker, held at its hello.
-		await Eventually(() => upstream.Connections == 2, "the relay reconnects", cancellationToken);
+		await Eventually(() => upstream.HelloHeld, "the relay reconnects and reads the new broker", cancellationToken);
 
 		var call = Call(relay, "probe_read", cancellationToken);
 		var answeredMidReading = await Task.WhenAny(call, Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken)) == call;
@@ -330,7 +330,7 @@ public sealed class RelayReconnectTests
 
 		// A call finds the broker gone before the watch does, and its adopt waits on the hello.
 		var call = Call(relay, "probe_read", cancellationToken);
-		await Eventually(() => upstream.Connections == 2, "the call reconnects", cancellationToken);
+		await Eventually(() => upstream.HelloHeld, "the call reconnects and reads the new broker", cancellationToken);
 
 		// The watch notices now, moves to the new connection still naming the old broker, and reaches the new one.
 		upstream.ReleaseClosedWatches();

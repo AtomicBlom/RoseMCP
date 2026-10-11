@@ -109,7 +109,7 @@
 				<Border x:Name="GoneCard" Style="{StaticResource CardStyle}" Padding="14,12" Visibility="Collapsed">
 					<StackPanel Spacing="6">
 						<TextBlock Text="Notes to sessions that have gone" Style="{StaticResource BodyStrongTextBlockStyle}" />
-						<TextBlock Text="Each is kept for a day after anything last happened to it. A note not yet delivered still arrives if its session calls again."
+						<TextBlock Text="Each is kept for a day after its session went, or after its last answer where that is later. A note not yet delivered still arrives if its session calls again."
 							TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
 							Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 						<ItemsRepeater x:Name="GoneNotes">

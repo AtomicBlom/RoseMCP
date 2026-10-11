@@ -160,6 +160,65 @@ public sealed class NoteRouteTests
 		(DateTime.UtcNow - started).ShouldBeLessThan(TimeSpan.FromSeconds(20));
 	}
 
+	/// <summary>
+	/// Only an answer delivers. A call the tool refuses by throwing, one answered with an error, and one its caller
+	/// cancelled -- whose tool answers anyway -- each leave the note waiting, with nothing of it in what came back; the
+	/// next answer carries it. Driven as a relay drives the broker, its session named in every call and a cancellation
+	/// sent to the far side before the wait is given up.
+	/// </summary>
+	[Test]
+	public async Task A_refused_failed_or_cancelled_call_leaves_the_note_for_the_next_answer(CancellationToken cancellationToken)
+	{
+		using var home = new TemporaryLocalAppData();
+		await using var tray = await Tray.StartAsync(home, cancellationToken);
+		await using var agent = await McpClient.CreateAsync(
+			new HttpClientTransport(new HttpClientTransportOptions { Endpoint = tray.Endpoint }),
+			new McpClientOptions { DiscoverProbeTimeout = Timeout.InfiniteTimeSpan },
+			cancellationToken: cancellationToken);
+
+		var session = CallSession.Mint();
+		Task<CallToolResult> Call(string tool, Dictionary<string, object?>? arguments = null, CancellationToken? token = null) =>
+			CancellableToolCall.InvokeAsync(agent, tool, arguments ?? [], progress: null, token ?? cancellationToken, session: session);
+
+		await Call(Echo.Name);
+		var row = (await tray.ClientsAsync(clients => clients.Any(client => client.Named), cancellationToken)).Single(client => client.Named);
+		var sent = await Read<AgentNote>(
+			await tray.Operator.PostAsJsonAsync("/operator/notes", Note(row.Id, "Only an answer carries this"), ContractJson.Options, cancellationToken),
+			cancellationToken);
+
+		var refused = await Call(ToolNames.Reply, new() { ["noteId"] = "note-0000000000000000", ["text"] = "Which note?" });
+		refused.IsError.ShouldBe(true, "the tool threw");
+		Text(refused).ShouldNotContain(sent.Id);
+		await StillWaitingAsync();
+
+		var failed = await Call(Failing.Name);
+		failed.IsError.ShouldBe(true, "the tool answered with an error");
+		Text(failed).ShouldNotContain(sent.Id);
+		await StillWaitingAsync();
+
+		Stubborn.Reset();
+		using (var givingUp = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+		{
+			var stubborn = Call(Stubborn.Name, token: givingUp.Token);
+			await Stubborn.Started.Task.WaitAsync(Patience, cancellationToken);
+			await givingUp.CancelAsync();
+
+			await Should.ThrowAsync<OperationCanceledException>(stubborn);
+			await Stubborn.Answered.Task.WaitAsync(Patience, cancellationToken);
+		}
+
+		// The record finishes the call once every filter has, so a finished entry means the filter has had its turn.
+		await tray.FinishedAsync(Stubborn.Name, cancellationToken);
+		await StillWaitingAsync();
+
+		var carried = await Call(Echo.Name);
+		Text(carried).ShouldContain(sent.Id);
+		(await tray.NotesAsync(cancellationToken)).Notes.ShouldHaveSingleItem().DeliveredTool.ShouldBe(Echo.Name);
+
+		async Task StillWaitingAsync() =>
+			(await tray.NotesAsync(cancellationToken)).Notes.ShouldHaveSingleItem().Delivery.ShouldBe(NoteDelivery.Waiting);
+	}
+
 	private static NoteRequest Note(string client, string text) => new()
 	{
 		Client = client,
@@ -194,6 +253,56 @@ public sealed class NoteRouteTests
 
 		[McpServerTool(Name = Name), Description("Answers at once.")]
 		public static string Answer() => "echo";
+	}
+
+	/// <summary>A tool that answers with an error rather than throwing one.</summary>
+	[McpServerToolType]
+	public sealed class Failing
+	{
+		public const string Name = "probe_failing";
+
+		[McpServerTool(Name = Name), Description("Answers with an error, without throwing.")]
+		public static CallToolResult Answer() => new() { IsError = true, Content = [new TextContentBlock { Text = "It went wrong." }] };
+	}
+
+	/// <summary>
+	/// A tool that waits until its call is cancelled and then answers anyway, which is the case the filter's own check of
+	/// the call's token is for. Its signals are for the one test that calls it.
+	/// </summary>
+	[McpServerToolType]
+	public sealed class Stubborn
+	{
+		public const string Name = "probe_stubborn";
+
+		/// <summary>Completed once a call has started waiting.</summary>
+		public static TaskCompletionSource Started { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		/// <summary>Completed once a call has answered after being cancelled.</summary>
+		public static TaskCompletionSource Answered { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public static void Reset()
+		{
+			Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+			Answered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		}
+
+		[McpServerTool(Name = Name), Description("Waits until it is cancelled, then answers anyway.")]
+		public static async Task<string> Answer(CancellationToken cancellationToken)
+		{
+			Started.TrySetResult();
+
+			try
+			{
+				await Task.Delay(Timeout.Infinite, cancellationToken);
+			}
+			catch (OperationCanceledException)
+			{
+				// Answers anyway, as a tool that does not honour its token would.
+			}
+
+			Answered.TrySetResult();
+			return "answered anyway";
+		}
 	}
 
 	/// <summary>A broker serving MCP, the admin routes and the operator API over http on a loopback port, as the tray does.</summary>
@@ -232,6 +341,8 @@ public sealed class NoteRouteTests
 					broker.ActivityDirectory = Path.Combine(home.Path, "Activity");
 				})
 				.WithTools<Echo>()
+				.WithTools<Failing>()
+				.WithTools<Stubborn>()
 				.WithHttpTransport();
 
 			var app = builder.Build();
@@ -283,6 +394,23 @@ public sealed class NoteRouteTests
 
 		public async Task<NoteList> NotesAsync(CancellationToken cancellationToken) =>
 			(await Operator.GetFromJsonAsync<NoteList>("/operator/notes", ContractJson.Options, cancellationToken))!;
+
+		/// <summary>Waits until the activity record holds a finished call of <paramref name="tool"/>.</summary>
+		public async Task FinishedAsync(string tool, CancellationToken cancellationToken)
+		{
+			var deadline = DateTime.UtcNow + Patience;
+
+			while (true)
+			{
+				var page = await Operator.GetFromJsonAsync<ActivityPage>(
+					$"/operator/activity?tool={Uri.EscapeDataString(tool)}", ContractJson.Options, cancellationToken);
+				if (page!.Entries.Any(entry => entry.Outcome != ActivityOutcome.Running)) return;
+
+				if (DateTime.UtcNow > deadline) throw new ShouldAssertException($"No call of {tool} finished in the record.");
+
+				await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+			}
+		}
 
 		public async ValueTask DisposeAsync()
 		{

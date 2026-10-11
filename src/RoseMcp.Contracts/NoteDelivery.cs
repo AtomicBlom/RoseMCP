@@ -20,7 +20,8 @@ public enum NoteDelivery
 
 	/// <summary>
 	/// Queued for a client the broker no longer lists, because its session went before its next call. It is still
-	/// delivered if that session calls again, and kept to be read for a day either way.
+	/// delivered if that session calls again, and kept to be read for a day after its session went, or after the last
+	/// thing that happened to it where that is later.
 	/// </summary>
 	ClientGone,
 }

@@ -219,8 +219,8 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   made at a client's say-so. Calls without a session share one unnamed row rather than being refused,
   because a row says only that somebody called. A note the person sent a session is the exception that outlives
   its row: it is the person's words rather than the session's state, so once its session has gone it reads as
-  gone, is still delivered if that session calls again, and goes a day after anything last happened to it, in a
-  store bounded like the table.
+  gone, is still delivered if that session calls again, and goes a day after the later of its session going and
+  anything last happening to it, in a store bounded like the table.
 - **Every tool call is recorded once, by the filter, and nothing else is.** `WithActivityRecord`, second
   in the broker's pipeline after the correlation id, makes a `CallRecording` ambient for the call and
   finishes it with the answer the client was given, the failure in the caller's words, or a

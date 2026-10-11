@@ -26,7 +26,8 @@ namespace RoseMcp.Broker;
 /// call and hands it over, under the store's gate, so two calls arriving together never both carry one note.
 /// <see cref="Release"/> puts back what a claim took when the answer could not carry it. A note whose client the
 /// table no longer lists is <see cref="NoteDelivery.ClientGone"/> rather than dropped: still delivered if that
-/// session calls again, and kept to be read for <see cref="GoneKeep"/> after anything last happened to it.
+/// session calls again, and kept to be read for <see cref="GoneKeep"/> from the later of its client going and anything last
+/// happening to it.
 /// </para>
 /// <para>
 /// In memory only, bounded by <see cref="Capacity"/>, <see cref="MaxWaitingPerClient"/> and the text limits, since
@@ -51,7 +52,7 @@ public sealed class AgentNotes
 	/// <summary>The most answers one note keeps.</summary>
 	public const int MaxReplies = 8;
 
-	/// <summary>How long a note whose client has gone is kept after the last thing that happened to it.</summary>
+	/// <summary>How long a note whose client has gone is kept, from the later of its client going and the last thing that happened to it.</summary>
 	public static readonly TimeSpan GoneKeep = TimeSpan.FromDays(1);
 
 	private const int MaxReference = 1024;
@@ -532,9 +533,23 @@ public sealed class AgentNotes
 
 	private static string MintId() => "note-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8));
 
-	/// <summary>Drops every note whose client has gone and that nothing has happened to for <see cref="GoneKeep"/>. Under the gate.</summary>
-	private void Expire(IReadOnlyDictionary<string, ClientSummary> present, DateTimeOffset now) =>
-		_notes.RemoveAll(note => !present.ContainsKey(note.Key) && now - note.ChangedUtc > GoneKeep);
+	/// <summary>
+	/// Notes when each note's client was first seen gone, forgets that for one whose client is back, and drops every
+	/// note whose client has been gone, and that nothing has happened to, for <see cref="GoneKeep"/>. Under the gate.
+	/// <para>
+	/// Counted from the later of the two, so a note delivered or answered a day before its session ends is still
+	/// shown gone for a day afterwards rather than dropped the moment its row goes. A client gone between two reads is
+	/// first seen gone at the second, which only keeps its notes longer.
+	/// </para>
+	/// </summary>
+	private void Expire(IReadOnlyDictionary<string, ClientSummary> present, DateTimeOffset now)
+	{
+		foreach (var note in _notes) note.GoneSinceUtc = present.ContainsKey(note.Key) ? null : note.GoneSinceUtc ?? now;
+
+		_notes.RemoveAll(note => note.GoneSinceUtc is { } gone && now - Later(gone, note.ChangedUtc) > GoneKeep);
+	}
+
+	private static DateTimeOffset Later(DateTimeOffset one, DateTimeOffset other) => one > other ? one : other;
 
 	/// <summary>
 	/// Whether there is room for one more note, made where the store is full by dropping the oldest delivered note,
@@ -612,8 +627,11 @@ public sealed class AgentNotes
 
 		public DateTimeOffset PostedUtc { get; } = postedUtc;
 
-		/// <summary>When the note was sent, delivered or last answered: what <see cref="GoneKeep"/> counts from.</summary>
+		/// <summary>When the note was sent, delivered or last answered: with <see cref="GoneSinceUtc"/>, what <see cref="GoneKeep"/> counts from.</summary>
 		public DateTimeOffset ChangedUtc { get; private set; } = postedUtc;
+
+		/// <summary>When its client was first seen missing from the table; null while the table lists it.</summary>
+		public DateTimeOffset? GoneSinceUtc { get; set; }
 
 		public DateTimeOffset? DeliveredUtc { get; private set; }
 

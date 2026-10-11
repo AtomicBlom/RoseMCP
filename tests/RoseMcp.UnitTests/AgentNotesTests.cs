@@ -115,7 +115,7 @@ public sealed class AgentNotesTests
 	}
 
 	[Test]
-	public void A_note_whose_session_has_gone_is_forgotten_a_day_after_anything_happened_to_it()
+	public void A_note_whose_session_has_gone_is_forgotten_a_day_after_it_was_seen_gone()
 	{
 		var (notes, clients, clock) = Store();
 		var mine = Session(clients);
@@ -124,8 +124,83 @@ public sealed class AgentNotesTests
 		clock.Advance(ConnectedClients.IdleLimit + TimeSpan.FromMinutes(1));
 		notes.Describe().Notes.ShouldHaveSingleItem().Delivery.ShouldBe(NoteDelivery.ClientGone);
 
-		clock.Advance(AgentNotes.GoneKeep);
+		clock.Advance(AgentNotes.GoneKeep - TimeSpan.FromMinutes(1));
+		notes.Describe().Notes.ShouldHaveSingleItem("a day from when its session was seen gone has not passed");
+
+		clock.Advance(TimeSpan.FromMinutes(2));
 		notes.Describe().Notes.ShouldBeEmpty();
+	}
+
+	/// <summary>
+	/// A note delivered and answered long before its session ends -- the session working on for more than a day --
+	/// is still shown once the session's row goes, for a day from then, rather than vanishing with the row.
+	/// </summary>
+	[Test]
+	public void A_note_answered_long_before_its_session_goes_is_shown_for_a_day_after()
+	{
+		var (notes, clients, clock) = Store();
+		var mine = Session(clients);
+		var note = notes.Post(Note(IdOf(clients, mine), "Worth a look?"));
+		notes.Claim(mine, null, ToolNames.Outline, null);
+		notes.Reply(mine, null, note.Id, "Looked.", null);
+
+		for (var hour = TimeSpan.Zero; hour < AgentNotes.GoneKeep + TimeSpan.FromHours(1); hour += TimeSpan.FromHours(1))
+		{
+			clock.Advance(TimeSpan.FromHours(1));
+			clients.Called(mine, transportSession: null, clientName: null, clientVersion: null);
+			notes.Describe().Notes.ShouldHaveSingleItem("its session is still working");
+		}
+
+		clock.Advance(ConnectedClients.IdleLimit + TimeSpan.FromMinutes(1));
+		var shown = notes.Describe().Notes.ShouldHaveSingleItem("its row has just gone");
+		shown.Delivery.ShouldBe(NoteDelivery.Delivered);
+		shown.Replies.ShouldHaveSingleItem();
+
+		clock.Advance(AgentNotes.GoneKeep - TimeSpan.FromMinutes(1));
+		notes.Describe().Notes.ShouldHaveSingleItem();
+
+		clock.Advance(TimeSpan.FromMinutes(2));
+		notes.Describe().Notes.ShouldBeEmpty();
+	}
+
+	/// <summary>
+	/// A note waiting for a quiet session its relay keeps watching for more than a day waits on, then reads as gone for
+	/// a day once the relay lets go and the row goes.
+	/// </summary>
+	[Test]
+	public void A_note_waiting_for_a_quiet_session_outlives_a_day_and_is_shown_gone_for_a_day_after()
+	{
+		var (notes, clients, relays, clock) = WatchedStore();
+		var hex = CallSession.Mint();
+		var relay = RelayProtocol.NewRelayId();
+		var watching = relays.Watch(relay, processId: 4242);
+		clients.Introduce(relay, new RelayClient { Session = hex });
+		var mine = CallSession.Relayed(hex)!;
+
+		notes.Post(Note(IdOf(clients, mine), "When you are back"));
+
+		clock.Advance(AgentNotes.GoneKeep + TimeSpan.FromHours(6));
+		notes.Describe().Notes.ShouldHaveSingleItem().Delivery.ShouldBe(NoteDelivery.Waiting, "its relay still watches");
+
+		watching.Dispose();
+		clock.Advance(ConnectedClients.GoneGrace + TimeSpan.FromMinutes(1));
+		notes.Describe().Notes.ShouldHaveSingleItem().Delivery.ShouldBe(NoteDelivery.ClientGone);
+
+		clock.Advance(AgentNotes.GoneKeep - TimeSpan.FromMinutes(1));
+		notes.Describe().Notes.ShouldHaveSingleItem();
+
+		clock.Advance(TimeSpan.FromMinutes(2));
+		notes.Describe().Notes.ShouldBeEmpty();
+	}
+
+	private static (AgentNotes Notes, ConnectedClients Clients, RelayConnections Relays, SteerableClock Clock) WatchedStore()
+	{
+		var clock = new SteerableClock(Start);
+		var options = Options.Create(new BrokerOptions { TimeProvider = clock });
+		var relays = new RelayConnections(clock);
+		var clients = new ConnectedClients(relays, options);
+
+		return (new AgentNotes(clients, options), clients, relays, clock);
 	}
 
 	/// <summary>
@@ -416,11 +491,9 @@ public sealed class AgentNotesTests
 
 	private static (AgentNotes Notes, ConnectedClients Clients, SteerableClock Clock) Store()
 	{
-		var clock = new SteerableClock(Start);
-		var options = Options.Create(new BrokerOptions { TimeProvider = clock });
-		var clients = new ConnectedClients(new RelayConnections(clock), options);
+		var (notes, clients, _, clock) = WatchedStore();
 
-		return (new AgentNotes(clients, options), clients, clock);
+		return (notes, clients, clock);
 	}
 
 	private sealed class SteerableClock(DateTimeOffset start) : TimeProvider

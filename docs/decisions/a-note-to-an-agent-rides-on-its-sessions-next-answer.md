@@ -54,7 +54,8 @@ own notice names it and the id it takes, and a session has no use for it before 
 
 **What a session going does to a note.** Nothing silent. A note whose client the table no longer lists reads as
 `ClientGone` -- still delivered if that session calls again -- and the Agents view keeps listing it after the
-cards. Such a note is kept for a day after anything last happened to it; the store holds 256 notes, sixteen
+cards. Such a note is kept for a day from the later of its session going and anything last happening to it, so
+one delivered or answered long before its session ended is still shown for a day after; the store holds 256 notes, sixteen
 waiting per session, and past that makes room from delivered notes first and then from those whose session has
 gone, never from one waiting for a session that is still connected, refusing the new note instead.
 

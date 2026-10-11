@@ -18,6 +18,8 @@ public static class ToolNames
 	public const string WorkspaceClose = "rose_workspace_close";
 	public const string WorkspaceList = "rose_workspace_list";
 	public const string WorkspaceAcknowledge = "rose_workspace_acknowledge";
+	/// <summary>An agent's answer to a note the person sent it from a window. A broker tool, about no workspace.</summary>
+	public const string Reply = "rose_reply";
 	public const string Diagnostics = "rose_diagnostics";
 	public const string FindReferences = "rose_find_references";
 	public const string SymbolInfo = "rose_symbol_info";

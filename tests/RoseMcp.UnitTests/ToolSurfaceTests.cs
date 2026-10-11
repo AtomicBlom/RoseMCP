@@ -71,6 +71,15 @@ public sealed class ToolSurfaceTests
 	];
 
 	/// <summary>
+	/// What the broker answers by itself, about no workspace and no debugged process, on every operating system:
+	/// an agent's answer to a note the person sent it.
+	/// </summary>
+	private static readonly string[] BrokerOnly =
+	[
+		ToolNames.Reply,
+	];
+
+	/// <summary>
 	/// The live-app half, which is registered only on Windows because the debugger is ICorDebug and
 	/// dbgshim. A declared tool that cannot run is worse than an absent one, so this list being
 	/// conditional is the behaviour under test rather than a convenience.
@@ -183,7 +192,7 @@ public sealed class ToolSurfaceTests
 	[Test]
 	public void The_broker_offers_exactly_the_listed_tools()
 	{
-		var expected = OperatingSystem.IsWindows() ? [.. Roslyn, .. LiveApp] : Roslyn;
+		string[] expected = OperatingSystem.IsWindows() ? [.. Roslyn, .. BrokerOnly, .. LiveApp] : [.. Roslyn, .. BrokerOnly];
 
 		Advertised().ShouldBe(Sorted(expected));
 	}
@@ -214,13 +223,15 @@ public sealed class ToolSurfaceTests
 	}
 
 	/// <summary>
-	/// The live-app half is Windows-only, and the two lists must not overlap: a tool that appears in
-	/// both would be gated by the operating system in one place and not the other.
+	/// The live-app half is Windows-only, and the lists must not overlap: a tool that appears in two
+	/// would be gated by the operating system in one place and not the other.
 	/// </summary>
 	[Test]
-	public void The_two_halves_of_the_surface_are_disjoint()
+	public void The_parts_of_the_surface_are_disjoint()
 	{
 		Roslyn.Intersect(LiveApp, StringComparer.Ordinal).ShouldBeEmpty();
+		BrokerOnly.Intersect(LiveApp, StringComparer.Ordinal).ShouldBeEmpty();
+		BrokerOnly.Intersect(Roslyn, StringComparer.Ordinal).ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -341,7 +352,8 @@ public sealed class ToolSurfaceTests
 	/// deselect what you have selected -- so a session that reached the naming tool has the counterpart
 	/// in that tool's own description. rose_workspace_close is housekeeping nothing else depends on.
 	/// rose_workspace_acknowledge acts on the ids rose_workspace_status hands out, and status's description
-	/// names it: a session has no use for it before it has read a reason.
+	/// names it: a session has no use for it before it has read a reason. rose_reply answers a note, and
+	/// the note's own notice names it with the id it takes: a session has no use for it before one arrives.
 	/// <para>
 	/// rose_xaml_select_element was here on the reasoning that a read hands out the handle it takes.
 	/// That held while arming select mode was routed beside it; with arming gone from the surface,
@@ -355,6 +367,7 @@ public sealed class ToolSurfaceTests
 		ToolNames.DebugListTracepoints,
 		ToolNames.DebugRemoveBreakpoint,
 		ToolNames.DebugRemoveTracepoint,
+		ToolNames.Reply,
 		ToolNames.WorkspaceAcknowledge,
 		ToolNames.WorkspaceClose,
 		ToolNames.XamlDeselect,

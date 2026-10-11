@@ -10,8 +10,8 @@ namespace RoseMcp.Broker;
 /// <summary>
 /// The http surface a person's tools read a broker through, behind a bearer token: who is connected, which
 /// workspaces are loaded, what every client did, every debug session on the machine and everything one can be
-/// asked, and what all of it holds in memory. A window reads nothing of the broker's any other way, so it can run
-/// in a process of its own and a test can drive it.
+/// asked, what all of it holds in memory, and the notes a person sends agents. A window reads nothing of the
+/// broker's any other way, so it can run in a process of its own and a test can drive it.
 /// <para>
 /// A view that changes is kept current by a long poll rather than by asking every second: its answer carries a
 /// version, and the same read with that version as <c>after</c> and a <c>waitSeconds</c> is answered when the view
@@ -91,6 +91,7 @@ public static class OperatorApi
 		MapDebugging(operators);
 		MapXaml(operators);
 		MapHealth(operators);
+		MapNotes(operators);
 
 		// This host now has somewhere a person decides what agents propose, so proposing is worth allowing.
 		app.Services.GetRequiredService<WorkspaceHealth>().OfferToThePerson();
@@ -147,6 +148,28 @@ public static class OperatorApi
 		routes.MapPost(
 			"/proposals/{proposalId}/reject",
 			(string proposalId, WorkspaceHealth health) => Json(health.Reject(proposalId)));
+	}
+
+	/// <summary>
+	/// Notes to agent sessions: sending one, which rides on that session's next answer of any tool, and reading them --
+	/// each with where its delivery has got to and what the agent answered -- with the version a window passes back as
+	/// <c>after</c>, with <c>waitSeconds</c>, to be answered when one is sent, delivered or answered, or its session goes.
+	/// <para>
+	/// Here and on no MCP tool, because a note reaches an agent as the person's own words: an agent able to send one
+	/// could speak for the person to every other agent on the machine. The token is what says the person is the one
+	/// writing. Sending is not a tool call, so it is not in the activity record; the call whose answer carries a note
+	/// is, with the note in that answer.
+	/// </para>
+	/// </summary>
+	private static void MapNotes(RouteGroupBuilder operators)
+	{
+		operators.MapGet(
+			"/notes",
+			async (AgentNotes notes, LongPoll poll, HttpContext context, string? client = null, string? after = null, int waitSeconds = 0) =>
+				Json(await poll.WaitAsync(
+					() => notes.Describe(client), list => list.Version, after, waitSeconds, notes.Changed, context.RequestAborted)));
+
+		operators.MapPost("/notes", (NoteRequest body, AgentNotes notes) => Json(notes.Post(body)));
 	}
 
 	/// <summary>

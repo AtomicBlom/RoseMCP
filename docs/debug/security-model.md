@@ -69,6 +69,12 @@ as building it, and nothing here makes that safer. Only open repositories you wo
   An acceptance is written to `workspace-health.json` beside `settings.json` and changes what every agent
   reads about that reason, which is why no MCP tool can make one: an agent can only propose. Anything able
   to write that file can do the same, which is no more than the user's own authority.
+- **A note to an agent is the person's, on the operator API.** `POST /operator/notes` queues a note for one
+  client, and it rides on that client's next answer, of any tool, as a notice saying a person wrote it. An agent
+  reads it as the person's words, which is why no MCP tool can send or change one: an agent able to would speak
+  for the person to every other agent on the machine. A note to the one unnamed client -- every client with
+  neither a relay nor a transport session of its own -- is refused, since it would reach whichever of them called
+  next. Notes are held in the broker's memory and gone when it restarts.
 - **A stdio session relays to a running tray** on loopback, sending the directory its client started in
   and nothing else. Setting `ROSEMCP_TOKEN` currently stops that relay without saying so (#213).
 
@@ -103,6 +109,12 @@ One entry per tool a client is offered. Every tool runs as the user; the column 
 | `rose_workspace_close` | Stops a worker | Only affects RoseMCP's own process |
 | `rose_workspace_list` | Lists the workspaces the broker holds a worker for, with each one's state and idle time | Reads only the broker's own registry; starts nothing. Names every solution path the broker holds, whichever session opened it |
 | `rose_workspace_acknowledge` | Stops the calling session's reads repeating a degraded reason, or proposes that the person accept it | Changes what that one session reads, in the broker's memory, until the session goes idle for two hours (a stdio broker's one client: for the life of the process); refused on a shared broker for a call carrying no session id, since it would silence the reason for every client. A proposal changes nothing until the person confirms it on the operator API, and is refused by a host that serves none; no MCP tool can accept a reason or confirm a proposal |
+
+### Notes from the person
+
+| Tool | What it does | Bounded by |
+|---|---|---|
+| `rose_reply` | Answers a note the person sent the calling session from the RoseMCP window; the answer shows under the note, and the tray says so while no window is open | Only a note sent to the session calling, found by the session its relay names or else the transport's; a note of any other session is answered as one that does not exist, and a call naming no session answers nothing. It cannot send, change or read a note, and keeps at most eight answers of 4,000 characters each per note, in the broker's memory until it restarts |
 
 ### Reading and navigation
 
@@ -217,6 +229,10 @@ stays in the window until the app exits.
   process, and the OS's debug ACL refuses independently. Both must pass.
 - **One agent driving another's debugger.** Sessions are owned by the MCP session that started them, and
   the operator surface that bypasses ownership requires a token no client is given.
+- **An agent speaking for the person, or reading another session's notes.** Sending a note needs the operator
+  token. `rose_reply` reaches only the caller's own notes, whose ids are 64 random bits carried by nothing but
+  the answer that delivered each; a relayed session's name is a name rather than a credential, as for
+  acknowledgements, so a client that knew another session's name could answer that session's notes.
 - **A web page driving a local broker.** Refused by the `Origin` check.
 - **A local process driving an http broker.** Not stopped on loopback without `ROSEMCP_TOKEN`. Set it, or
   use stdio, where only the client that started the process can reach it.

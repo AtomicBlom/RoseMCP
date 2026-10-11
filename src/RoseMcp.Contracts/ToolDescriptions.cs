@@ -671,6 +671,20 @@ public static class ToolDescriptions
 	public const string ProposedNoteArgument =
 		"With propose, what you suggest agents read about it in place of Rose's line.";
 
+	public const string Reply = """
+		Answers a note the person sent this session from the RoseMCP window. A note arrives in a result's
+		notices, written by the person rather than by the tool, saying what it is about and giving the
+		noteId this takes. Answering here puts your words under their note in the window they are reading,
+		where an answer only in the conversation may never reach them. It answers only a note sent to this
+		session, and cannot send or change one; answering again adds another answer.
+		""";
+
+	public const string NoteIdArgument =
+		"The noteId the note's notice gave.";
+
+	public const string ReplyTextArgument =
+		"Your answer, as the person reads it under their note: up to 4,000 characters.";
+
 	public const string IncludeProjectsArgument =
 		"Also list the projects that loaded cleanly.";
 

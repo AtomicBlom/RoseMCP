@@ -170,6 +170,11 @@ public static class ServiceCollectionExtensions
 			provider.GetService<ILogger<ActivityRecord>>() ?? NullLogger<ActivityRecord>.Instance,
 			provider.GetService<IHostApplicationLifetime>()));
 
+		// What the operator routes read, made from the singletons above and holding nothing of its own; and the waits
+		// that keep a window's view current, which the host stopping ends so an open poll never holds up a stop.
+		services.AddSingleton<OperatorViews>();
+		services.AddSingleton(provider => new LongPoll(provider.GetService<IHostApplicationLifetime>()));
+
 		// No inspector unless a host that has an operator endpoint replaces this. A stdio broker
 		// genuinely cannot open one, and saying so beats a tool argument that silently does nothing.
 		services.TryAddSingleton<IInspectorPresenter>(NoInspector.WithoutAnEndpoint);

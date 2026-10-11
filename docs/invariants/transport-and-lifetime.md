@@ -234,6 +234,18 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   to write it; the host stopping flushes it first, for a host that stops without disposing its services.
   Each broker run writes files of its own, so brokers sharing the folder never share a file or a lock.
   See [the decision](../decisions/every-call-an-agent-makes-is-recorded-and-kept-on-disk.md).
+- **A window's long poll holds nothing past its request, and never holds up a stop.** The operator views
+  a window reads -- clients, workspaces, activity, sessions -- answer `after=<version>&waitSeconds=N` by
+  `LongPoll` reading the view again every second, and on the activity record's or the client table's
+  `ChangeSignal`, until its version differs. A wait is the request's own linked token, a timer and a
+  reference to the signal's current task, so it holds nothing on a singleton once the request ends.
+  `IHostApplicationLifetime.ApplicationStopping` is linked into every wait and answers it with the view as
+  it is, or a window's open poll would hold a deploy for the rest of its minute; the reader going away
+  cancels it, and the operator filter answers nobody. A view's read stays broker-side -- no worker or
+  live-app host is called, no load waited on, no workspace's idle clock touched -- because it runs every
+  second for as long as a window is open. Every view goes inside the `/operator` group, where the token
+  and the call id apply, and none on `/admin`, which nothing gates: memory and process ids included.
+  See [the decision](../decisions/a-window-reads-the-broker-over-the-operator-api-and-waits-on-what-a-view-holds.md).
 - **A live-app session whose host has died is dropped by the session manager, and only that one.**
   A poll that finds the host's transport gone marks the session ended; nothing else would ever
   remove it -- no caller closes a session it can no longer reach -- so the registry would carry it

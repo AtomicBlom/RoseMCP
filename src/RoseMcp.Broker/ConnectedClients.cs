@@ -71,6 +71,12 @@ public sealed class ConnectedClients
 	private DateTimeOffset Now => _time.GetUtcNow();
 
 	/// <summary>
+	/// Pulsed when a client calls, lists or is introduced, which is what a window's wait on the table is woken by. A
+	/// row expiring is not pulsed for; a wait reads the table again on its own timer and sees it go.
+	/// </summary>
+	public ChangeSignal Changed { get; } = new();
+
+	/// <summary>
 	/// Records a tool call, making the client's row where it has none.
 	/// </summary>
 	/// <param name="relayed">The client a relay named, as <see cref="CallSession.Of"/> gives it with no transport session; null for none.</param>
@@ -144,6 +150,8 @@ public sealed class ConnectedClients
 			row.Facts = facts;
 			row.LastSeenUtc = now;
 		}
+
+		Changed.Pulse();
 	}
 
 	/// <summary>Every client the broker is keeping, the earliest connected first.</summary>
@@ -277,6 +285,9 @@ public sealed class ConnectedClients
 				row.ClientVersion = Clean(clientVersion, MaxVersion) ?? row.ClientVersion;
 			}
 		}
+
+		// A relay's own read changes nothing a row shows.
+		if (contact != Contact.RelayRead) Changed.Pulse();
 	}
 
 	/// <summary>Drops every row whose client has gone, by the rules in the class summary. Under the gate.</summary>

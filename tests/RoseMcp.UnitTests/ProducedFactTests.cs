@@ -88,6 +88,15 @@ public sealed class ProducedFactTests
 		typeof(ActivityEntry),
 		typeof(ActivityFileChange),
 		typeof(ActivityPage),
+		typeof(ClientList),
+		typeof(OperatorWorkspace),
+		typeof(OperatorWorkspaceList),
+		typeof(OperatorSessionList),
+		typeof(MemoryReport),
+		typeof(ProcessMemory),
+		typeof(WorkerMemory),
+		typeof(LiveAppMemory),
+		typeof(MachineMemory),
 	];
 
 	/// <summary>
@@ -181,9 +190,33 @@ public sealed class ProducedFactTests
 		["ActivityPage.Entries"] = ActivityView,
 		["ActivityPage.Bodies"] = ActivityView,
 		["ActivityPage.Retention"] = ActivityView,
+		["ActivityPage.Next"] = ActivityView,
+
+		// The operator API's views, read by the RoseMCP window rather than from the broker's objects.
+		["ClientList.Clients"] = "Card 5.9: the RoseMCP window's Agents view shows each client, read at /operator/clients.",
+		["OperatorWorkspace.Summary"] = WorkspacesView,
+		["OperatorWorkspace.Configuration"] = WorkspacesView,
+		["OperatorWorkspace.Platform"] = WorkspacesView,
+		["OperatorWorkspace.BuildProperties"] = WorkspacesView,
+		["OperatorWorkspace.LastUsedUtc"] = WorkspacesView,
+		["OperatorWorkspace.IdleFor"] = WorkspacesView,
+		["OperatorWorkspace.InUse"] = WorkspacesView,
+		["OperatorWorkspace.ClosesAtUtc"] = WorkspacesView,
+		["OperatorWorkspace.RebuiltAnalyzers"] = WorkspacesView,
+		["MemoryReport.SampledUtc"] = MemoryBar,
+		["MemoryReport.LiveApps"] = MemoryBar,
+		["MemoryReport.Machine"] = MemoryBar,
+		["ProcessMemory.PrivateMemoryBytes"] = MemoryBar,
+		["WorkerMemory.WorkspaceKey"] = MemoryBar,
+		["MachineMemory.TotalBytes"] = MemoryBar,
+		["MachineMemory.AvailableBytes"] = MemoryBar,
 	};
 
 	private const string ActivityView = "Card 5.9: the RoseMCP window's Activity view shows what each agent did, read at /operator/activity.";
+
+	private const string WorkspacesView = "Card 5.9: the RoseMCP window's Workspaces view shows each workspace, read at /operator/workspaces.";
+
+	private const string MemoryBar = "Card 5.9: the RoseMCP window's memory bar shows what Rose and the debugged apps hold, read at /operator/memory.";
 
 	/// <summary>
 	/// Every facet of an answer can be selected on. A result field with no argument of the same

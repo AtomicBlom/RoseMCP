@@ -126,6 +126,131 @@ public sealed class OperatorClientTests
 	}
 
 	/// <summary>
+	/// Each view is read from its own route, at once unless a version and a wait are both given: a wait sent with no
+	/// version would be held for nothing, and a version sent with no wait is a read like any other.
+	/// </summary>
+	[Test]
+	public async Task A_view_waits_only_when_given_a_version_and_a_wait()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var handler = new FakeHandler(request => request.RequestUri!.AbsolutePath switch
+		{
+			"/operator/clients" => Json(new ClientList { Version = "c1" }),
+			"/operator/workspaces" => Json(new OperatorWorkspaceList { Version = "w1" }),
+			"/operator/sessions" => Json(new OperatorSessionList { Version = "s1" }),
+			_ => Json(new MemoryReport
+			{
+				SampledUtc = DateTime.UtcNow,
+				Broker = new ProcessMemory { ProcessId = 1, WorkingSetBytes = 2, PrivateMemoryBytes = 3 },
+			}),
+		});
+		using var client = new OperatorClient(Tray, "tok-1", handler);
+
+		(await client.ClientsAsync(after: null, waitSeconds: 30, cancellationToken)).Version.ShouldBe("c1");
+		handler.Last!.RequestUri!.PathAndQuery.ShouldBe("/operator/clients");
+
+		await client.ClientsAsync(after: "c0", waitSeconds: 30, cancellationToken);
+		handler.Last!.RequestUri!.PathAndQuery.ShouldBe("/operator/clients?after=c0&waitSeconds=30");
+
+		(await client.WorkspacesAsync(after: "w0", waitSeconds: 0, cancellationToken)).Version.ShouldBe("w1");
+		handler.Last!.RequestUri!.PathAndQuery.ShouldBe("/operator/workspaces");
+
+		await client.WorkspacesAsync(after: "w0", waitSeconds: 20, cancellationToken);
+		handler.Last!.RequestUri!.PathAndQuery.ShouldBe("/operator/workspaces?after=w0&waitSeconds=20");
+
+		(await client.SessionListAsync(after: "s0", waitSeconds: 5, cancellationToken)).Version.ShouldBe("s1");
+		handler.Last!.RequestUri!.PathAndQuery.ShouldBe("/operator/sessions?after=s0&waitSeconds=5");
+
+		(await client.MemoryAsync(cancellationToken)).Broker.ProcessId.ShouldBe(1);
+		handler.Last!.RequestUri!.PathAndQuery.ShouldBe("/operator/memory");
+	}
+
+	/// <summary>
+	/// The session list is an object carrying its version now, and the inspector's own read of it still answers the
+	/// rows alone, so the inspector's list does not change with the shape.
+	/// </summary>
+	[Test]
+	public async Task The_session_rows_are_read_out_of_the_versioned_list()
+	{
+		var row = new LiveAppSessionSummary
+		{
+			SessionId = "session-1",
+			TargetDescription = "Probe",
+			Architecture = TargetArchitecture.X64,
+			State = LiveAppSessionState.Ready,
+			StartedUtc = DateTime.UtcNow,
+			Uptime = TimeSpan.FromSeconds(3),
+			Execution = LiveExecutionState.Running,
+			XamlStack = XamlStack.Unknown,
+			XamlStackReason = "not asked",
+			XamlProvider = LiveXamlProvider.None,
+		};
+
+		using var handler = new FakeHandler(_ => Json(new OperatorSessionList { Sessions = [row], Version = "v" }));
+		using var client = new OperatorClient(Tray, "tok-1", handler);
+
+		var sessions = await client.SessionsAsync(TestContext.Current!.Execution.CancellationToken);
+
+		sessions.ShouldHaveSingleItem().SessionId.ShouldBe("session-1");
+	}
+
+	/// <summary>
+	/// Every filter of an activity read reaches the query string escaped, and the cursor and the version go as their
+	/// own arguments: text with an ampersand in it, unescaped, would end the filter early and add a stray argument.
+	/// </summary>
+	[Test]
+	public async Task An_activity_read_carries_every_filter_escaped()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var handler = new FakeHandler(_ => Json(new ActivityPage { Bodies = false, Matched = 0, Retention = TimeSpan.FromDays(7) }));
+		using var client = new OperatorClient(Tray, "tok-1", handler);
+
+		var filter = new ActivityFilter
+		{
+			Client = "client-1",
+			Workspace = @"D:\src\A.slnx",
+			Session = "session-1",
+			Tool = "rose_outline",
+			Since = new DateTimeOffset(2026, 10, 11, 1, 2, 3, TimeSpan.Zero),
+			Failures = true,
+			Text = "cart & more",
+			Limit = 20,
+			Bodies = true,
+		};
+
+		await client.ActivityAsync(filter, before: "123-abc", after: "v1", waitSeconds: 25, cancellationToken);
+
+		var query = handler.Last!.RequestUri!.Query;
+		handler.Last.RequestUri.AbsolutePath.ShouldBe("/operator/activity");
+		query.ShouldContain("client=client-1", Case.Sensitive);
+		query.ShouldContain("workspace=D%3A%5Csrc%5CA.slnx", Case.Sensitive);
+		query.ShouldContain("session=session-1", Case.Sensitive);
+		query.ShouldContain("tool=rose_outline", Case.Sensitive);
+		query.ShouldContain("since=2026-10-11T01%3A02%3A03.0000000%2B00%3A00", Case.Sensitive);
+		query.ShouldContain("failures=true", Case.Sensitive);
+		query.ShouldContain("text=cart%20%26%20more", Case.Sensitive);
+		query.ShouldContain("limit=20", Case.Sensitive);
+		query.ShouldContain("bodies=true", Case.Sensitive);
+		query.ShouldContain("before=123-abc", Case.Sensitive);
+		query.ShouldContain("after=v1&waitSeconds=25", Case.Sensitive);
+
+		await client.ActivityAsync(new ActivityFilter(), before: null, after: null, waitSeconds: 0, cancellationToken);
+		handler.Last!.RequestUri!.PathAndQuery.ShouldBe("/operator/activity");
+
+		using var entries = new FakeHandler(_ => Json(new ActivityEntry
+		{
+			Id = "00ff",
+			Kind = ActivityEntryKind.Call,
+			Broker = "b",
+			StartedUtc = DateTimeOffset.UtcNow,
+		}));
+		using var reader = new OperatorClient(Tray, "tok-1", entries);
+
+		(await reader.ActivityEntryAsync("00ff", cancellationToken)).Id.ShouldBe("00ff");
+		entries.Last!.RequestUri!.PathAndQuery.ShouldBe("/operator/activity/00ff");
+	}
+
+	/// <summary>
 	/// A long poll gets its wait plus the margin. Budgeted at the quick allowance instead, every
 	/// thirty-second poll would be abandoned ten seconds in and the tail would quietly miss events.
 	/// </summary>

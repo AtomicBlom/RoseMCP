@@ -187,6 +187,13 @@ public sealed class ActivityRecord : IAsyncDisposable
 	/// <summary>The table each entry names its client from.</summary>
 	public ConnectedClients Clients { get; }
 
+	/// <summary>
+	/// Pulsed when a call starts and when it ends, which is what a window's wait on a listing is woken by. Entries
+	/// another broker writes to the shared folder are not pulsed for; a wait reads the listing again on its own timer
+	/// and sees them.
+	/// </summary>
+	public ChangeSignal Changed { get; } = new();
+
 	/// <summary>How many entries were dropped because the queue was full or the record had stopped, never reaching the disk.</summary>
 	public long Dropped => Interlocked.Read(ref _dropped);
 
@@ -252,6 +259,7 @@ public sealed class ActivityRecord : IAsyncDisposable
 	{
 		var recording = new CallRecording(this, tool, arguments, relayed, transportSession, clientName, origin);
 		_running[recording.Id] = recording;
+		Changed.Pulse();
 
 		return recording;
 	}
@@ -259,11 +267,14 @@ public sealed class ActivityRecord : IAsyncDisposable
 	/// <summary>
 	/// The newest entries matching <paramref name="query"/>, the calls still running among them. Reads what each
 	/// file gained since the last read, under the readers' lock, and keeps only the newest of what matches as it goes
-	/// rather than sorting everything; never throws for a file it cannot read, which is left out.
+	/// rather than sorting everything; never throws for a file it cannot read, which is left out. A page cut by its
+	/// limit says where the next one starts, and a query with that cursor matches only what is older.
 	/// </summary>
+	/// <exception cref="ArgumentException">The query's cursor is not one a page gave.</exception>
 	public ActivityPage Query(ActivityQuery query)
 	{
 		var limit = Math.Clamp(query.Limit, 1, query.Bodies ? ActivityQuery.MaxLimitWithBodies : ActivityQuery.MaxLimit);
+		Cursor? before = string.IsNullOrEmpty(query.Before) ? null : Cursor.Parse(query.Before);
 		var newest = new Newest(limit);
 		bool olderNotListed;
 
@@ -276,7 +287,7 @@ public sealed class ActivityRecord : IAsyncDisposable
 				foreach (var indexed in index.Entries)
 				{
 					// A copy still queued is the same entry, and is the one taken below.
-					if (_unwritten.ContainsKey(indexed.Summary.Id) || !Matches(indexed.Summary, query)) continue;
+					if (_unwritten.ContainsKey(indexed.Summary.Id) || !Matches(indexed.Summary, query, before)) continue;
 
 					newest.Offer(new Found(indexed.Summary, path, indexed.Offset, indexed.Length));
 				}
@@ -287,21 +298,24 @@ public sealed class ActivityRecord : IAsyncDisposable
 
 		foreach (var entry in _unwritten.Values)
 		{
-			if (Matches(entry, query)) newest.Offer(new Found(entry, null, 0, 0));
+			if (Matches(entry, query, before)) newest.Offer(new Found(entry, null, 0, 0));
 		}
 
 		foreach (var recording in _running.Values)
 		{
-			if (Running(recording) is { } entry && Matches(entry, query)) newest.Offer(new Found(entry, null, 0, 0));
+			if (Running(recording) is { } entry && Matches(entry, query, before)) newest.Offer(new Found(entry, null, 0, 0));
 		}
 
-		var page = newest.Descending().Select(found => query.Bodies ? WithBodies(found) : Summary(found.Entry));
+		var kept = newest.Descending().ToList();
+		var page = kept.Select(found => query.Bodies ? WithBodies(found) : Summary(found.Entry));
+		var more = newest.Offered > kept.Count;
 
 		return new ActivityPage
 		{
 			Entries = [.. page],
 			Bodies = query.Bodies,
 			Matched = newest.Offered,
+			Next = more ? Cursor.Of(kept[^1].Entry) : null,
 			OlderNotListed = olderNotListed,
 			Directory = Directory,
 			Retention = Retention,
@@ -378,6 +392,7 @@ public sealed class ActivityRecord : IAsyncDisposable
 	{
 		_unwritten[entry.Id] = entry;
 		_running.TryRemove(recording.Id, out _);
+		Changed.Pulse();
 
 		if (_queue.Writer.TryWrite(entry)) return;
 
@@ -395,7 +410,10 @@ public sealed class ActivityRecord : IAsyncDisposable
 	}
 
 	/// <summary>Lets go of a call whose entry could not be made, so it is not listed as running for the life of the broker.</summary>
-	internal void Forget(CallRecording recording) => _running.TryRemove(recording.Id, out _);
+	internal void Forget(CallRecording recording)
+	{
+		if (_running.TryRemove(recording.Id, out _)) Changed.Pulse();
+	}
 
 	/// <summary>Logs something that went wrong in recording, at warning the first time and at debug after.</summary>
 	internal void Failed(Exception exception)
@@ -425,15 +443,17 @@ public sealed class ActivityRecord : IAsyncDisposable
 		}
 	}
 
-	private static bool Matches(ActivityEntry entry, ActivityQuery query)
+	private static bool Matches(ActivityEntry entry, ActivityQuery query, Cursor? before)
 	{
 		var inWindow = (query.Since is not { } since || entry.StartedUtc >= since)
-			&& (query.Until is not { } until || entry.StartedUtc < until);
+			&& (query.Until is not { } until || entry.StartedUtc < until)
+			&& (before is not { } cursor || cursor.IsAfter(entry));
 		if (!inWindow) return false;
 
 		// A broker starting is part of every client's and every workspace's story: it is why a session's calls
-		// pause, and why the client's row has a new id after it. It belongs to no tool.
-		if (entry.Kind == ActivityEntryKind.BrokerStarted) return query.Tool is null;
+		// pause, and why the client's row has a new id after it. It belongs to no tool, failed at nothing, and names
+		// nothing a search could find.
+		if (entry.Kind == ActivityEntryKind.BrokerStarted) return query.Tool is null && !query.Failures && string.IsNullOrEmpty(query.Text);
 
 		var client = query.Client is null
 			|| string.Equals(entry.ClientId, query.Client, StringComparison.Ordinal)
@@ -445,8 +465,29 @@ public sealed class ActivityRecord : IAsyncDisposable
 
 		var session = query.DebugSession is null || string.Equals(entry.DebugSession, query.DebugSession, StringComparison.Ordinal);
 		var tool = query.Tool is null || string.Equals(entry.Tool, query.Tool, StringComparison.Ordinal);
+		var failed = !query.Failures || entry.Outcome == ActivityOutcome.Failed;
 
-		return client && workspace && session && tool;
+		return client && workspace && session && tool && failed && Names(entry, query.Text);
+	}
+
+	/// <summary>Whether <paramref name="entry"/> names <paramref name="text"/> in a field a listing carries, ignoring case; any entry where there is no text.</summary>
+	private static bool Names(ActivityEntry entry, string? text)
+	{
+		if (string.IsNullOrEmpty(text)) return true;
+
+		string?[] fields =
+		[
+			entry.Tool,
+			entry.Target,
+			entry.Error,
+			entry.ClientName,
+			entry.ClientLabel,
+			entry.Origin,
+			entry.Workspace,
+			entry.DebugSession,
+		];
+
+		return fields.Any(field => field is not null && field.Contains(text, StringComparison.OrdinalIgnoreCase));
 	}
 
 	/// <summary>The entry as a listing carries it: without its bodies, and with its error cut to <see cref="ErrorExcerpt"/>.</summary>
@@ -1062,4 +1103,39 @@ public sealed class ActivityRecord : IAsyncDisposable
 
 	/// <summary>An entry a query found, and where its line is where it was written; a null path for one not written yet.</summary>
 	private readonly record struct Found(ActivityEntry Entry, string? Path, long Offset, int Length);
+
+	/// <summary>
+	/// Where a page ended: the start and the id of its oldest entry, the order <see cref="Newest"/> keeps, written as
+	/// <c>ticks-id</c>. Both, since two calls can start in the same tick.
+	/// </summary>
+	private readonly record struct Cursor(long StartedTicks, string Id)
+	{
+		public static string Of(ActivityEntry entry) =>
+			$"{entry.StartedUtc.UtcTicks.ToString(CultureInfo.InvariantCulture)}-{entry.Id}";
+
+		/// <exception cref="ArgumentException">The text is not a cursor a page gave.</exception>
+		public static Cursor Parse(string text)
+		{
+			var dash = text.IndexOf('-', StringComparison.Ordinal);
+			var ticks = 0L;
+			var parsed = dash > 0
+				&& dash < text.Length - 1
+				&& long.TryParse(text.AsSpan(0, dash), NumberStyles.None, CultureInfo.InvariantCulture, out ticks);
+
+			if (!parsed)
+			{
+				throw new ArgumentException(
+					$"'{text}' is not a cursor the activity record gave. Pass back the next of the page before, unchanged, or leave before out for the newest page.");
+			}
+
+			return new Cursor(ticks, text[(dash + 1)..]);
+		}
+
+		/// <summary>Whether <paramref name="entry"/> comes after the page this cursor ended, which is to say it is older.</summary>
+		public bool IsAfter(ActivityEntry entry)
+		{
+			var byTime = entry.StartedUtc.UtcTicks.CompareTo(StartedTicks);
+			return byTime != 0 ? byTime < 0 : string.CompareOrdinal(entry.Id, Id) < 0;
+		}
+	}
 }

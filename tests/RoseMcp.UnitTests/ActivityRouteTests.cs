@@ -186,7 +186,7 @@ public sealed class ActivityRouteTests : IDisposable
 
 			while (true)
 			{
-				var clients = await Operator.GetFromJsonAsync<List<ClientSummary>>("/operator/clients", ContractJson.Options, cancellationToken) ?? [];
+				var clients = (await Operator.GetFromJsonAsync<ClientList>("/operator/clients", ContractJson.Options, cancellationToken))?.Clients ?? [];
 				if (clients.SingleOrDefault(client => client is { Named: true, ClientName: not null }) is { } settled) return settled;
 
 				if (DateTime.UtcNow > deadline) throw new ShouldAssertException("The relay never said whom it serves.");

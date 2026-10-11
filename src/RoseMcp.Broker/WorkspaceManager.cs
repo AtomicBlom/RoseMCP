@@ -74,15 +74,15 @@ public sealed class WorkspaceManager(
 	/// the tray window and GET /admin/workspaces, so the UI can never show something the API disagrees
 	/// with. A stopped row says so in <see cref="Contracts.WorkspaceSummary.Alive"/>.
 	/// </summary>
-	public IReadOnlyList<Contracts.WorkspaceSummary> Describe() => [.. Workers.Select(Describe)];
+	public IReadOnlyList<Contracts.WorkspaceSummary> Describe() => [.. Workers.Select(worker => Describe(worker))];
 
 	/// <summary>
 	/// One worker's row, with what the broker remembers about its health stamped on: when each reason was first
-	/// seen, and which the person has accepted.
+	/// seen, and which the person has accepted. <paramref name="sampleMemory"/> false leaves the memory out.
 	/// </summary>
-	public Contracts.WorkspaceSummary Describe(WorkspaceWorker worker)
+	public Contracts.WorkspaceSummary Describe(WorkspaceWorker worker, bool sampleMemory = true)
 	{
-		var summary = worker.Describe();
+		var summary = worker.Describe(sampleMemory);
 
 		return summary with { Health = health.Describe(worker.SolutionPath, summary.Health) };
 	}

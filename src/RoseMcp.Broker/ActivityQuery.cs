@@ -36,6 +36,22 @@ public sealed record ActivityQuery
 	/// <summary>Only entries that started before this.</summary>
 	public DateTimeOffset? Until { get; init; }
 
+	/// <summary>Only calls that failed: the caller was told something went wrong. A broker starting is not one.</summary>
+	public bool Failures { get; init; }
+
+	/// <summary>
+	/// Only entries naming this, ignoring case: in the tool, the target, the error, the client's name or label, the
+	/// directory it works in, the workspace or the debug session. What a listing carries, and not the bodies, which
+	/// would have to be read back from disk for every entry to be searched.
+	/// </summary>
+	public string? Text { get; init; }
+
+	/// <summary>
+	/// Only entries older than where this cursor points: the <see cref="Contracts.ActivityPage.Next"/> of the page
+	/// before. Null for the first page.
+	/// </summary>
+	public string? Before { get; init; }
+
 	/// <summary>
 	/// How many of the newest matching entries to answer with, between one and <see cref="MaxLimit"/>, or
 	/// <see cref="MaxLimitWithBodies"/> where <see cref="Bodies"/> asks for them.

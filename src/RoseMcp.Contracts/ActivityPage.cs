@@ -2,7 +2,7 @@ namespace RoseMcp.Contracts;
 
 /// <summary>
 /// The entries of the activity record a query matched, as <c>GET /operator/activity</c> answers: the newest
-/// first, up to the limit asked for.
+/// first, up to the limit asked for, and where the next page starts.
 /// </summary>
 public sealed record ActivityPage
 {
@@ -15,8 +15,24 @@ public sealed record ActivityPage
 	/// </summary>
 	public required bool Bodies { get; init; }
 
-	/// <summary>How many entries matched, of which <see cref="Entries"/> holds the newest; more than its count where the limit cut it.</summary>
+	/// <summary>
+	/// How many entries matched from where this page starts, of which <see cref="Entries"/> holds the newest; more than
+	/// its count where the limit cut it, and then <see cref="Next"/> reads on.
+	/// </summary>
 	public required int Matched { get; init; }
+
+	/// <summary>
+	/// Where the next page starts, passed back as <c>before</c> with the same filters; null where this page holds the
+	/// last of what matched. A cursor rather than an offset, so calls arriving between two reads do not shift the
+	/// second page onto entries the first already showed.
+	/// </summary>
+	public string? Next { get; init; }
+
+	/// <summary>
+	/// What the page held when it was read, as an opaque string: passed back as <c>after</c> with a <c>waitSeconds</c>
+	/// and the same filters, the next read waits until the page holds something else -- a call starting or ending.
+	/// </summary>
+	public string? Version { get; init; }
 
 	/// <summary>
 	/// Whether the record holds entries older than a listing reaches. A listing reads at most a set number of the

@@ -288,6 +288,96 @@ public sealed class ActivityRecordTests : IDisposable
 		(await text.ReadToEndAsync(cancellationToken)).ShouldNotContain(mine, Case.Insensitive);
 	}
 
+	/// <summary>
+	/// Only the failures, or only what names some text in what a listing carries, ignoring case; a broker starting is
+	/// neither a failure nor something a search finds.
+	/// </summary>
+	[Test]
+	public async Task Entries_are_read_by_failure_and_by_text(CancellationToken cancellationToken)
+	{
+		await using var record = Open(out var clock);
+
+		Record(record, "rose_outline", workspace: Solution);
+		clock.Advance(TimeSpan.FromMinutes(1));
+
+		using (var call = record.Begin("rose_rename_symbol", null, null, null, "claude-code", null))
+		{
+			call.Routed(target: "Cart.Total");
+			call.Fail("The cart is empty.");
+		}
+
+		clock.Advance(TimeSpan.FromMinutes(1));
+		Record(record, "rose_debug_events", session: "session-7");
+
+		await record.FlushAsync(cancellationToken);
+
+		var failures = record.Query(new ActivityQuery { Failures = true });
+		failures.Entries.ShouldHaveSingleItem().Tool.ShouldBe("rose_rename_symbol");
+		failures.Matched.ShouldBe(1, "a broker starting failed at nothing");
+
+		record.Query(new ActivityQuery { Text = "CART IS" }).Entries.ShouldHaveSingleItem().Tool.ShouldBe("rose_rename_symbol", "by its error");
+		record.Query(new ActivityQuery { Text = "cart.total" }).Entries.ShouldHaveSingleItem().Tool.ShouldBe("rose_rename_symbol", "by its target");
+		record.Query(new ActivityQuery { Text = "Claude" }).Entries.ShouldHaveSingleItem().Tool.ShouldBe("rose_rename_symbol", "by its client");
+		record.Query(new ActivityQuery { Text = "outline" }).Entries.ShouldHaveSingleItem().Tool.ShouldBe("rose_outline", "by its tool");
+		record.Query(new ActivityQuery { Text = "shop.slnx" }).Entries.ShouldHaveSingleItem().Tool.ShouldBe("rose_outline", "by its workspace");
+		record.Query(new ActivityQuery { Text = "session-7" }).Entries.ShouldHaveSingleItem().Tool.ShouldBe("rose_debug_events", "by its debug session");
+		record.Query(new ActivityQuery { Text = "nothing like it" }).Entries.ShouldBeEmpty();
+		record.Query(new ActivityQuery { Failures = true, Text = "outline" }).Entries.ShouldBeEmpty("both filters hold at once");
+	}
+
+	/// <summary>
+	/// A listing is read a page at a time by a cursor, newest first, and a call arriving between two reads does not
+	/// push the second page back onto what the first already showed.
+	/// </summary>
+	[Test]
+	public async Task A_listing_is_paged_by_a_cursor_that_new_calls_do_not_shift(CancellationToken cancellationToken)
+	{
+		await using var record = Open(out var clock);
+
+		for (var call = 1; call <= 5; call++)
+		{
+			Record(record, "rose_outline", workspace: $"{Solution}.{call}");
+			clock.Advance(TimeSpan.FromSeconds(1));
+		}
+
+		await record.FlushAsync(cancellationToken);
+
+		var first = record.Query(new ActivityQuery { Tool = "rose_outline", Limit = 2 });
+		first.Entries.Select(entry => entry.Workspace).ShouldBe([$"{Solution}.5", $"{Solution}.4"]);
+		first.Matched.ShouldBe(5);
+		first.Next.ShouldNotBeNull();
+
+		Record(record, "rose_outline", workspace: $"{Solution}.6");
+		await record.FlushAsync(cancellationToken);
+
+		var second = record.Query(new ActivityQuery { Tool = "rose_outline", Limit = 2, Before = first.Next });
+		second.Entries.Select(entry => entry.Workspace).ShouldBe([$"{Solution}.3", $"{Solution}.2"]);
+		second.Matched.ShouldBe(3, "what matched from where this page starts");
+
+		var last = record.Query(new ActivityQuery { Tool = "rose_outline", Limit = 2, Before = second.Next });
+		last.Entries.ShouldHaveSingleItem().Workspace.ShouldBe($"{Solution}.1");
+		last.Next.ShouldBeNull("nothing older matched");
+
+		Should.Throw<ArgumentException>(() => record.Query(new ActivityQuery { Before = "yesterday" }))
+			.Message.ShouldContain("is not a cursor the activity record gave", Case.Sensitive);
+	}
+
+	/// <summary>A call starting and a call ending each wake whoever waits on the record, which is what answers a window's long poll at once.</summary>
+	[Test]
+	public async Task A_call_starting_and_ending_each_pulse_the_record()
+	{
+		await using var record = Open(out _);
+
+		var beforeStart = record.Changed.Next;
+		using var call = record.Begin("rose_outline", null, null, null, null, null);
+		beforeStart.IsCompleted.ShouldBeTrue("a running call is listed");
+
+		var beforeEnd = record.Changed.Next;
+		beforeEnd.IsCompleted.ShouldBeFalse();
+		call.Finish(Answer(new { }));
+		beforeEnd.IsCompleted.ShouldBeTrue();
+	}
+
 	/// <summary>A call is listed while it runs, so a window shows what an agent is doing as well as what it did.</summary>
 	[Test]
 	public async Task A_running_call_is_listed_as_running_until_it_ends(CancellationToken cancellationToken)

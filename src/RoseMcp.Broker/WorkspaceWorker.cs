@@ -121,6 +121,12 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	public string? VersionMismatch { get; init; }
 
 	/// <summary>
+	/// The MSBuild properties the worker was started under, where any were asked for; null where it chose its own.
+	/// Fixed for the worker's life, since a worker cannot change them without restarting.
+	/// </summary>
+	public WorkspaceBuildOverrides? Build { get; init; }
+
+	/// <summary>
 	/// The worker's process id, learned on connect. Held so memory can be sampled from outside
 	/// the process, which keeps working when the worker itself has stopped answering.
 	/// </summary>
@@ -280,6 +286,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		{
 			VersionMismatch = ChildHostVersion.Mismatch(
 				client.ServerInfo?.Version, workerPath, typeof(WorkspaceWorker).Assembly),
+			Build = build,
 		};
 
 		if (worker.VersionMismatch is not null) logger.LogWarning("{Mismatch}", worker.VersionMismatch);
@@ -619,28 +626,12 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// <summary>
 	/// Samples memory from the process table rather than asking the worker, so the numbers stay
 	/// truthful for a worker that is wedged -- which is exactly when someone is looking at them.
+	/// <paramref name="sampleMemory"/> false leaves the memory out, for a read that only compares rows
+	/// and would otherwise open the process for figures it throws away.
 	/// </summary>
-	public WorkspaceSummary Describe()
+	public WorkspaceSummary Describe(bool sampleMemory = true)
 	{
-		long? workingSet = null;
-		long? privateMemory = null;
-
-		// Only while it runs. A stopped worker's row stays for as long as the idle limit, and Windows
-		// hands a dead process's id to the next one it starts, so sampling it would report somebody
-		// else's memory as this solution's.
-		if (IsAlive && ProcessId is { } id)
-		{
-			try
-			{
-				using var process = Process.GetProcessById(id);
-				workingSet = process.WorkingSet64;
-				privateMemory = process.PrivateMemorySize64;
-			}
-			catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
-			{
-				// The process is gone. Reporting no numbers is more honest than reporting stale ones.
-			}
-		}
+		var memory = sampleMemory ? Memory() : null;
 
 		// Read once: a client's status call can replace it between one property and the next.
 		var status = LastStatus;
@@ -656,8 +647,8 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			StartedUtc = StartedUtc,
 			Uptime = _clock.GetUtcNow().UtcDateTime - StartedUtc,
 			ProcessId = ProcessId,
-			WorkingSetBytes = workingSet,
-			PrivateMemoryBytes = privateMemory,
+			WorkingSetBytes = memory?.WorkingSetBytes,
+			PrivateMemoryBytes = memory?.PrivateMemoryBytes,
 			ManagedHeapBytes = IsAlive ? ManagedHeapBytes : null,
 			WorkerLogPath = LogPath,
 			BuildConfiguration = status?.BuildConfiguration,
@@ -673,6 +664,14 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			Recent = _activities.Recent(SolutionPath),
 		};
 	}
+
+	/// <summary>
+	/// The worker process's memory, with the managed heap it last reported; null once it has stopped. Only while it
+	/// runs: a stopped worker's row stays for as long as the idle limit, and Windows hands a dead process's id to the
+	/// next one it starts, so sampling it would report somebody else's memory as this solution's.
+	/// </summary>
+	public ProcessMemory? Memory() =>
+		IsAlive && ProcessId is { } id ? ProcessMemorySampler.Read(id, ManagedHeapBytes) : null;
 
 	/// <summary>
 	/// The notices a row shows: the last status's, then what that status cannot know -- this worker being a

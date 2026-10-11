@@ -47,6 +47,32 @@ public sealed class ConnectedClientsTests
 		row.HeldTools.ShouldBe(Hash);
 	}
 
+	/// <summary>
+	/// A call, a listing and an introduction each wake whoever waits on the table, which answers a window's long poll
+	/// at once; a relay's own read changes nothing a row shows and wakes nobody.
+	/// </summary>
+	[Test]
+	public void Whatever_changes_a_row_wakes_the_tables_waiters()
+	{
+		var (clients, _, _) = Table();
+		var session = CallSession.Relayed(CallSession.Mint());
+
+		var beforeRead = clients.Changed.Next;
+		clients.ReadByRelay(session, transportSession: null);
+		beforeRead.IsCompleted.ShouldBeFalse();
+
+		clients.Called(session, transportSession: null, clientName: null, clientVersion: null);
+		beforeRead.IsCompleted.ShouldBeTrue();
+
+		var beforeListing = clients.Changed.Next;
+		clients.Listed(relayed: null, transportSession: null, "probe", "1.0");
+		beforeListing.IsCompleted.ShouldBeTrue();
+
+		var beforeIntroduction = clients.Changed.Next;
+		clients.Introduce(RelayProtocol.NewRelayId(), Facts(CallSession.Mint()));
+		beforeIntroduction.IsCompleted.ShouldBeTrue();
+	}
+
 	/// <summary>Subagents share their session's one connection and so its one relay: every call they make is the one client's.</summary>
 	[Test]
 	public void One_relay_making_many_calls_is_one_client()

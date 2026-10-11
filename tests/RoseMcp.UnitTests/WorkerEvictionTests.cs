@@ -24,6 +24,33 @@ public sealed class WorkerEvictionTests
 
 	private static EvictionVerdict Decide(EvictionFacts facts) => WorkerEviction.Decide(facts, IdleAfter, Grace, Now);
 
+	/// <summary>
+	/// When an idle worker will be closed is read from the same facts the sweep decides on: its last use plus the
+	/// limit, or sooner where its solution has gone, and never while somebody is using it.
+	/// </summary>
+	[Test]
+	public void A_worker_closes_its_idle_limit_after_its_last_use_or_sooner_once_its_solution_has_gone()
+	{
+		var idle = Idle(TimeSpan.FromMinutes(10));
+
+		WorkerEviction.ClosesAt(idle, IdleAfter, Grace).ShouldBe(Now + TimeSpan.FromMinutes(20));
+
+		var gone = idle with { SolutionMissingSinceUtc = Now - TimeSpan.FromMinutes(1) };
+		WorkerEviction.ClosesAt(gone, IdleAfter, Grace).ShouldBe(Now + TimeSpan.FromMinutes(1));
+
+		var goneLongAfter = Idle(TimeSpan.FromMinutes(29)) with { SolutionMissingSinceUtc = Now };
+		WorkerEviction.ClosesAt(goneLongAfter, IdleAfter, Grace).ShouldBe(Now + TimeSpan.FromMinutes(1), "the idle limit comes first");
+
+		WorkerEviction.ClosesAt(idle with { Busy = true }, IdleAfter, Grace).ShouldBeNull("a worker in use is not closing");
+		WorkerEviction.ClosesAt(idle with { Loading = true }, IdleAfter, Grace).ShouldBeNull("a load is somebody about to use it");
+		WorkerEviction.ClosesAt(idle with { Alive = false, StoppedUtc = Now }, IdleAfter, Grace).ShouldBeNull("a stopped worker has closed");
+
+		// The moment it gives is the moment Decide starts answering an eviction.
+		var closes = WorkerEviction.ClosesAt(idle, IdleAfter, Grace)!.Value;
+		WorkerEviction.Decide(idle, IdleAfter, Grace, closes - TimeSpan.FromSeconds(1)).ShouldBe(EvictionVerdict.Keep);
+		WorkerEviction.Decide(idle, IdleAfter, Grace, closes).ShouldBe(EvictionVerdict.EvictIdle);
+	}
+
 	[Test]
 	public void A_worker_used_within_the_limit_is_kept() =>
 		Decide(Idle(TimeSpan.FromMinutes(29))).ShouldBe(EvictionVerdict.Keep);

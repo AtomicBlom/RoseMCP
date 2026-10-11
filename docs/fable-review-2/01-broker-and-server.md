@@ -107,10 +107,10 @@ workspace. The compiler enforces it now, and the revision is enumerated over the
 ### BRK-13 `MarkStopped` and `WorkerExitReason.SolutionUnloaded` are dead in the broker
 - **Severity:** Low
 - **Effort:** S
-- **Where:** `src/RoseMcp.Broker/WorkspaceWorker.cs:233`, `src/RoseMcp.Broker/WorkerExitReason.cs:8-9`; rendered at `src/RoseMcp.Tray/WorkspaceRow.cs:324`
-- **What:** `MarkStopped` has zero references. `SolutionUnloaded` is never assigned anywhere in the broker; the worker has a `SolutionUnloadedException` path (`WorkspaceHost.cs:87`) but the broker sees that worker's exit as `Crashed`, because `WatchForExit` only knows "exited on its own". The tray has a display string for a state that cannot occur.
+- **Where:** `src/RoseMcp.Broker/WorkspaceWorker.cs:233`, `src/RoseMcp.Broker/WorkerExitReason.cs:8-9`; the tray's display string for it went with its window in #462, and the RoseMCP window (#463) has none yet
+- **What:** `MarkStopped` has zero references. `SolutionUnloaded` is never assigned anywhere in the broker; the worker has a `SolutionUnloadedException` path (`WorkspaceHost.cs:87`) but the broker sees that worker's exit as `Crashed`, because `WatchForExit` only knows "exited on its own". No window shows a state that cannot occur, but the reason is still on every workspace row the operator API serves.
 - **Why it matters:** A solution deleted past the grace period presents in the tray as a crash, which is the one exit the enum's own doc calls "expected, not a failure". Dead enum values invite a reader to believe a path exists.
-- **Suggested change:** Either wire it -- the worker exits with a distinct code on unload and `WatchForExit` reads `process.ExitCode` -- or delete both members and the tray's mapping. The former is small and makes the tray honest.
+- **Suggested change:** Either wire it -- the worker exits with a distinct code on unload and `WatchForExit` reads `process.ExitCode` -- or delete both members. The former is small and makes every reader of the exit reason honest.
 
 ### BRK-14 `OrderedProgress` claims to restore an order the invariant says is already lost
 - **Severity:** Low

@@ -19,7 +19,7 @@ public sealed class TrayNotificationTests
 	private static readonly BuildIdentity Build = new() { Version = "1.3.0", Commit = "d41a9e0c11d75a16a82274f8c52a9e33110afee4" };
 
 	/// <summary>
-	/// The release is remembered in a file, so a tray started again -- every sign-in and every deploy -- does not
+	/// The release is claimed in a file, so a tray started again -- every sign-in and every deploy -- does not
 	/// announce the release it already announced. A later release is announced in its turn.
 	/// </summary>
 	[Test]
@@ -31,14 +31,12 @@ public sealed class TrayNotificationTests
 		{
 			var path = TrayMemoryFile.PathIn(folder.FullName);
 
-			var first = TrayMemoryFile.Read(path);
-			first.IsNewRelease(available: true, "1.4.0").ShouldBeTrue();
-			TrayMemoryFile.Write(path, first with { NotifiedRelease = "1.4.0" }).ShouldBeTrue();
+			TrayMemoryFile.ClaimRelease(path, "1.4.0", out var remembered).ShouldBeTrue();
+			remembered.ShouldBeTrue();
 
-			var restarted = TrayMemoryFile.Read(path);
-			restarted.IsNewRelease(available: true, "1.4.0").ShouldBeFalse();
-			restarted.IsNewRelease(available: true, "v1.4.0").ShouldBeFalse();
-			restarted.IsNewRelease(available: true, "1.5.0").ShouldBeTrue();
+			TrayMemoryFile.ClaimRelease(path, "1.4.0", out _).ShouldBeFalse();
+			TrayMemoryFile.ClaimRelease(path, "v1.4.0", out _).ShouldBeFalse();
+			TrayMemoryFile.ClaimRelease(path, "1.5.0", out _).ShouldBeTrue();
 		}
 		finally
 		{
@@ -58,7 +56,7 @@ public sealed class TrayNotificationTests
 
 	/// <summary>
 	/// A memory that cannot be read is an empty one -- the worst it costs is a notification said twice -- and
-	/// writing it leaves no staging file behind and keeps fields it does not change.
+	/// changing it leaves no staging file behind.
 	/// </summary>
 	[Test]
 	public void The_memory_survives_a_file_that_is_missing_or_nonsense()
@@ -68,21 +66,76 @@ public sealed class TrayNotificationTests
 		try
 		{
 			var path = TrayMemoryFile.PathIn(folder.FullName);
-			TrayMemoryFile.Read(path).ShouldBe(new TrayMemory());
+			TrayMemoryFile.Read(path).NotifiedRelease.ShouldBeNull();
+			TrayMemoryFile.Read(path).LastBuilds.ShouldBeEmpty();
 
 			File.WriteAllText(path, "{ not json");
-			TrayMemoryFile.Read(path).ShouldBe(new TrayMemory());
+			TrayMemoryFile.Read(path).NotifiedRelease.ShouldBeNull();
 
-			TrayMemoryFile.Write(path, new TrayMemory { NotifiedRelease = "1.4.0", LastCommit = "abc" }).ShouldBeTrue();
-			TrayMemoryFile.Write(path, TrayMemoryFile.Read(path) with { LastCommit = "def" }).ShouldBeTrue();
+			TrayMemoryFile.Remember(path, memory => memory.WithLastBuild("D:/a/RoseMcp.Tray.exe", "abc", DateTimeOffset.UtcNow)).ShouldBeTrue();
 
-			TrayMemoryFile.Read(path).ShouldBe(new TrayMemory { NotifiedRelease = "1.4.0", LastCommit = "def" });
-			Directory.GetFiles(folder.FullName).Select(Path.GetFileName).ShouldBe([TrayMemoryFile.FileName]);
+			TrayMemoryFile.Read(path).LastCommitOf("D:/A/ROSEMCP.TRAY.EXE").ShouldBe("abc");
+			Directory.GetFiles(folder.FullName, "*.tmp").ShouldBeEmpty();
 		}
 		finally
 		{
 			folder.Delete(recursive: true);
 		}
+	}
+
+	/// <summary>
+	/// Two trays share the file, each having read it at its own start. Each change reads the file as it is now
+	/// and changes its own field, so neither copy's change is lost to the other's older copy, and each install
+	/// remembers its own build.
+	/// </summary>
+	[Test]
+	public void Two_trays_sharing_the_memory_keep_each_other_s_changes()
+	{
+		var folder = Directory.CreateTempSubdirectory("rosemcp-tray-");
+
+		try
+		{
+			var path = TrayMemoryFile.PathIn(folder.FullName);
+			const string Installed = @"C:\Users\me\AppData\Local\BinaryVibrance\RoseMCP\tray\RoseMcp.Tray.exe";
+			const string FromSource = @"D:\src\RoseMCP\src\RoseMcp.Tray\bin\RoseMcp.Tray.exe";
+
+			var readBySource = TrayMemoryFile.Read(path);
+
+			TrayMemoryFile.Remember(path, memory => memory.WithLastBuild(Installed, "1111111aaaa", DateTimeOffset.UtcNow)).ShouldBeTrue();
+			TrayMemoryFile.ClaimRelease(path, "1.5.0", out _).ShouldBeTrue();
+			TrayMemoryFile.Remember(path, memory => memory.WithLastBuild(FromSource, "2222222bbbb", DateTimeOffset.UtcNow)).ShouldBeTrue();
+
+			var after = TrayMemoryFile.Read(path);
+			after.LastCommitOf(Installed).ShouldBe("1111111aaaa");
+			after.LastCommitOf(FromSource).ShouldBe("2222222bbbb");
+			after.NotifiedRelease.ShouldBe("1.5.0");
+
+			// What a copy read at its start does not decide: asking after the first copy announced, the second is
+			// told no, though the memory it read at start says the release is new.
+			readBySource.IsNewRelease(available: true, "1.5.0").ShouldBeTrue();
+			TrayMemoryFile.ClaimRelease(path, "1.5.0", out _).ShouldBeFalse();
+		}
+		finally
+		{
+			folder.Delete(recursive: true);
+		}
+	}
+
+	/// <summary>Installs not seen for longest are forgotten past the limit, so a machine full of worktrees does not grow the file without end.</summary>
+	[Test]
+	public void The_memory_keeps_the_most_recent_installs()
+	{
+		var memory = new TrayMemory();
+		var start = DateTimeOffset.UtcNow;
+
+		for (var install = 0; install < TrayMemory.InstallsKept + 5; install++)
+		{
+			memory = memory.WithLastBuild($"D:/worktree-{install}/RoseMcp.Tray.exe", $"commit{install}", start.AddMinutes(install));
+		}
+
+		memory.LastBuilds.Count.ShouldBe(TrayMemory.InstallsKept);
+		memory.LastCommitOf("D:/worktree-0/RoseMcp.Tray.exe").ShouldBeNull();
+		memory.LastCommitOf($"D:/worktree-{TrayMemory.InstallsKept + 4}/RoseMcp.Tray.exe").ShouldBe($"commit{TrayMemory.InstallsKept + 4}");
 	}
 
 	/// <summary>A handler failing on every poll is one notification, not one every two seconds.</summary>

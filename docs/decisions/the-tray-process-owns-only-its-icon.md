@@ -28,6 +28,11 @@ often. The tooltip names the build, then how many agents, workspaces and debugge
 why it is not serving, then what is waiting. The menu carries what is waiting as items that deal
 with it.
 
+**An icon Windows will not add yet is not a failure.** At sign-in the notification area may not exist
+when the tray starts, and it goes while Explorer restarts. The broker serves regardless, and the icon is
+tried again every few seconds and when the taskbar announces it has started. Only a failure that
+waiting cannot clear ends the process, before the broker holds anything.
+
 **A start that fails leaves the icon up.** Exiting would leave a person with no word at all about
 why RoseMCP is not there after sign-in. The icon stays, not serving, with the reason, one
 notification with the log, and Exit.
@@ -45,10 +50,14 @@ process outlived the broker before count, so a session started at sign-in is not
 reconnect. What the old broker held -- the debug sessions that ended with it, the tools that changed
 by name -- went with it, and each agent hears that on its own first result.
 
-**What the tray remembers is its own file.** The release it announced and the build that ran last
-live in `tray.json` beside the settings file, not in it: none of it is a choice somebody made, and
+**What the tray remembers is its own file.** The release it announced and the build each install ran
+last live in `tray.json` beside the settings file, not in it: none of it is a choice somebody made, and
 the settings file is read and written whole by every window, so a field the tray rewrote on every
-start would be one any window could overwrite with a stale copy.
+start would be one any window could overwrite with a stale copy. Two trays can share `tray.json` -- an
+installed one beside one run from a source tree -- so it is never written back from a copy read
+earlier: each change reads the file under a lock file and changes only its own field. A release is
+announced by whichever tray claims it first, and the last build is keyed by the executable's path, so
+each restart names the build that install moved from.
 
 ## What waits for the RoseMCP window
 

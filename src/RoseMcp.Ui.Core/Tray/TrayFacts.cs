@@ -15,11 +15,8 @@ public sealed record TrayFacts
 	/// <summary>The build this tray is, which the tooltip names first.</summary>
 	public required BuildIdentity Build { get; init; }
 
-	/// <summary>
-	/// Why the broker cannot take calls -- starting, stopping, or a start that failed -- or null when
-	/// it is serving.
-	/// </summary>
-	public string? NotServing { get; init; }
+	/// <summary>Where the broker is: starting, serving, stopping, or a start that failed with its reason.</summary>
+	public required BrokerState Broker { get; init; }
 
 	/// <summary>Agent sessions connected now: see <see cref="TrayStatus.AgentsIn"/>.</summary>
 	public int Agents { get; init; }

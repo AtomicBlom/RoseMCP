@@ -4,13 +4,22 @@ using System.Text.Json.Serialization;
 namespace RoseMcp.Ui.Core.Tray;
 
 /// <summary>
-/// Reads and writes <see cref="TrayMemory"/>. Like the settings file, nothing here throws: a memory
-/// that cannot be read is an empty one, which costs at most a notification said twice.
+/// Reads and changes <see cref="TrayMemory"/>. Like the settings file, nothing here throws: a memory that
+/// cannot be read is an empty one, which costs at most a notification said twice.
+/// <para>
+/// More than one tray can share the file -- an installed one beside one run from a source tree -- so it is
+/// never written back from a copy read earlier. Each change reads the file as it is now, changes the one field
+/// it is about, and writes it, holding a lock file while it does so another copy's change in between is not
+/// lost. A lock that cannot be had within a moment is done without: the memory is not worth waiting on.
+/// </para>
 /// </summary>
 public static class TrayMemoryFile
 {
 	/// <summary>The file's name, in the folder the settings file is in.</summary>
 	public const string FileName = "tray.json";
+
+	/// <summary>How long a change waits for another copy's change to finish before it goes ahead regardless.</summary>
+	private static readonly TimeSpan LockWithin = TimeSpan.FromSeconds(2);
 
 	private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
 	{
@@ -37,13 +46,46 @@ public static class TrayMemoryFile
 	}
 
 	/// <summary>
-	/// Writes the whole file, reporting whether it landed. Written beside the file and moved over it, so a
-	/// tray killed mid-write -- which is how a deploy stops one -- leaves the old memory rather than half
-	/// of a new one.
+	/// Applies <paramref name="change"/> to the memory as the file holds it now and writes the result, reporting
+	/// whether it landed.
 	/// </summary>
-	public static bool Write(string path, TrayMemory memory)
+	public static bool Remember(string path, Func<TrayMemory, TrayMemory> change)
 	{
-		var staged = path + ".tmp";
+		using var gate = Lock(path);
+
+		return Write(path, change(Read(path)));
+	}
+
+	/// <summary>
+	/// Whether to announce <paramref name="version"/>: true only where the file, read now, says no copy has
+	/// announced it, in which case it is remembered as announced before this returns, so a second copy asking a
+	/// moment later is told no.
+	/// </summary>
+	/// <param name="path">The memory file.</param>
+	/// <param name="version">The newer release the update check found.</param>
+	/// <param name="remembered">Whether the announcement was written down; false costs a repeat at the next start.</param>
+	public static bool ClaimRelease(string path, string version, out bool remembered)
+	{
+		using var gate = Lock(path);
+
+		var memory = Read(path);
+		if (!memory.IsNewRelease(available: true, version))
+		{
+			remembered = true;
+			return false;
+		}
+
+		remembered = Write(path, memory with { NotifiedRelease = version });
+		return true;
+	}
+
+	/// <summary>
+	/// Writes the whole file. Written beside it and moved over it, so a tray killed mid-write -- which is how a
+	/// deploy stops one -- leaves the old memory rather than half of a new one.
+	/// </summary>
+	private static bool Write(string path, TrayMemory memory)
+	{
+		var staged = $"{path}.{Environment.ProcessId}.tmp";
 
 		try
 		{
@@ -55,7 +97,43 @@ public static class TrayMemoryFile
 		}
 		catch (Exception)
 		{
+			try
+			{
+				File.Delete(staged);
+			}
+			catch (Exception)
+			{
+				// Nothing to tidy, or nothing that can be; the next write replaces it.
+			}
+
 			return false;
+		}
+	}
+
+	/// <summary>
+	/// The lock file beside the memory, held open with no sharing, which every copy of the tray respects; or
+	/// null when it cannot be had within <see cref="LockWithin"/>.
+	/// </summary>
+	private static FileStream? Lock(string path)
+	{
+		var deadline = DateTime.UtcNow + LockWithin;
+
+		while (true)
+		{
+			try
+			{
+				if (Path.GetDirectoryName(path) is { Length: > 0 } directory) Directory.CreateDirectory(directory);
+
+				return new FileStream(path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+			}
+			catch (IOException) when (DateTime.UtcNow < deadline)
+			{
+				Thread.Sleep(25);
+			}
+			catch (Exception)
+			{
+				return null;
+			}
 		}
 	}
 }

@@ -73,8 +73,9 @@ public partial class App : Application
 	protected override async void OnLaunched(LaunchActivatedEventArgs args)
 	{
 		// The icon first, before anything that can fail or take time, so that starting is a state a person
-		// can see. One that cannot be created ends the process before the broker holds anything: with no
-		// window and no icon, nobody could see this tray or exit it.
+		// can see. Windows refusing to add it -- no notification area yet at sign-in -- is retried by the
+		// icon itself while the broker serves; only a failure that waiting cannot clear ends the process,
+		// and it does so before the broker holds anything.
 		try
 		{
 			Options = TrayOptions.Parse(Environment.GetCommandLineArgs());
@@ -218,8 +219,8 @@ public partial class App : Application
 	}
 
 	/// <summary>
-	/// Reports a failure to create the icon and stops, having nowhere to report it but the log. Only
-	/// reached before the broker starts, so nothing is lost by exiting.
+	/// Reports a failure setting up the tray's icon that waiting would not clear, and stops, having nowhere to
+	/// report it but the log. Only reached before the broker starts, so nothing is lost by exiting.
 	/// </summary>
 	private void Fail(Exception exception)
 	{
@@ -229,7 +230,7 @@ public partial class App : Application
 
 			logging.CreateLogger<App>().LogCritical(
 				exception,
-				"RoseMCP could not create its tray icon, so it is not starting. Its log is at {Log}.",
+				"RoseMCP could not set up its tray icon, so it is not starting. Its log is at {Log}.",
 				RoseFileLogging.Destination ?? "(nowhere)");
 		}
 		catch (Exception)

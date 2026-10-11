@@ -42,7 +42,7 @@ public static class TrayStatus
 	/// <summary>Not serving outranks needing the person: a broker that cannot take calls is the thing to know first.</summary>
 	public static TrayIconState StateOf(TrayFacts facts)
 	{
-		if (facts.NotServing is not null) return TrayIconState.NotServing;
+		if (!facts.Broker.IsServing) return TrayIconState.NotServing;
 
 		return NeedsYou(facts).Count > 0 ? TrayIconState.NeedsYou : TrayIconState.Serving;
 	}
@@ -98,7 +98,7 @@ public static class TrayStatus
 
 		var needs = NeedsYou(facts);
 
-		if (facts.NotServing is { } why)
+		if (WhyNotServing(facts.Broker) is { } why)
 		{
 			lines.Add($"Not serving: {why}");
 			needs = [.. needs.Where(need => need.Action != TrayAction.OpenFailureLog)];
@@ -116,6 +116,15 @@ public static class TrayStatus
 		return tooltip.Length <= TooltipLimit ? tooltip : tooltip[..TooltipLimit];
 	}
 
+	/// <summary>Why the broker takes no calls, in a few words, for the tooltip and the disabled menu items.</summary>
+	private static string? WhyNotServing(BrokerState broker) => broker.Phase switch
+	{
+		BrokerPhase.Starting => "starting",
+		BrokerPhase.Stopping => "stopping",
+		BrokerPhase.Failed => $"it could not start: {broker.FailedBecause}",
+		_ => null,
+	};
+
 	/// <summary>
 	/// The tray's one menu: open the RoseMCP app or debug an app with it; whatever is waiting for the person;
 	/// then starting with Windows, the log folder, and Exit.
@@ -130,9 +139,16 @@ public static class TrayStatus
 	/// <param name="roseAppInstalled">Whether the RoseMCP app's executable was found.</param>
 	public static IReadOnlyList<TrayMenuEntry> Menu(TrayFacts facts, StartupState startup, bool roseAppInstalled)
 	{
-		var serving = facts.NotServing is null;
+		var serving = facts.Broker.IsServing;
 		var canOpen = serving && roseAppInstalled;
-		var why = !roseAppInstalled ? " (not installed)" : !serving ? " (not serving)" : string.Empty;
+		var why = !roseAppInstalled ? " (not installed)"
+			: facts.Broker.Phase switch
+			{
+				BrokerPhase.Starting => " (starting)",
+				BrokerPhase.Stopping => " (stopping)",
+				BrokerPhase.Failed => " (not serving)",
+				_ => string.Empty,
+			};
 
 		var entries = new List<TrayMenuEntry>
 		{

@@ -17,7 +17,7 @@ public sealed class TrayStatusTests
 	/// <summary>A build stamped with nothing but a version, as an archive build is.</summary>
 	private static readonly BuildIdentity Unstamped = new() { Version = "1.3.0" };
 
-	private static readonly TrayFacts Serving = new() { Build = Unstamped };
+	private static readonly TrayFacts Serving = new() { Build = Unstamped, Broker = BrokerState.Serving };
 
 	private static readonly StartupState Off = new(Enabled: false, Elsewhere: false, Refused: false);
 
@@ -26,7 +26,7 @@ public sealed class TrayStatusTests
 	{
 		TrayStatus.StateOf(Serving).ShouldBe(TrayIconState.Serving);
 		TrayStatus.StateOf(Serving with { UpdateVersion = "1.4.0" }).ShouldBe(TrayIconState.NeedsYou);
-		TrayStatus.StateOf(Serving with { NotServing = "starting", UpdateVersion = "1.4.0", Failure = "boom" })
+		TrayStatus.StateOf(Serving with { Broker = BrokerState.Starting, UpdateVersion = "1.4.0", Failure = "boom" })
 			.ShouldBe(TrayIconState.NotServing);
 	}
 
@@ -85,15 +85,16 @@ public sealed class TrayStatusTests
 	}
 
 	/// <summary>
-	/// Not serving says why in place of the counts, and a start that failed is said once, as why, rather than
-	/// again as a failure waiting to be read.
+	/// Not serving says why in place of the counts, for each phase that is not serving, and a start that failed
+	/// is said once, as why, rather than again as a failure waiting to be read.
 	/// </summary>
 	[Test]
 	public void The_tooltip_says_why_it_is_not_serving()
 	{
-		TrayStatus.Tooltip(Serving with { NotServing = "starting" }).ShouldBe("RoseMCP 1.3.0\nNot serving: starting");
+		TrayStatus.Tooltip(Serving with { Broker = BrokerState.Starting }).ShouldBe("RoseMCP 1.3.0\nNot serving: starting");
+		TrayStatus.Tooltip(Serving with { Broker = BrokerState.Stopping }).ShouldBe("RoseMCP 1.3.0\nNot serving: stopping");
 
-		var failed = Serving with { NotServing = "it could not start: port 5077 is in use", Failure = "port 5077 is in use" };
+		var failed = Serving with { Broker = BrokerState.Failed("port 5077 is in use"), Failure = "port 5077 is in use" };
 		TrayStatus.Tooltip(failed).ShouldBe("RoseMCP 1.3.0\nNot serving: it could not start: port 5077 is in use");
 	}
 
@@ -192,11 +193,56 @@ public sealed class TrayStatusTests
 	{
 		var missing = TrayStatus.Menu(Serving, Off, roseAppInstalled: false);
 		missing[0].ShouldBe(new TrayMenuEntry(TrayAction.OpenRose, "Open RoseMCP (not installed)", Enabled: false));
-		missing[1].ShouldBe(new TrayMenuEntry(TrayAction.DebugAnApp, "Debug an app\u2026 (not installed)", Enabled: false));
+		missing[1].ShouldBe(new TrayMenuEntry(TrayAction.DebugAnApp, "Debug an app… (not installed)", Enabled: false));
 
-		var stopped = TrayStatus.Menu(Serving with { NotServing = "starting" }, Off, roseAppInstalled: true);
-		stopped[0].ShouldBe(new TrayMenuEntry(TrayAction.OpenRose, "Open RoseMCP (not serving)", Enabled: false));
-		stopped.Where(entry => entry.Action is TrayAction.OpenLogFolder or TrayAction.Exit).ShouldAllBe(entry => entry.Enabled);
+		var starting = TrayStatus.Menu(Serving with { Broker = BrokerState.Starting }, Off, roseAppInstalled: true);
+		starting[0].ShouldBe(new TrayMenuEntry(TrayAction.OpenRose, "Open RoseMCP (starting)", Enabled: false));
+		starting.Where(entry => entry.Action is TrayAction.OpenLogFolder or TrayAction.Exit).ShouldAllBe(entry => entry.Enabled);
+	}
+
+	/// <summary>
+	/// Every phase decides the icon, the tooltip's second line and whether RoseMCP can be opened; only serving
+	/// opens it, and only a failed start carries a reason.
+	/// </summary>
+	[Test]
+	[Arguments(BrokerPhase.Starting, TrayIconState.NotServing, "Not serving: starting", "Open RoseMCP (starting)")]
+	[Arguments(BrokerPhase.Serving, TrayIconState.Serving, "0 agents, 0 workspaces, 0 debugged apps", "Open RoseMCP")]
+	[Arguments(BrokerPhase.Stopping, TrayIconState.NotServing, "Not serving: stopping", "Open RoseMCP (stopping)")]
+	[Arguments(BrokerPhase.Failed, TrayIconState.NotServing, "Not serving: it could not start: port 5077 is in use", "Open RoseMCP (not serving)")]
+	public void Each_phase_decides_the_icon_the_tooltip_and_the_menu(BrokerPhase phase, TrayIconState icon, string line, string open)
+	{
+		var broker = phase switch
+		{
+			BrokerPhase.Starting => BrokerState.Starting,
+			BrokerPhase.Serving => BrokerState.Serving,
+			BrokerPhase.Stopping => BrokerState.Stopping,
+			_ => BrokerState.Failed("port 5077 is in use"),
+		};
+
+		var facts = Serving with { Broker = broker };
+		var menu = TrayStatus.Menu(facts, Off, roseAppInstalled: true);
+
+		broker.Phase.ShouldBe(phase);
+		TrayStatus.StateOf(facts).ShouldBe(icon);
+		TrayStatus.Tooltip(facts).Split('\n')[1].ShouldBe(line);
+		menu[0].Text.ShouldBe(open);
+		menu[0].Enabled.ShouldBe(phase == BrokerPhase.Serving);
+		menu[1].Enabled.ShouldBe(phase == BrokerPhase.Serving);
+	}
+
+	/// <summary>A failed start always has a reason to show, and no other phase can carry one.</summary>
+	[Test]
+	public void Only_a_failed_start_carries_a_reason()
+	{
+		BrokerState.Failed("  port 5077 is in use ").FailedBecause.ShouldBe("port 5077 is in use");
+		BrokerState.Failed("").FailedBecause.ShouldNotBeNullOrWhiteSpace();
+		BrokerState.Failed(null).FailedBecause.ShouldNotBeNullOrWhiteSpace();
+
+		BrokerState.Starting.FailedBecause.ShouldBeNull();
+		BrokerState.Serving.FailedBecause.ShouldBeNull();
+		BrokerState.Stopping.FailedBecause.ShouldBeNull();
+
+		TrayStatus.Tooltip(Serving with { Broker = BrokerState.Failed("") }).ShouldContain("Not serving: it could not start: the reason is not known");
 	}
 
 	/// <summary>

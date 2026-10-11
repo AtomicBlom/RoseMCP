@@ -32,8 +32,11 @@ namespace RoseMcp.Tray;
 /// </para>
 /// <para>
 /// Everything here runs on the UI thread: the timers are dispatcher timers, the update check resumes on
-/// it, and a failure reported from any other thread is queued onto it. That is what lets the notify-once
-/// state -- the remembered release, the failures already said, the restart report -- go unlocked.
+/// it, and a failure reported from any other thread is queued onto it. That is what lets this run's
+/// notify-once state -- the release it announced, the failures already said, the restart report -- go
+/// unlocked. What is remembered across runs is shared with any other tray on the machine, so it is changed
+/// only through <see cref="TrayMemoryFile"/>, which reads the file fresh under a lock for each change, and
+/// off this thread, since that lock can wait.
 /// </para>
 /// <para>
 /// Lifetime: <see cref="Stopping"/> stops every timer and lets go of the broker's services before the broker
@@ -58,6 +61,18 @@ internal sealed class TrayIconHost : IDisposable
 	/// clicks, and opening the app twice for it would start a second process only to hand over and exit.
 	/// </summary>
 	private static readonly TimeSpan ClickSettle = TimeSpan.FromSeconds(1.5);
+
+	/// <summary>
+	/// How often an icon Windows would not add is tried again. Short enough that an icon refused at sign-in shows
+	/// moments after the taskbar does; each try is one shell call.
+	/// </summary>
+	private static readonly TimeSpan IconRetryInterval = TimeSpan.FromSeconds(5);
+
+	/// <summary>The install this tray runs from, which keys the build it remembers running last.</summary>
+	private static readonly string Install = Environment.ProcessPath ?? "RoseMcp.Tray";
+
+	/// <summary>Tries the icon again while Windows will not add it.</summary>
+	private readonly DispatcherQueueTimer _iconRetry;
 
 	/// <summary>
 	/// This build, named on the icon. The tray's own assembly rather than the broker's, because the tray is
@@ -93,16 +108,23 @@ internal sealed class TrayIconHost : IDisposable
 	/// <summary>Whether each relay's process started before the broker did, by process id, for the restart report.</summary>
 	private readonly Dictionary<int, bool> _outlived = [];
 
-	private TrayMemory _memory;
-
-	/// <summary>The commit the tray before this one ran, read before this run overwrites it.</summary>
+	/// <summary>The commit this install ran before this run, read before this run overwrites it.</summary>
 	private readonly string? _previousCommit;
+
+	/// <summary>
+	/// The release this run announced, so a memory that could not be written costs a repeat at the next start
+	/// and never within this one.
+	/// </summary>
+	private string? _announcedRelease;
+
+	/// <summary>Why the icon could not be added yet, held until there is a logger to say it to.</summary>
+	private string? _iconProblem;
 
 	private ILogger _logger = NullLogger.Instance;
 	private IServiceProvider? _services;
 	private DateTimeOffset _servingSince;
 	private RestartReport? _restart;
-	private string? _notServing = "starting";
+	private BrokerState _broker = BrokerState.Starting;
 	private string? _failure;
 	private int _notesAnswered;
 	private int? _checkoutAhead;
@@ -124,8 +146,9 @@ internal sealed class TrayIconHost : IDisposable
 	private bool _startupRefused;
 
 	/// <summary>
-	/// Creates the icon, in the starting state, and starts reading. Throws where the icon cannot be created,
-	/// which the caller treats as fatal: a tray with neither a window nor an icon cannot be seen or exited.
+	/// Creates the icon, in the starting state, and starts reading. An icon Windows will not add yet is tried
+	/// again rather than thrown; what does throw is a failure that would not clear by waiting, which the caller
+	/// treats as fatal.
 	/// </summary>
 	public TrayIconHost(App app)
 	{
@@ -133,8 +156,7 @@ internal sealed class TrayIconHost : IDisposable
 		_queue = DispatcherQueue.GetForCurrentThread();
 
 		_memoryPath = TrayMemoryFile.PathIn(Path.GetDirectoryName(RoseSettingsFile.PathFor()) ?? Path.GetTempPath());
-		_memory = TrayMemoryFile.Read(_memoryPath);
-		_previousCommit = _memory.LastCommit;
+		_previousCommit = TrayMemoryFile.Read(_memoryPath).LastCommitOf(Install);
 
 		_art = new TrayIconArt(Path.Combine(AppContext.BaseDirectory, "Assets", "rose-mcp.ico"));
 
@@ -154,9 +176,14 @@ internal sealed class TrayIconHost : IDisposable
 		_instance = new Mutex(initiallyOwned: true, InstanceName(), out var firstCopy);
 		if (!firstCopy) _icon.Id = TrayIcon.CreateUniqueGuidFromString($"{Environment.ProcessPath}|{Environment.ProcessId}");
 
-		// Efficiency mode off: it is meant for an app that hides in the tray doing nothing, and this process
-		// is the broker every agent's calls go through. Throttled, every one of them would be slower.
-		_icon.ForceCreate(enablesEfficiencyMode: false);
+		// Windows refuses to add an icon while there is no notification area to add it to -- at sign-in before
+		// Explorer is up, or while it restarts -- and that clears by itself, so it is no reason for the broker
+		// not to serve. The icon is tried again on a timer, and H.NotifyIcon adds it itself when the taskbar
+		// announces it has started.
+		_iconRetry = _queue.CreateTimer();
+		_iconRetry.Interval = IconRetryInterval;
+		_iconRetry.Tick += (_, _) => RetryIcon();
+		if (!TryCreateIcon()) _iconRetry.Start();
 
 		_clicks = _icon.TrayIcon.MessageWindow.SubscribeToMouseEventReceived(OnMouse);
 
@@ -198,12 +225,22 @@ internal sealed class TrayIconHost : IDisposable
 
 		_services = services;
 		_logger = services.GetRequiredService<ILogger<TrayIconHost>>();
-		_notServing = null;
+		_broker = BrokerState.Serving;
 		_servingSince = DateTimeOffset.UtcNow;
 		_restart = new RestartReport();
 
-		_memory = _memory with { LastCommit = Build.Commit, LastVersion = Build.Version };
-		if (!TrayMemoryFile.Write(_memoryPath, _memory)) _logger.LogWarning("Could not write {Path}; the next restart cannot say which build it moved from.", _memoryPath);
+		ReportIconProblem();
+
+		// Off the UI thread, since the change can wait a moment on another tray's.
+		var path = _memoryPath;
+		var logger = _logger;
+		var since = _servingSince;
+
+		_ = Task.Run(() =>
+		{
+			var remembered = TrayMemoryFile.Remember(path, memory => memory.WithLastBuild(Install, Build.Commit, since));
+			if (!remembered) logger.LogWarning("Could not write {Path}; the next restart cannot say which build it moved from.", path);
+		});
 
 		Poll();
 		ReadCheckout();
@@ -221,9 +258,10 @@ internal sealed class TrayIconHost : IDisposable
 
 		_logger = logger;
 		_services = null;
-		_notServing = $"it could not start: {reason}";
+		_broker = BrokerState.Failed(reason);
 		_failure = reason;
 
+		ReportIconProblem();
 		Notify(TrayNotification.CouldNotStart(reason));
 		Show();
 	}
@@ -255,9 +293,10 @@ internal sealed class TrayIconHost : IDisposable
 		_poll.Stop();
 		_checkoutTimer.Stop();
 		_updateTimer?.Stop();
+		_iconRetry.Stop();
 		_services = null;
 		_restart = null;
-		_notServing = "stopping";
+		_broker = BrokerState.Stopping;
 
 		Show();
 	}
@@ -298,6 +337,52 @@ internal sealed class TrayIconHost : IDisposable
 	}
 
 	/// <summary>
+	/// Adds the icon to the notification area, reporting whether it is there. A refusal is remembered to be said
+	/// once there is a logger, and is not thrown: the shell not being ready is a state that passes.
+	/// </summary>
+	private bool TryCreateIcon()
+	{
+		try
+		{
+			// Efficiency mode off: it is meant for an app that hides in the tray doing nothing, and this process
+			// is the broker every agent's calls go through. Throttled, every one of them would be slower.
+			_icon.ForceCreate(enablesEfficiencyMode: false);
+
+			if (_iconProblem is not null)
+			{
+				_logger.LogInformation("The tray icon has been added, after: {Problem}", _iconProblem);
+				_iconProblem = null;
+			}
+
+			return true;
+		}
+		catch (InvalidOperationException exception)
+		{
+			_iconProblem ??= exception.Message;
+			Debug.WriteLine($"Could not add the tray icon yet: {exception.Message}");
+			return false;
+		}
+	}
+
+	/// <summary>Tries the icon again until it is there, which H.NotifyIcon may also have done on the taskbar starting.</summary>
+	private void RetryIcon()
+	{
+		var done = _disposed || _icon.IsCreated || TryCreateIcon();
+		if (done) _iconRetry.Stop();
+	}
+
+	/// <summary>Says, once there is somewhere to say it, that the icon is not up yet.</summary>
+	private void ReportIconProblem()
+	{
+		if (_iconProblem is not { } problem) return;
+
+		_logger.LogWarning(
+			"The tray icon could not be added yet ({Problem}); it is tried every {Interval} and again when the taskbar starts.",
+			problem,
+			IconRetryInterval);
+	}
+
+	/// <summary>
 	/// The mutex a copy of this executable holds: per session, and per path, since a copy elsewhere is a
 	/// different exe with a GUID of its own and no icon to take over.
 	/// </summary>
@@ -318,7 +403,7 @@ internal sealed class TrayIconHost : IDisposable
 		var workspaces = services.GetRequiredService<WorkspaceManager>().Describe();
 		var sessions = services.GetRequiredService<LiveAppSessionManager>().Describe();
 
-		var counted = new TrayFacts { Build = Build }.WithCounts(clients, workspaces, sessions);
+		var counted = new TrayFacts { Build = Build, Broker = _broker }.WithCounts(clients, workspaces, sessions);
 		_agents = counted.Agents;
 		_workspaces = counted.Workspaces;
 		_debuggedApps = counted.DebuggedApps;
@@ -421,8 +506,9 @@ internal sealed class TrayIconHost : IDisposable
 
 	/// <summary>
 	/// Asks once, in the background, and announces a release the person has not been told about. Each release
-	/// is announced once, across runs: the version is remembered as it is announced, in memory first, so a
-	/// memory that cannot be written costs a repeat on the next start and never within this one.
+	/// is announced once across runs and across every tray on the machine: the first to claim it in the shared
+	/// memory announces it, and this run also keeps what it announced, so a memory that cannot be written costs
+	/// a repeat on the next start and never within this one.
 	/// <para>
 	/// Nothing is downloaded and nothing is installed. The package is a hundred megabytes and installing it
 	/// stops a tray that is holding somebody's loaded solution -- which is not a thing to do to them mid-task
@@ -451,10 +537,25 @@ internal sealed class TrayIconHost : IDisposable
 				status.IsUpdateAvailable);
 		}
 
-		if (_memory.IsNewRelease(status.IsUpdateAvailable, status.LatestVersion))
+		var newer = status.IsUpdateAvailable && status.LatestVersion is { Length: > 0 } && !string.Equals(status.LatestVersion, _announcedRelease, StringComparison.OrdinalIgnoreCase);
+
+		if (!newer)
 		{
-			_memory = _memory with { NotifiedRelease = status.LatestVersion };
-			if (!TrayMemoryFile.Write(_memoryPath, _memory)) _logger.LogWarning("Could not write {Path}; the release may be announced again at the next start.", _memoryPath);
+			Show();
+			return;
+		}
+
+		// Claimed in the file as it is now, so another tray on this machine that announced it first wins and this
+		// one stays quiet. Off the UI thread, since the claim can wait a moment on another tray's change.
+		var path = _memoryPath;
+		var version = status.LatestVersion!;
+		var (claimed, remembered) = await Task.Run(() => (TrayMemoryFile.ClaimRelease(path, version, out var written), written)).ConfigureAwait(true);
+		if (_stopped) return;
+
+		if (claimed)
+		{
+			_announcedRelease = status.LatestVersion;
+			if (!remembered) _logger.LogWarning("Could not write {Path}; the release may be announced again at the next start.", _memoryPath);
 
 			Notify(TrayNotification.Release(status.LatestVersion!));
 		}
@@ -529,7 +630,7 @@ internal sealed class TrayIconHost : IDisposable
 	{
 		if (_disposed) return;
 
-		var canOpen = _notServing is null && InspectorLauncher.ResolvePath(_app.Options.InspectorPath) is not null;
+		var canOpen = _broker.IsServing && InspectorLauncher.ResolvePath(_app.Options.InspectorPath) is not null;
 		if (canOpen)
 		{
 			Do(TrayAction.OpenRose);
@@ -545,7 +646,7 @@ internal sealed class TrayIconHost : IDisposable
 	private TrayFacts Facts() => new()
 	{
 		Build = Build,
-		NotServing = _notServing,
+		Broker = _broker,
 		Agents = _agents,
 		Workspaces = _workspaces,
 		DebuggedApps = _debuggedApps,

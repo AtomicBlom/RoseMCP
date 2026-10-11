@@ -413,42 +413,9 @@ at all.
 
 ## Findings
 
-### USE-01 The tray can say a workspace is degraded but never why, because `WorkspaceSummary` throws away the report that says why
-
-- **Severity:** High   (blocks the stated goal: the project exists to stop confidently wrong answers)
-- **Effort:** M
-- **Where:** `src/RoseMcp.Contracts/WorkspaceSummary.cs`, `src/RoseMcp.Contracts/WorkspaceStatusReport.cs:45-70`,
-  `src/RoseMcp.Tray/WorkspaceRow.cs:253-310`
-- **What:** `WorkspaceStatusReport` carries `Projects` (a full `ProjectStatus` each),
-  `AnalyzerLoadFailures` (assembly, wanted version, HRESULT), `Restore`, `LoadDiagnostics` with a
-  pre-fold count, and `AvailableConfigurations`. `WorkspaceSummary` -- the only thing a window ever
-  sees -- carries none of them. It keeps `DegradedReasons` (already folded to one line per kind),
-  `FailedProjects` as a list of names, and `ProjectCount`. `WorkspaceRow.DescribeFacts` then reduces
-  even the names to `$"{failed} failed to load"`, so the names are computed, transported, and thrown
-  away in the last line before the screen.
-
-  The fold is deliberate and well argued -- `DegradedReasons` documents it: "a reason is an index
-  into this report rather than a second copy of it", listing `ProjectStatus.UnresolvedXamlTypes`,
-  `ProjectStatus.MissingAnalyzerOutputs`, `AnalyzerLoadFailures` and `RestoreReport.Unrestored` as
-  where the particulars live. The same docstring says "The tray draws this whole list into a single
-  information bar". Both halves are true and together they are a bug: the tray is given the index and
-  not the thing indexed, so the fold has nowhere to unfold to.
-- **Why it matters:** This repository's own `rose_workspace_status` reports Degraded because two
-  generator assemblies fail a manifest version check (10.0.14 located against a pinned 10.0.11). The
-  tray can show "Answers may be incomplete" and one folded sentence. It cannot show which assembly,
-  which version, or the HRESULT -- and it cannot show that three specific projects failed their
-  design-time build, which is the fact that decides whether the answer an agent just acted on was
-  about real code or about an empty project. A person who suspects a wrong answer has exactly one
-  next step, which is to open a log folder and read Serilog output. The single most valuable thing
-  RoseMCP knows is one hop from the screen and does not make it.
-- **Suggested change:** Add an expandable per-workspace detail section fed by a real
-  `WorkspaceStatusReport`, fetched on demand rather than on every poll (a "Details" disclosure on the
-  health InfoBar, one `GET /admin/workspaces/{key}/status`). Inside it: a project list with the
-  failed ones first and each carrying `TargetFramework`, `GeneratorCount` vs `GeneratedDocumentCount`,
-  `MissingAnalyzerOutputs`, `XamlStubbedCount` and `UnresolvedXamlTypes`; then `AnalyzerLoadFailures`
-  verbatim; then `Restore`. Pattern: *master-detail on demand* -- the summary stays cheap enough to
-  poll at 400ms and the report is read only when a person asks. The minimum viable version is three
-  lines: show `FailedProjects` as names in the health InfoBar instead of as a count.
+### ~~USE-01 The tray can say a workspace is degraded but never why, because `WorkspaceSummary` throws away the report that says why~~
+**#462.** The tray's window could say a workspace was degraded but not why. It was deleted with the tray's
+window; showing why, on demand, is in card 5.9's row.
 
 ### USE-02 The inspector -- the window for watching an agent debug -- shows nothing about what the agent is doing, and holds the data
 
@@ -696,25 +663,9 @@ running or finished, names its client and the directory it came from.
   saying when the tree was read, visually distinct from a live one -- is what makes it safe. Properties
   stay unavailable during the stop, scoped to the property pane rather than the whole tab.
 
-### USE-13 "Open log folder" is the escape hatch from every unanswered question in the product, and it opens a folder
-
-- **Severity:** Medium
-- **Effort:** M
-- **Where:** `src/RoseMcp.Tray/MainWindow.xaml.cs:454-461`, `WorkspaceRow.DescribeHealth` (three of
-  four branches end by pointing at the log folder)
-- **What:** `DescribeHealth` says "Its log, under Open log folder, says why" for a crashed worker and
-  "The worker's log, under Open log folder, has the details" for a failed load. `OnOpenHostLog` falls
-  back to a directory when no file is named. `OnOpenLogs` deliberately opens the *parent* of the
-  tray's own folder "because the question that brings someone here is usually which of them has the
-  answer" -- an accurate description of the problem and a statement that the window is not solving it.
-- **Why it matters:** Every dead end in the tray terminates at an Explorer window containing several
-  Serilog files from several processes. The person then greps. That is the point at which a status window has stopped being
-  a product and become a shortcut to the file system.
-- **Suggested change:** Pick the file, not the folder, wherever one is known -- a workspace row and a
-  session row each have a button that opens their own file, and a workspace's health message points
-  there. Beyond that, the real
-  fix is USE-04: if the activity list held a few hundred entries with their errors, most trips to the
-  log folder stop happening.
+### ~~USE-13 "Open log folder" is the escape hatch from every unanswered question in the product, and it opens a folder~~
+**#462.** The tray's window sent every unanswered question to a folder of logs. It was deleted with the
+tray's window; opening a workspace's or a session's own log file is in card 5.9's row.
 
 ### USE-14 Rulers produces the numbers a layout conversation is about, and they cannot leave the app
 
@@ -776,7 +727,7 @@ less than it costs, in maintenance, in screen space, or in risk to somebody's ru
 | **The Breakpoints compose form's position** (not the form) | `BreakpointsPane.xaml:17-150` | reorder only | Keep the flow -- it is good -- but it is a driving feature sitting where the supervision view should be. Demote to a disclosure. |
 | ~~The tray's 44px title bar~~ **#462.** | -- | -- | The tray has no window. |
 | ~~The second copy of the tray menu~~ **#462.** | -- | -- | The tray has one menu, on its icon. |
-| **`loaded in 24.3s` in the permanent facts line** | `WorkspaceRow.DescribeFacts` | 1 line | Actionable once, noise for the rest of the worker's life. Belongs in the on-demand detail (USE-01), not on the card forever. |
+| ~~`loaded in 24.3s` in the permanent facts line~~ **#462.** | -- | -- | Deleted with the tray's window; where the load time goes is in card 5.9's row. |
 
 Two things I considered cutting and would keep:
 
@@ -792,17 +743,10 @@ Two things I considered cutting and would keep:
 
 ## Redesign proposals, smallest change first
 
-### The tray -- three changes, none of them structural
+### ~~The tray -- three changes, none of them structural~~
 
-1. **Unfold the health InfoBar.** Add a "Details" disclosure that fetches a real
-   `WorkspaceStatusReport` on demand and lists the failed projects by name with their per-project
-   status, then the analyzer load failures verbatim. The minimum version is one line:
-   `DescribeFacts` shows the names in `FailedProjects` instead of their count. (USE-01)
-2. ~~**Promote the activity list.**~~ **#459.** Every call is kept, attributed, for a window to show.
-3. **Say when the report is stale.** `InfoAge` beside the heartbeat, silent under a threshold.
-   `Notice` into an Informational InfoBar on the session card. (USE-03)
-
-That is the whole tray redesign. It is close enough to its job that nothing else is needed.
+**#462.** The tray has no window to change. What these asked of it -- a degraded workspace's details on
+demand, and a session report's age -- is in card 5.9's row.
 
 ### The in-app panel -- explain one feature, add one button
 
@@ -943,7 +887,7 @@ in the top half of the pane.
 | ~~Attribution on an activity would be remembered by each call site.~~ **#459.** | One call filter records every call against its client, and the routing adds to the call's ambient recording, so no tool or call site can forget. |
 | A pane takes a hold on somebody's application as a side effect of becoming visible, and whether that is justified is a judgement per pane (see also UIP-08). | Make the hold an explicit window-level state with one visible control and one owner. A pane declares "I can only answer while held" and the *window* decides, so adding a pane cannot silently freeze a user's app. |
 | Facts are rendered into bare `TextBlock`s, so copyability is per-element and mostly absent. | One `FactTextBlockStyle` in `RoseMcp.Ui/Themes/Rose.xaml` with `IsTextSelectionEnabled="True"`, and a convention that anything carrying a fact uses it. The styled resource is the only spelling, so the default is selectable. |
-| Two menus and two windows keep their shared parts in sync by hand (`OnMenuOpening` iterating named pairs; UIP-10 finds the same shape across windows). | Declare the shared flyout once as a resource in `RoseMcp.Ui` and attach it twice. One declaration, two attachment points. |
+| ~~Two menus and two windows keep their shared parts in sync by hand.~~ **#462.** | The tray has one menu, on its icon, and no window to carry a second. |
 | An empty state is written inline in XAML in the tray and in one testable file in the inspector. | Move the tray's to an `TrayText` beside `InspectorText`. The file that exists is the better pattern and it is already proven. |
 
 ---

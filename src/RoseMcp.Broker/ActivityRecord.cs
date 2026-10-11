@@ -520,6 +520,11 @@ public sealed class ActivityRecord : IAsyncDisposable
 		}
 	}
 
+	/// <summary>
+	/// Writes what is queued until the queue is completed, pruning on the way. Every step that touches the disk
+	/// catches what it throws, and a batch that fails anyway still answers the flushes waiting on it: a loop that
+	/// ended here would leave every later entry queued and every flush waiting for the life of the broker.
+	/// </summary>
 	private async Task WriteLoopAsync()
 	{
 		Prune();
@@ -548,24 +553,33 @@ public sealed class ActivityRecord : IAsyncDisposable
 			var written = new List<string>();
 			var flushes = new List<FlushRequest>();
 
-			while (reader.TryRead(out var item))
+			try
 			{
-				if (item is FlushRequest flush)
+				while (reader.TryRead(out var item))
 				{
-					flushes.Add(flush);
-					continue;
+					if (item is FlushRequest flush)
+					{
+						flushes.Add(flush);
+						continue;
+					}
+
+					if (item is not ActivityEntry entry) continue;
+
+					written.Add(entry.Id);
+					Append(entry);
 				}
 
-				if (item is not ActivityEntry entry) continue;
-
-				Append(entry);
-				written.Add(entry.Id);
+				Persist();
 			}
-
-			Persist();
-
-			foreach (var id in written) _unwritten.TryRemove(id, out _);
-			foreach (var flush in flushes) flush.Done.TrySetResult();
+			catch (Exception exception)
+			{
+				Failed(exception);
+			}
+			finally
+			{
+				foreach (var id in written) _unwritten.TryRemove(id, out _);
+				foreach (var flush in flushes) flush.Done.TrySetResult();
+			}
 		}
 
 		Close();
@@ -581,7 +595,7 @@ public sealed class ActivityRecord : IAsyncDisposable
 			file.Write(line);
 			file.WriteByte((byte)'\n');
 		}
-		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException or JsonException)
+		catch (Exception exception)
 		{
 			Close();
 			Failed(exception);
@@ -594,7 +608,7 @@ public sealed class ActivityRecord : IAsyncDisposable
 		{
 			_file?.Flush();
 		}
-		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		catch (Exception exception)
 		{
 			Close();
 			Failed(exception);
@@ -643,7 +657,7 @@ public sealed class ActivityRecord : IAsyncDisposable
 		{
 			_file?.Dispose();
 		}
-		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		catch (Exception exception)
 		{
 			Failed(exception);
 		}
@@ -678,7 +692,7 @@ public sealed class ActivityRecord : IAsyncDisposable
 				}
 			}
 		}
-		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		catch (Exception exception)
 		{
 			Failed(exception);
 		}

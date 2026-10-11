@@ -512,54 +512,14 @@ at all.
   `TextBlock` each. Inversion: a contract property with a docstring arguing for a reader and no
   reader is a lint-able condition -- see the inversions section.
 
-### USE-04 The only record of what an agent did to your solution is eight entries in a collapsed expander, discarded when the workspace closes
+### ~~USE-04 The only record of what an agent did to your solution is eight entries in a collapsed expander, discarded when the workspace closes~~
+**#459.** The only record of what an agent did was eight unattributed entries per workspace, dropped
+when it closed. Every call is kept on disk for a week, with its arguments, response and an edit's diff,
+past reloads and restarts.
 
-- **Severity:** High   (data loss, in the sense that matters here: the record a person needs is gone)
-- **Effort:** M
-- **Where:** `src/RoseMcp.Broker/ActivityLog.cs:20-24` (`RecentPerWorkspace = 8`, `Forget`),
-  `src/RoseMcp.Tray/MainWindow.xaml:269-285`
-- **What:** `ActivityLog` keeps eight finished operations per workspace and says so in a comment:
-  "Enough history to answer 'what did that agent just do to my solution' and no more. This is live
-  state for a UI, not an audit trail; logs are where a permanent record belongs." The tray renders
-  them in an `Expander` that is collapsed by default, inside a card, with a tertiary-grey header. A
-  `Forget` on close drops them.
-- **Why it matters:** The comment names the question correctly and then answers a different one. "What
-  did that agent just do to my solution" is not a question about the last eight calls; an agent doing
-  a refactor runs dozens per minute, so the window is roughly twenty seconds wide. And it is asked
-  *after the fact*, usually after something looks wrong -- which is exactly when the last eight calls
-  are the eight that followed the one you care about. The fallback, "logs are where a permanent
-  record belongs", is a folder of Serilog files opened by a menu item; nothing in the product turns
-  that into an answer. Meanwhile this is the one thing RoseMCP knows that no other tool on the machine
-  can: Visual Studio, git and the file watcher all see the *edit*, and only Rose saw the *call*.
-- **Suggested change:** Two changes, in order of value. (1) Raise the cap substantially -- a few
-  hundred `WorkerActivity` records is tens of kilobytes -- and keep the window's *display* to the
-  last handful with a "show all" that opens a session-wide list. (2) Make the list a first-class
-  surface rather than a per-card expander: one "Activity" view over all workspaces, newest first,
-  filterable to failures. Pattern: *the audit trail is the product, not the debug output*. Add
-  `CallOrigin.Directory` and `CallSession.Id` to `WorkerActivity` while doing it (USE-05).
-
-### USE-05 With several agents on one broker -- the arrangement the README recommends -- nothing says which agent a call belongs to
-
-- **Severity:** Medium
-- **Effort:** M
-- **Where:** `src/RoseMcp.Contracts/WorkerActivity.cs`, `src/RoseMcp.Broker/ActivityLog.cs:33-47`,
-  `src/RoseMcp.Broker/CallOrigin.cs`, `src/RoseMcp.Broker/CallSession.cs`
-- **What:** `WorkerActivity` has `Operation`, `Target`, `StartedUtc`, `Elapsed`, `Outcome`, `Message`,
-  `PercentComplete` and `Error`. It has no field naming the client. `ActivityLog.Begin` takes
-  `(solutionPath, operation, target, upstream)` and does not capture `CallSession.Id` or
-  `CallOrigin.Directory`, both of which are ambient at the moment `Begin` is called.
-- **Why it matters:** README's "Transports" section sells exactly the multi-client case: "With a tray
-  already running, a stdio server starts no workers of its own and relays to the tray ... so every
-  session shares one warm worker per solution." Two Claude Code sessions in two worktrees of the same
-  repository is the ordinary developer setup, and it is the setup this repository itself runs. In it
-  the tray's running list is a mixture with no attribution: a `find references` that has been going
-  for nine seconds cannot be traced to the terminal that asked for it, and a card full of failures
-  cannot be traced to the agent producing them. The window that exists to answer "why is my agent
-  slow" cannot say which agent.
-- **Suggested change:** Capture both at `Begin` (they are `AsyncLocal`, so it is a field read), carry
-  them on `WorkerActivity`, and show the origin directory's leaf as a quiet caption on each activity
-  row. It also gives the activity view a filter. Pattern: *attribution is added once, at the one
-  place that knows* -- the same rule `WorkspaceScopedResult` already applies to results.
+### ~~USE-05 With several agents on one broker -- the arrangement the README recommends -- nothing says which agent a call belongs to~~
+**#459.** With several agents on one broker, nothing said which agent a call belonged to. Every call,
+running or finished, names its client and the directory it came from.
 
 ### USE-06 The Breakpoints pane puts the driving feature on top and the supervision feature below the fold
 
@@ -864,10 +824,7 @@ Two things I considered cutting and would keep:
    `WorkspaceStatusReport` on demand and lists the failed projects by name with their per-project
    status, then the analyzer load failures verbatim. The minimum version is one line:
    `DescribeFacts` shows the names in `FailedProjects` instead of their count. (USE-01)
-2. **Promote the activity list.** Raise `RecentPerWorkspace` from 8 to a few hundred, add
-   `CallOrigin.Directory` to `WorkerActivity`, and give the window a single "Activity" view across
-   all workspaces -- newest first, filterable to failures -- reached from the header. The per-card
-   expander can stay as it is; the point is that there is somewhere to go from it. (USE-04, USE-05)
+2. ~~**Promote the activity list.**~~ **#459.** Every call is kept, attributed, for a window to show.
 3. **Say when the report is stale.** `InfoAge` beside the heartbeat, silent under a threshold.
    `Notice` into an Informational InfoBar on the session card. (USE-03)
 
@@ -1009,7 +966,7 @@ in the top half of the pane.
 |---|---|
 | ~~A contract property written for a window is remembered into a window by whoever adds it.~~ **#295.** | A word match over the windows: it cannot tell rendering from a stray mention, and still catches a property nobody named anywhere. |
 | `WorkspaceSummary` is a hand-maintained lossy projection of `WorkspaceStatusReport`, and a field added to the report is silently invisible to every window. | A test that fails when the report gains a property with no counterpart on the summary and no entry in a `SummarisedElsewhere` list. Forces the "does a person need this" decision at the moment the field is added, which is the only moment anybody knows. |
-| Attribution on an activity would be remembered by each call site. | `ActivityLog.Begin` reads `CallOrigin.Directory` and `CallSession.Id` itself -- they are `AsyncLocal` and already ambient -- so no call site can forget. Exactly the argument `WorkspaceScopedResult` already makes for results. |
+| ~~Attribution on an activity would be remembered by each call site.~~ **#459.** | One call filter records every call against its client, and the routing adds to the call's ambient recording, so no tool or call site can forget. |
 | A pane takes a hold on somebody's application as a side effect of becoming visible, and whether that is justified is a judgement per pane (see also UIP-08). | Make the hold an explicit window-level state with one visible control and one owner. A pane declares "I can only answer while held" and the *window* decides, so adding a pane cannot silently freeze a user's app. |
 | Facts are rendered into bare `TextBlock`s, so copyability is per-element and mostly absent. | One `FactTextBlockStyle` in `RoseMcp.Ui/Themes/Rose.xaml` with `IsTextSelectionEnabled="True"`, and a convention that anything carrying a fact uses it. The styled resource is the only spelling, so the default is selectable. |
 | Two menus and two windows keep their shared parts in sync by hand (`OnMenuOpening` iterating named pairs; UIP-10 finds the same shape across windows). | Declare the shared flyout once as a resource in `RoseMcp.Ui` and attach it twice. One declaration, two attachment points. |
@@ -1039,10 +996,9 @@ in the top half of the pane.
 6. **Is the tray ever run by somebody other than the developer whose machine it is?** #160 hints at a
    per-user future. If the answer is no, the activity log can be much more generous than it is; if
    yes, USE-05's attribution has a second reason to exist.
-7. **What is the intended relationship between the activity log and the Serilog files?** Today three
-   of four dead ends in the tray end at "open the log folder". If the activity log is meant to
-   eventually answer those, it needs to hold far more; if the logs are meant to, the window needs to
-   open the *file*, not the folder.
+7. ~~What is the intended relationship between the activity log and the Serilog files?~~ **Answered in
+   #459.** The activity record holds every call with its error for a week, and the correlation id that
+   every log line of the call carries, so an entry leads to the lines rather than to the folder.
 
 ---
 

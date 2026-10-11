@@ -809,6 +809,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		}
 
 		return Text(arguments, "target")
+			?? Text(arguments, "symbol")
 			?? Text(arguments, "hintName")
 			?? Text(arguments, "query")
 			?? Text(arguments, "project")

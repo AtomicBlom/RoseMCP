@@ -149,6 +149,25 @@ public sealed class ActivityRecordTests : IDisposable
 		entry.Notes.ShouldHaveSingleItem().ShouldContain("The response is 64,000 characters", Case.Sensitive);
 	}
 
+	/// <summary>A listing carries the error where it carries no body, so an error is cut sooner than a response, and says so.</summary>
+	[Test]
+	public async Task An_error_past_its_ceiling_is_cut_and_says_how_long_it_was(CancellationToken cancellationToken)
+	{
+		await using var record = Open(out _);
+		var told = new string('e', ActivityBodies.ErrorCeiling + 500);
+
+		using (var call = record.Begin("rose_diagnostics", null, null, null, null, null))
+		{
+			call.Fail(told);
+		}
+
+		await record.FlushAsync(cancellationToken);
+
+		var entry = Calls(record, new ActivityQuery()).ShouldHaveSingleItem();
+		entry.Error!.Length.ShouldBe(ActivityBodies.ErrorCeiling);
+		entry.Notes.ShouldHaveSingleItem().ShouldContain("The error is 4,500 characters", Case.Sensitive);
+	}
+
 	/// <summary>A write keeps each file it changed with that file's own part of the diff, named absolute as the worker named it.</summary>
 	[Test]
 	public async Task A_write_keeps_each_changed_files_diff(CancellationToken cancellationToken)

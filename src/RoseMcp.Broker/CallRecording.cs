@@ -31,6 +31,9 @@ namespace RoseMcp.Broker;
 /// </summary>
 public sealed class CallRecording : IDisposable
 {
+	private const int MaxName = 128;
+
+	private const int MaxPath = 1024;
 	private static readonly AsyncLocal<CallRecording?> Ambient = new();
 
 	private readonly ActivityRecord _record;
@@ -70,8 +73,9 @@ public sealed class CallRecording : IDisposable
 
 		Id = ActivityRecord.MintId();
 		StartedUtc = record.Now;
-		Tool = tool;
-		Origin = origin;
+		// Both from the client, and shown to a person: a tool the broker does not have is still called by name.
+		Tool = ConnectedClients.Clean(tool, MaxName);
+		Origin = ConnectedClients.Clean(origin, MaxPath);
 		CorrelationId = CallCorrelation.Id;
 		ClientKey = KeyOf(relayed, _transportSession);
 
@@ -246,7 +250,10 @@ public sealed class CallRecording : IDisposable
 				if (_finished) return;
 			}
 
-			var entry = Snapshot(outcome, _record.Now, error, result);
+			var (said, fullLength) = ActivityBodies.Cut(error, ActivityBodies.ErrorCeiling);
+			var entry = Snapshot(outcome, _record.Now, said, result);
+
+			if (fullLength is { } full) entry = entry with { Notes = [.. entry.Notes, ActivityBodies.CutNote("error", full, said!.Length)] };
 
 			lock (_gate)
 			{

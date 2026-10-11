@@ -1,6 +1,10 @@
 using System.Text.Json;
 
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 
 using RoseMcp.Broker;
 using RoseMcp.Broker.Tools;
@@ -233,6 +237,57 @@ public sealed class BrokerForwardingTests
 		// Statements, so a block: the shape follows what was supplied rather than what was there.
 		text.ShouldContain(
 			"\tprivate static string Shout(string text)\r\n\t{\r\n\t\treturn text.ToLowerInvariant();\r\n\t}\r\n", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// The activity record keeps what a real write changed: the workspace that served the call, and each file's own
+	/// diff taken from the document before and after -- the diff an applied write leaves off for its caller.
+	/// </summary>
+	[Test]
+	public async Task A_write_through_the_broker_is_recorded_with_its_workspace_and_its_diff()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+
+		var directory = Path.Combine(Path.GetTempPath(), "RoseMcp.IntegrationTests", "Activity", Guid.NewGuid().ToString("N"));
+		var options = Options.Create(new BrokerOptions { ActivityDirectory = directory });
+		var relays = new RelayConnections();
+		await using var record = new ActivityRecord(options, relays, new ConnectedClients(relays, options), NullLogger<ActivityRecord>.Instance);
+
+		string id;
+
+		using (var call = record.Begin(ToolNames.ReplaceMember, null, null, null, "integration", null))
+		{
+			id = call.Id;
+
+			var written = await manager.CallAsync<MemberEditResult>(
+				WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
+				ToolNames.ReplaceMember,
+				new Dictionary<string, object?>
+				{
+					["symbol"] = "Library.Greeter.Greet(string)",
+					["code"] = "public string Greet(string name) => $\"{_prefix}! {name}\";",
+				},
+				retryIfWorkerDied: false,
+				cancellationToken);
+
+			written.Applied.ShouldBeTrue();
+			call.Finish(new CallToolResult { StructuredContent = JsonSerializer.SerializeToElement(written) });
+		}
+
+		await record.FlushAsync(cancellationToken);
+
+		var entry = record.Find(id).ShouldNotBeNull();
+		entry.Workspace.ShouldBe(fixture.SolutionPath);
+		entry.Target.ShouldBe("Library.Greeter.Greet(string)");
+		entry.Applied.ShouldBe(true);
+		entry.Outcome.ShouldBe(ActivityOutcome.Succeeded);
+
+		var change = entry.Changes.ShouldHaveSingleItem();
+		change.FilePath.ShouldBe(fixture.Path("Members", "Library", "Greeter.cs"));
+		change.Diff.ShouldNotBeNull().ShouldContain("+\tpublic string Greet(string name) => $\"{_prefix}! {name}\";", Case.Sensitive);
+		change.Diff.ShouldContain($"--- {change.FilePath}\n", Case.Sensitive);
 	}
 
 	/// <summary>Naming a symbol rather than a position has to survive the same trip.</summary>

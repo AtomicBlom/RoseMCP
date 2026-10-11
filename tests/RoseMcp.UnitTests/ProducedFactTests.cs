@@ -85,6 +85,9 @@ public sealed class ProducedFactTests
 		typeof(OperatorHello),
 		typeof(CheckoutDistance),
 		typeof(CommitsPast),
+		typeof(ActivityEntry),
+		typeof(ActivityFileChange),
+		typeof(ActivityPage),
 	];
 
 	/// <summary>
@@ -150,7 +153,35 @@ public sealed class ProducedFactTests
 		["CommitsPast.Ref"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
 		["CommitsPast.Count"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
 		["CommitsPast.Unknown"] = "Card 5.9: the RoseMCP window says why it cannot say how far.",
+
+		// The activity record is read by the RoseMCP window's Activity view, which shows what each agent did.
+		["ActivityEntry.StartedUtc"] = ActivityView,
+		["ActivityEntry.FinishedUtc"] = ActivityView,
+		["ActivityEntry.BrokerBuild"] = ActivityView,
+		["ActivityEntry.BrokerProcessId"] = ActivityView,
+		["ActivityEntry.CorrelationId"] = ActivityView,
+		["ActivityEntry.ClientId"] = ActivityView,
+		["ActivityEntry.ClientKey"] = ActivityView,
+		["ActivityEntry.ClientName"] = ActivityView,
+		["ActivityEntry.ClientLabel"] = ActivityView,
+		["ActivityEntry.WorkspaceKey"] = ActivityView,
+		["ActivityEntry.DebugSession"] = ActivityView,
+		["ActivityEntry.Tool"] = ActivityView,
+		["ActivityEntry.Revision"] = ActivityView,
+		["ActivityEntry.ArgumentsFullLength"] = ActivityView,
+		["ActivityEntry.ResponseFullLength"] = ActivityView,
+		["ActivityEntry.Notes"] = ActivityView,
+		["ActivityFileChange.FilePath"] = ActivityView,
+		["ActivityFileChange.Created"] = ActivityView,
+		["ActivityFileChange.Normalised"] = ActivityView,
+		["ActivityFileChange.Diff"] = ActivityView,
+		["ActivityFileChange.DiffFullLength"] = ActivityView,
+		["ActivityPage.Entries"] = ActivityView,
+		["ActivityPage.Bodies"] = ActivityView,
+		["ActivityPage.Retention"] = ActivityView,
 	};
+
+	private const string ActivityView = "Card 5.9: the RoseMCP window's Activity view shows what each agent did, read at /operator/activity.";
 
 	/// <summary>
 	/// Every facet of an answer can be selected on. A result field with no argument of the same

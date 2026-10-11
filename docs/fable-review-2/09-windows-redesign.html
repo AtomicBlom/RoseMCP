@@ -954,12 +954,8 @@ flowchart LR
       <div class="fd"><h3><span class="k">U3</span><s>Who's connected</s></h3>
         <p><a href="https://github.com/AtomicBlom/RoseMCP/issues/458">#458</a>. The broker could not tell one agent session from another. The relay names the session it serves, and the broker keeps a table of its clients, listing one without a relay as unnamed.</p>
         <span class="serves">Serves A3, B4</span></div>
-      <div class="fd"><h3><span class="k">U4</span>The activity record</h3>
-        <ul><li>Every call is recorded with its client, its workspace or debug session, the tool, the target, when it started and finished, the outcome and the error, and its arguments and response.</li>
-        <li>For an edit, the record keeps each changed file's diff, taken from the document before and after. A very large response is cut to a set size, with a note saying so.</li>
-        <li>It's written to disk and kept 7 days, so it survives reloads and restarts.</li>
-        <li>The windows' own reads aren't activity.</li>
-        <li>This replaces today's eight unattributed calls per workspace, forgotten on close.</li></ul>
+      <div class="fd"><h3><span class="k">U4</span><s>The activity record</s></h3>
+        <p><a href="https://github.com/AtomicBlom/RoseMCP/issues/459">#459</a>. The only record of what an agent did was eight unattributed entries per workspace, forgotten on close. Every call is kept on disk for a week, attributed, with its arguments, response and an edit's diff, past reloads and restarts.</p>
         <span class="serves">Serves B3, B4, C3</span></div>
       <div class="fd"><h3><span class="k">U5</span>Notes to an agent</h3>
         <ul><li>A route takes a note: to whom, about what (structured), and your text. The broker queues it per client.</li>
@@ -1051,7 +1047,7 @@ sequenceDiagram
       <li data-id="5.2"><div class="body"><b><s>Build identity.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/456">#456</a>. Two builds with one version could not be told apart. Every process carries its commit, and handshakes compare it.</span></div></li>
       <li data-id="5.3"><div class="body"><b><s>A relay that outlives a deploy.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/457">#457</a>. A deploy killed every relay, so every session needed <code>/mcp</code>. The relay outlives a deploy, reconnects by itself, and refreshes the client's tools only when they changed.</span></div></li>
       <li data-id="5.4"><div class="body"><b><s>Who's connected.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/458">#458</a>. The broker could not tell one agent session from another. The relay names the session it serves, and the broker keeps a table of its clients, listing one without a relay as unnamed.</span></div></li>
-      <li data-id="5.5"><div class="body"><b>The activity record.</b><span>Every call, with its client, target, start and finish, outcome, arguments and response. Each edit also gets its diff. The record is written to disk, kept 7 days and survives reloads and restarts. The windows' own reads aren't recorded.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/459">#459</a> · B3, B4, C3 · U4 · M · supersedes #390</span></div></li>
+      <li data-id="5.5"><div class="body"><b><s>The activity record.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/459">#459</a>. The only record of what an agent did was eight unattributed entries per workspace. Every call is kept on disk for a week, attributed, with its arguments, response and an edit's diff.</span></div></li>
       <li data-id="5.6"><div class="body"><b><s>Workspace health with a shape.</s></b><span>Done. Reasons were plain strings; each now has a kind, an effect and its projects, a person accepts one, and an agent acknowledges one.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/460">#460</a> · B1 · U8 · M</span></div></li>
       <li data-id="5.7"><div class="body"><b>The operator API the windows read.</b><span>Clients, workspaces, activity, notes, sessions and memory, tested through the end-to-end host. After this, nothing the new windows need comes from the broker's objects directly.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/461">#461</a> · U10 · M</span></div></li>
     </ol></div>

@@ -218,6 +218,21 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   whose relay is only re-opening its watch keeps its row -- an unnamed client's after the two idle hours, and the table is capped, since every row is
   made at a client's say-so. Calls without a session share one unnamed row rather than being refused,
   because a row says only that somebody called.
+- **Every tool call is recorded once, by the filter, and nothing else is.** `WithActivityRecord`, second
+  in the broker's pipeline after the correlation id, makes a `CallRecording` ambient for the call and
+  finishes it with the answer the client was given, the failure in the caller's words, or a
+  cancellation; disposing an unfinished one records it as cancelled, so no path leaves a call listed as
+  running. The routing adds to it only through `CallRecording.Current` -- a worker's call, a live-app
+  session's call, the start of a debug session, and `WorkspaceManager.Attribute`, the one step every
+  write's whole diff passes -- so whatever runs outside a call records nothing: an operator route, a poll,
+  a sweep, a loop a call started, whose inherited recording ends when the call does. A relay's read
+  marked `rosemcp/relayRead` is not recorded. Recording never fails a call and never waits on the disk:
+  an entry goes to a bounded queue, dropped and logged where it is full, written by a `Detached` loop
+  whose every disk step catches what it throws, since a loop that ended would leave every flush waiting
+  for the life of the broker. Disposing the record completes the queue and waits, bounded, for the loop
+  to write it; the host stopping flushes it first, for a host that stops without disposing its services.
+  Each broker run writes files of its own, so brokers sharing the folder never share a file or a lock.
+  See [the decision](../decisions/every-call-an-agent-makes-is-recorded-and-kept-on-disk.md).
 - **A live-app session whose host has died is dropped by the session manager, and only that one.**
   A poll that finds the host's transport gone marks the session ended; nothing else would ever
   remove it -- no caller closes a session it can no longer reach -- so the registry would carry it

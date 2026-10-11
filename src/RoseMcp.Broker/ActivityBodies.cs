@@ -27,6 +27,13 @@ public static class ActivityBodies
 	/// <summary>The most of a call's response an entry keeps, in characters: twice what a caller is shown of a diff.</summary>
 	public const int ResponseCeiling = 32_000;
 
+	/// <summary>
+	/// The most of what a failed call's caller was told an entry keeps, in characters. Smaller than a response, since
+	/// a listing carries the error where it carries no body, and a failure that says more than this is a response
+	/// that happened to be an error, whose whole text the response keeps.
+	/// </summary>
+	public const int ErrorCeiling = 4_000;
+
 	/// <summary>The most of one file's diff an entry keeps, in characters.</summary>
 	public const int FileDiffCeiling = 64_000;
 

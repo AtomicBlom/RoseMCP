@@ -77,10 +77,20 @@ public sealed class OperatorViews(
 	public OperatorWorkspace Workspace(WorkspaceWorker worker) =>
 		Row(worker, _options.TimeProvider.GetUtcNow().UtcDateTime, sampleMemory: true);
 
-	/// <summary>Every debug session, whoever started it, as <see cref="LiveAppSessionManager.Describe"/> lists them.</summary>
+	/// <summary>
+	/// Pulsed as calls start and end and as a session is started, ended or shared, so a wait on <see cref="Sessions"/>
+	/// answers at once whether an agent or a person changed it.
+	/// </summary>
+	public ChangeSignal SessionsChanged { get; } = ChangeSignal.Either(activity.Changed, sessions.Changed);
+
+	/// <summary>
+	/// Every debug session, whoever started it, as <see cref="LiveAppSessionManager.Describe"/> lists them, each one a
+	/// person shared naming the client it is shared with by that client's row now, and saying whether it is connected.
+	/// </summary>
 	public OperatorSessionList Sessions()
 	{
-		var rows = sessions.Describe();
+		var present = clients.ByKey();
+		var rows = sessions.Sessions.Select(session => WithShare(session, present)).ToList();
 
 		var stable = rows.Select(row => row with
 		{
@@ -92,6 +102,41 @@ public sealed class OperatorViews(
 
 		return new OperatorSessionList { Sessions = rows, Version = ViewVersion.Of(stable) };
 	}
+
+	/// <summary>One session's row, as <see cref="Sessions"/> lists it.</summary>
+	public LiveAppSessionSummary Session(LiveAppSession session) => WithShare(session, clients.ByKey());
+
+	/// <summary>
+	/// A session's row, its share naming the row the client table files the shared session under now -- a row goes
+	/// and is made again with a new id while the session is the same one -- and saying whether there is one.
+	/// </summary>
+	private static LiveAppSessionSummary WithShare(LiveAppSession session, IReadOnlyDictionary<string, ClientSummary> present)
+	{
+		var summary = session.Describe();
+		if (session.Owners.Shared is not { } shared || summary.SharedWith is not { } share) return summary;
+
+		var row = present.GetValueOrDefault(shared.Key);
+
+		return summary with
+		{
+			SharedWith = share with
+			{
+				ClientId = row?.Id ?? share.ClientId,
+				Name = row is null ? share.Name : ClientName(row) ?? share.Name,
+				Connected = row is not null,
+			},
+		};
+	}
+
+	/// <summary>
+	/// What a window calls a client: what its relay labelled it, else the folder it runs in, else the program; null
+	/// where it said none of them.
+	/// </summary>
+	public static string? ClientName(ClientSummary client) =>
+		client.Label
+			?? (client.WorkingDirectory is { Length: > 0 } folder ? folder : null)
+			?? client.Roots.FirstOrDefault()
+			?? client.ClientName;
 
 	/// <summary>
 	/// The page of the activity record <paramref name="query"/> asks for. Its version is worked out without the

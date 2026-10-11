@@ -46,7 +46,7 @@ public static class CallSession
 	public static bool IsRelayRead(JsonObject? meta) =>
 		meta?[RelayReadKey] is JsonValue value && value.TryGetValue(out bool marked) && marked;
 
-	private static readonly AsyncLocal<(string? Id, string? Client)> Ambient = new();
+	private static readonly AsyncLocal<(string? Id, string? Client, string? Relayed)> Ambient = new();
 
 	/// <summary>
 	/// Which client a call comes from: the transport's own session where it has one, else the one a relay named
@@ -54,9 +54,10 @@ public static class CallSession
 	/// <para>
 	/// The relay's name is needed because the http transport serves each request without a session -- the
 	/// current protocol revision has none to give -- so every relayed session would otherwise be the same null
-	/// one. It is an opaque id the relay mints for the life of its process, and it grants nothing: it decides only
-	/// which of the broker's per-client state a call reaches, its own acknowledged reasons. A client that sends
-	/// another's id has to know it, and nothing the broker answers carries one. It is read here, inside a tool
+	/// one. It is an opaque id the relay mints for the life of its process, and it grants only what was given to it:
+	/// it decides which of the broker's per-client state a call reaches -- its own acknowledged reasons, and a debug
+	/// session a person shared with that session. A client that sends another's id has to know it, and nothing the
+	/// broker answers carries one: a window names a client by its row, and the activity record by a hash. It is read here, inside a tool
 	/// call, which every request reaches only past the host's origin and token checks. Kept apart from any
 	/// transport id by its prefix, and refused unless it has the shape a relay mints, since whatever is read here
 	/// is compared and logged.
@@ -94,25 +95,41 @@ public static class CallSession
 	/// </summary>
 	public static string? Client => Ambient.Value.Client;
 
+	/// <summary>The client a relay named for the call, as <see cref="Relayed"/> gives it, read with no transport session in the way; null for none.</summary>
+	public static string? RelayedClient => Ambient.Value.Relayed;
+
+	/// <summary>
+	/// The key the client table files the calling session under: its relay's name first, else its transport session,
+	/// else the one unnamed client. What a person shares a debug session with, as a note is held under it, so the
+	/// session a window names by its row is the session whose calls reach what it was given.
+	/// </summary>
+	public static string ClientKey => ConnectedClients.KeyOf(Ambient.Value.Relayed, Ambient.Value.Id);
+
 	/// <summary>
 	/// Sets both for the current call, to one id: a caller with a transport session is that client. Each MCP
 	/// request runs on its own execution context, so this is scoped to one request and cannot leak into a
 	/// concurrent one; it is restored anyway, because a filter that leaves ambient state behind is a filter
 	/// nobody can reason about.
 	/// </summary>
-	public static IDisposable Use(string? id) => new Scope(id, id);
+	public static IDisposable Use(string? id) => new Scope(id, id, relayed: null);
 
 	/// <summary>Sets the transport's session and the client separately, for a call a relay named.</summary>
-	public static IDisposable Use(string? id, string? client) => new Scope(id, client);
+	public static IDisposable Use(string? id, string? client) => new Scope(id, client, relayed: null);
+
+	/// <summary>
+	/// Sets the transport's session, the client, and the client a relay named (<see cref="RelayedClient"/>), which
+	/// together say which row of the client table the call is (<see cref="ClientKey"/>).
+	/// </summary>
+	public static IDisposable Use(string? id, string? client, string? relayed) => new Scope(id, client, relayed);
 
 	private sealed class Scope : IDisposable
 	{
-		private readonly (string? Id, string? Client) _previous;
+		private readonly (string? Id, string? Client, string? Relayed) _previous;
 
-		public Scope(string? id, string? client)
+		public Scope(string? id, string? client, string? relayed)
 		{
 			_previous = Ambient.Value;
-			Ambient.Value = (Blank(id) ? null : id, Blank(client) ? null : client);
+			Ambient.Value = (Blank(id) ? null : id, Blank(client) ? null : client, Blank(relayed) ? null : relayed);
 		}
 
 		public void Dispose() => Ambient.Value = _previous;

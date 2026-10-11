@@ -12,6 +12,15 @@ public sealed record LiveAppSessionSummary
 
 	public required string TargetDescription { get; init; }
 
+	/// <summary>
+	/// Who started the session. An agent's belongs to the agent session that started it; a person's belongs to them
+	/// alone until they share it with one agent session, named by <see cref="SharedWith"/>.
+	/// </summary>
+	public LiveAppStarter StartedBy { get; init; }
+
+	/// <summary>The agent session a person has shared this session with, or null where it is shared with none.</summary>
+	public LiveAppShare? SharedWith { get; init; }
+
 	public required TargetArchitecture Architecture { get; init; }
 
 	public required LiveAppSessionState State { get; init; }

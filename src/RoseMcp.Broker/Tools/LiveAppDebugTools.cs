@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Diagnostics;
 
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
@@ -45,28 +44,9 @@ public sealed class LiveAppDebugTools(
 		InspectorVisibility showInspector = InspectorVisibility.UserPreference,
 		CancellationToken cancellationToken = default)
 	{
-		LocalAttachPolicy.EnsureAttachable(processId);
+		var started = await sessions.AttachAsync(processId, LiveAppOwners.OfCaller(), cancellationToken);
 
-		var target = new LiveAppTarget
-		{
-			Kind = LiveAppTargetKind.AttachProcess,
-			ProcessId = processId,
-			Description = DescribeProcess(processId),
-		};
-
-		var session = await sessions.StartAsync(target, cancellationToken);
-		var summary = session.Describe();
-
-		if (summary.State == LiveAppSessionState.Faulted)
-		{
-			// The host is alive but could not attach; reclaim it and tell the caller why.
-			await sessions.CloseAsync(session.SessionId, cancellationToken);
-			throw new McpException(summary.Detail ?? $"Could not attach to pid {processId}.");
-		}
-
-		ShowInspectorIfWanted(session, showInspector);
-
-		return session.Describe();
+		return Started(started, showInspector);
 	}
 
 	/// <summary>
@@ -88,6 +68,17 @@ public sealed class LiveAppDebugTools(
 			: inspector.Obstacle;
 
 		if (refused is not null) session.Note($"The inspector was asked for and did not open: {refused}");
+	}
+
+	/// <summary>
+	/// What an attach or a launch answers: the session, with the inspector opened on it where it has just started and
+	/// is wanted. One already open was offered its inspector when it started.
+	/// </summary>
+	private LiveAppSessionSummary Started(LiveAppStart started, InspectorVisibility showInspector)
+	{
+		if (!started.Existing) ShowInspectorIfWanted(started.Session, showInspector);
+
+		return started.Session.Describe();
 	}
 
 	[McpServerTool(
@@ -116,28 +107,9 @@ public sealed class LiveAppDebugTools(
 		// spent debugging code that is not the code being edited.
 		var fullPath = paths.Of(executablePath)?.Value ?? executablePath;
 
-		if (!File.Exists(fullPath)) throw new McpException($"No executable at {fullPath}.");
+		var started = await sessions.LaunchAsync(fullPath, arguments, LiveAppOwners.OfCaller(), cancellationToken);
 
-		var target = new LiveAppTarget
-		{
-			Kind = LiveAppTargetKind.LaunchExecutable,
-			ExecutablePath = fullPath,
-			Arguments = arguments,
-			Description = $"{Path.GetFileName(fullPath)} (launched)",
-		};
-
-		var session = await sessions.StartAsync(target, cancellationToken);
-		var summary = session.Describe();
-
-		if (summary.State == LiveAppSessionState.Faulted)
-		{
-			await sessions.CloseAsync(session.SessionId, cancellationToken);
-			throw new McpException(summary.Detail ?? $"Could not launch {fullPath}.");
-		}
-
-		ShowInspectorIfWanted(session, showInspector);
-
-		return session.Describe();
+		return Started(started, showInspector);
 	}
 
 	[McpServerTool(
@@ -160,25 +132,9 @@ public sealed class LiveAppDebugTools(
 		InspectorVisibility showInspector = InspectorVisibility.UserPreference,
 		CancellationToken cancellationToken = default)
 	{
-		var target = new LiveAppTarget
-		{
-			Kind = LiveAppTargetKind.LaunchUwp,
-			AppUserModelId = appUserModelId,
-			Description = $"{appUserModelId} (UWP)",
-		};
+		var started = await sessions.LaunchPackageAsync(appUserModelId, displayName: null, LiveAppOwners.OfCaller(), cancellationToken);
 
-		var session = await sessions.StartAsync(target, cancellationToken);
-		var summary = session.Describe();
-
-		if (summary.State == LiveAppSessionState.Faulted)
-		{
-			await sessions.CloseAsync(session.SessionId, cancellationToken);
-			throw new McpException(summary.Detail ?? $"Could not launch {appUserModelId}.");
-		}
-
-		ShowInspectorIfWanted(session, showInspector);
-
-		return session.Describe();
+		return Started(started, showInspector);
 	}
 
 	[McpServerTool(
@@ -232,7 +188,8 @@ public sealed class LiveAppDebugTools(
 			+ "Use this to stop watching a process without killing it; a debugger that is simply abandoned "
 			+ "would otherwise risk taking the target down with it, which detaching avoids. It fails rather "
 			+ "than reporting success if the debugger could not be detached, since that is the one outcome "
-			+ "where the target is at risk.")]
+			+ "where the target is at risk. A session the person started and shared with this one stays theirs: detaching "
+			+ "it ends the share and leaves the debugger attached.")]
 	public async Task<LiveSessionDetached> DetachAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
@@ -240,6 +197,15 @@ public sealed class LiveAppDebugTools(
 		// Held before the close, because closing forgets it, and its answer to "did the detach
 		// actually happen" is the only thing that makes a result saying it did true rather than habitual.
 		var session = sessions.Find(sessionId);
+
+		if (session is { Owners.IsPersons: true })
+		{
+			// The person's session, reached because they shared it with this one: leaving ends the share and
+			// leaves their debugger where it is, since an agent tidying up must not take it away from them.
+			await sessions.UnshareAsync(sessionId, cancellationToken);
+
+			return new LiveSessionDetached { SessionId = sessionId, Detached = false, Detail = LeftPersonsSession };
+		}
 
 		var closed = await sessions.CloseAsync(sessionId, cancellationToken);
 		if (!closed)
@@ -279,7 +245,8 @@ public sealed class LiveAppDebugTools(
 	[Description(
 		"List the live-app debug sessions the broker is supervising, each with its session id, target, "
 			+ "architecture, state, and process ids. Use it to recover a session id you did not keep from "
-			+ "rose_debug_attach, or to see what is currently attached before starting another session.")]
+			+ "rose_debug_attach, or to see what is currently attached before starting another session. Lists the "
+			+ "sessions this client started and any the person started and shared with it.")]
 	public LiveAppSessionList List() => new() { Sessions = sessions.DescribeOwned() };
 
 	[McpServerTool(
@@ -673,7 +640,7 @@ public sealed class LiveAppDebugTools(
 		throw new McpException(
 			$"No debug session '{sessionId}' is open for this client. rose_debug_list names the ones there "
 				+ "are. A session another client of this broker started belongs to it and is not reachable "
-				+ "from here.");
+				+ "from here, and one the person started is reachable once they share it with this session.");
 	}
 
 	/// <summary>What a caller whose session was dropped does to debug the target again.</summary>
@@ -681,16 +648,8 @@ public sealed class LiveAppDebugTools(
 		$"Start a new session with {ToolNames.DebugAttach}, {ToolNames.DebugLaunch} or {ToolNames.DebugLaunchUwp} "
 			+ "to debug the target again.";
 
-	private static string DescribeProcess(int processId)
-	{
-		try
-		{
-			using var process = Process.GetProcessById(processId);
-			return $"{process.ProcessName} (pid {processId})";
-		}
-		catch (Exception)
-		{
-			return $"pid {processId}";
-		}
-	}
+	/// <summary>What detaching a session the person shared with this one says: the share ended, and their debugger stays.</summary>
+	private const string LeftPersonsSession =
+		"That session is the person's, who started it and shared it with this one, so detaching ended this session's "
+			+ "share rather than their session: the debugger stays attached for them, and the session no longer reaches it.";
 }

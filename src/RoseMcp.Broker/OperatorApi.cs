@@ -92,6 +92,7 @@ public static class OperatorApi
 		MapXaml(operators);
 		MapHealth(operators);
 		MapNotes(operators);
+		MapDebugStart(operators);
 
 		// This host now has somewhere a person decides what agents propose, so proposing is worth allowing.
 		app.Services.GetRequiredService<WorkspaceHealth>().OfferToThePerson();
@@ -173,8 +174,42 @@ public static class OperatorApi
 	}
 
 	/// <summary>
+	/// A person starting a debug session without an agent: the running .NET apps they could attach to, with the session
+	/// already debugging each; the packaged apps they could launch; what they debugged lately; and attaching and
+	/// launching, a program by its full path with its arguments or a packaged app by its id.
+	/// <para>
+	/// Here and on no MCP tool, because these attach to any of this user's processes and run any program a request
+	/// names, as this user: the token is the only thing between them and every process on the machine that can reach a
+	/// loopback port, which is why they sit behind it with everything else here. They keep every rule the agent's
+	/// tools keep, being the same attach and launch, and the session they start is the person's alone. A start is
+	/// cancelled with its request, and a session it started is then ended rather than left with nobody holding its id.
+	/// </para>
+	/// </summary>
+	private static void MapDebugStart(RouteGroupBuilder operators)
+	{
+		var routes = operators.MapGroup("/debug");
+
+		routes.MapGet("/apps", (OperatorDebugging debugging, bool every = false) => Json(debugging.Apps(every)));
+
+		routes.MapGet("/packages", (OperatorDebugging debugging) => Json(debugging.Packages()));
+
+		routes.MapGet("/recent", (OperatorDebugging debugging) => Json(debugging.Recent()));
+
+		routes.MapPost(
+			"/attach",
+			async (AttachRequest body, OperatorDebugging debugging, HttpContext context) =>
+				Json(await debugging.AttachAsync(body, context.RequestAborted)));
+
+		routes.MapPost(
+			"/launch",
+			async (LaunchRequest body, OperatorDebugging debugging, HttpContext context) =>
+				Json(await debugging.LaunchAsync(body, context.RequestAborted)));
+	}
+
+	/// <summary>
 	/// Which sessions there are, with the version a window passes back as <c>after</c>, with <c>waitSeconds</c>, to be
-	/// answered when one starts, ends or changes state; one session; and ending one.
+	/// answered when one starts, ends, changes state or is shared; one session; sharing one the person started with
+	/// one agent session, and stopping; and ending one.
 	/// </summary>
 	private static void MapSessions(RouteGroupBuilder operators)
 	{
@@ -182,11 +217,31 @@ public static class OperatorApi
 			"/sessions",
 			async (OperatorViews views, LongPoll poll, HttpContext context, string? after = null, int waitSeconds = 0) =>
 				Json(await poll.WaitAsync(
-					views.Sessions, list => list.Version, after, waitSeconds, views.ActivityChanged, context.RequestAborted)));
+					views.Sessions, list => list.Version, after, waitSeconds, views.SessionsChanged, context.RequestAborted)));
 
 		operators.MapGet(
 			"/sessions/{sessionId}",
-			(string sessionId, LiveAppSessionManager sessions) => Json(Require(sessions, sessionId).Describe()));
+			(string sessionId, LiveAppSessionManager sessions, OperatorViews views) => Json(views.Session(Require(sessions, sessionId))));
+
+		// Sharing is the person's alone: a session they started belongs to no agent until they say so, and an agent
+		// able to share one would be handing the person's debugger to whichever session it liked.
+		operators.MapPost(
+			"/sessions/{sessionId}/share",
+			async (string sessionId, ShareRequest body, LiveAppSessionManager sessions, OperatorDebugging debugging, HttpContext context) =>
+			{
+				Require(sessions, sessionId);
+
+				return Json(await debugging.ShareAsync(sessionId, body, context.RequestAborted));
+			});
+
+		operators.MapDelete(
+			"/sessions/{sessionId}/share",
+			async (string sessionId, LiveAppSessionManager sessions, OperatorDebugging debugging, HttpContext context) =>
+			{
+				Require(sessions, sessionId);
+
+				return Json(await debugging.UnshareAsync(sessionId, context.RequestAborted));
+			});
 
 		operators.MapPost(
 			"/sessions/{sessionId}/detach",
@@ -593,6 +648,12 @@ public static class OperatorApi
 			catch (KeyNotFoundException exception)
 			{
 				return Fail(exception, StatusCodes.Status404NotFound);
+			}
+			catch (LiveAppRefusedException exception)
+			{
+				// A request that was fine, refused for the state of things: the target is being debugged already, or
+				// could not be reached. Neither a malformed request nor a fault, and a client says it as it is.
+				return Fail(exception, StatusCodes.Status409Conflict);
 			}
 			catch (ArgumentException exception)
 			{

@@ -182,6 +182,12 @@ public static class ServiceCollectionExtensions
 		services.AddSingleton<OperatorViews>();
 		services.AddSingleton(provider => new LongPoll(provider.GetService<IHostApplicationLifetime>()));
 
+		// A person debugging without an agent: what is running and installed, read from Windows unless a test has put
+		// its own in first, and the attach, launch and share the operator routes do through the session manager.
+		services.TryAddSingleton<IRunningApps, WindowsRunningApps>();
+		services.TryAddSingleton<IInstalledApps, WindowsInstalledApps>();
+		services.AddSingleton<OperatorDebugging>();
+
 		// No inspector unless a host that has an operator endpoint replaces this. A stdio broker
 		// genuinely cannot open one, and saying so beats a tool argument that silently does nothing.
 		services.TryAddSingleton<IInspectorPresenter>(NoInspector.WithoutAnEndpoint);
@@ -369,7 +375,9 @@ public static class ServiceCollectionExtensions
 		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
 		{
 			using var origin = CallOrigin.Use(OriginDirectory(context.Params));
-			using var session = CallSession.Use(context.Server.SessionId, CallSession.Of(context.Server.SessionId, context.Params?.Meta));
+			var meta = context.Params?.Meta;
+			using var session = CallSession.Use(
+				context.Server.SessionId, CallSession.Of(context.Server.SessionId, meta), CallSession.Of(null, meta));
 
 			return await next(context, cancellationToken);
 		}));

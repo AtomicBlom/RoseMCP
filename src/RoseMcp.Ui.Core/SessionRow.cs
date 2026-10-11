@@ -40,6 +40,9 @@ public sealed class SessionRow : Observable
 	private string _reportAge = string.Empty;
 	private string _installLocation = string.Empty;
 	private TimeSpan? _infoAge;
+	private string _owners = string.Empty;
+	private bool _isPersons;
+	private string? _sharedWithClientId;
 
 	// What Tick recomputes between polls, and when the poll they came from answered. An age is only
 	// true at the instant it was read, so ticking it means adding what has passed since.
@@ -257,10 +260,42 @@ public sealed class SessionRow : Observable
 		private set => Set(ref _recentHeader, value);
 	}
 
+	/// <summary>Who is in the session: who started it, and the agent session a person shared theirs with.</summary>
+	public string Owners
+	{
+		get => _owners;
+		private set => Set(ref _owners, value);
+	}
+
+	/// <summary>Whether the person started this session, which is what makes it theirs to share.</summary>
+	public bool IsPersons
+	{
+		get => _isPersons;
+		private set => Set(ref _isPersons, value);
+	}
+
+	/// <summary>The row of the agent session it is shared with, by the id the client table lists it under; null where it is shared with none.</summary>
+	public string? SharedWithClientId
+	{
+		get => _sharedWithClientId;
+		private set
+		{
+			Set(ref _sharedWithClientId, value);
+			OnPropertyChanged(nameof(IsShared));
+		}
+	}
+
+	/// <summary>Whether it is shared with an agent session.</summary>
+	public bool IsShared => SharedWithClientId is not null;
+
 	public void Update(LiveAppSessionSummary summary)
 	{
 		DisplayName = summary.TargetDescription;
 		TargetProcessId = summary.TargetProcessId;
+
+		Owners = DescribeOwners(summary);
+		IsPersons = summary.StartedBy == LiveAppStarter.Person;
+		SharedWithClientId = summary.SharedWith?.ClientId;
 
 		var tone = ToneOf(summary);
 		StateLabel = DescribeState(summary);
@@ -436,6 +471,23 @@ public sealed class SessionRow : Observable
 		};
 
 		return $"{named}{Format.Separator}{provider}";
+	}
+
+	/// <summary>
+	/// Who is in the session, as a header says it: an agent's, or yours alone, or yours and the agent session you
+	/// shared it with -- named as it was named when shared, and said to be gone while the client table lists it no
+	/// more, since the share then waits for that session's relay to come back.
+	/// </summary>
+	public static string DescribeOwners(LiveAppSessionSummary summary)
+	{
+		if (summary.StartedBy != LiveAppStarter.Person) return "Started by an agent";
+
+		if (summary.SharedWith is not { } share) return "Started by you · not shared with an agent";
+
+		var name = share.Name is { Length: > 0 } named ? named : share.ClientId;
+		var gone = share.Connected == false ? " (not connected)" : string.Empty;
+
+		return $"Started by you · shared with {name}{gone}";
 	}
 
 	/// <summary>Failures get a count of their own, because they are the reason history is kept at all.</summary>

@@ -37,6 +37,10 @@ public sealed class LiveAppSession : IAsyncDisposable
 	// The broker's own aside about this session, surfaced on the next Describe.
 	private volatile string? _notice;
 
+	// Whoever this session belongs to; see Owners. An agent's with no session until the manager says otherwise,
+	// which it does before the session is registered.
+	private LiveAppOwners _owners = LiveAppOwners.Agent(null);
+
 	private LiveAppSession(
 		string sessionId,
 		LiveAppTarget target,
@@ -57,11 +61,16 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public string SessionId { get; }
 
 	/// <summary>
-	/// The MCP session that started this one, or null where the transport has no notion of one. Set by
-	/// <see cref="LiveAppSessionManager"/>, which is the only thing that starts a session, so a session
-	/// cannot exist without an owner having been decided for it.
+	/// Who this session belongs to: the agent session that started it, or the person and whichever agent session they
+	/// shared it with. Set by <see cref="LiveAppSessionManager"/>, which is the only thing that starts or shares a
+	/// session, before the session is reachable, so a session never exists without its owners decided. Replaced whole
+	/// rather than changed, so a call reading it while a share lands reads one set or the other.
 	/// </summary>
-	public string? Owner { get; internal set; }
+	public LiveAppOwners Owners
+	{
+		get => Volatile.Read(ref _owners);
+		internal set => Volatile.Write(ref _owners, value);
+	}
 
 	public LiveAppTarget Target { get; }
 
@@ -211,11 +220,14 @@ public sealed class LiveAppSession : IAsyncDisposable
 			: info?.State ?? LiveAppSessionState.Starting;
 
 		var now = DateTime.UtcNow;
+		var owners = Owners;
 
 		return new LiveAppSessionSummary
 		{
 			SessionId = SessionId,
 			TargetDescription = Target.Description ?? Target.Kind.ToString(),
+			StartedBy = owners.StartedBy,
+			SharedWith = owners.DescribeShare(),
 			Architecture = Architecture,
 			State = state,
 			HostProcessId = info?.HostProcessId,

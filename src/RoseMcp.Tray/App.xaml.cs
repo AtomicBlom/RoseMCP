@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,32 +13,58 @@ using RoseMcp.Ui;
 namespace RoseMcp.Tray;
 
 /// <summary>
-/// Hosts the broker in-process and shows the tray UI over it.
+/// Hosts the broker in-process, with a notification icon and no window.
 /// <para>
-/// In-process, not talking to a separate server, and that is the point: the window reads the live
-/// WorkspaceManager directly. There is no second copy of the state to drift, and no polling
-/// protocol to write. Launching this app is what starting the server in http mode means.
+/// Launching this app is what starting the server in http mode means. It owns every warm worker on the
+/// machine, so nothing that can crash on a person's click lives here: the windows are the RoseMCP app, a
+/// process of its own that reads this broker over the operator API, started from the icon. See
+/// <see href="../../docs/decisions/the-tray-process-owns-only-its-icon.md">the decision</see>.
 /// </para>
 /// </summary>
 public partial class App : Application
 {
 	private WebApplication? _broker;
-	private MainWindow? _window;
+	private TrayIconHost? _tray;
 
-	public App() => InitializeComponent();
+	/// <summary>
+	/// Where this tray's own lines go when the broker, whose logger they otherwise use, did not start. Kept
+	/// for the life of the process, because the icon stays up after such a failure and can still fail again.
+	/// </summary>
+	private ILoggerFactory? _fallbackLogging;
 
-	/// <summary>The broker's services, which the window reads its rows from.</summary>
-	public IServiceProvider Services => _broker?.Services
-		?? throw new InvalidOperationException("The broker has not started yet.");
+	private bool _exiting;
+
+	/// <summary>
+	/// Whether the crash handler is hooked. It adds a handler each time it is attached, so a start that failed
+	/// after attaching it is not allowed to attach it again and log every later failure twice.
+	/// </summary>
+	private bool _crashHandlerAttached;
+
+	private void AttachCrashHandler(ILogger logger)
+	{
+		if (_crashHandlerAttached) return;
+
+		_crashHandlerAttached = true;
+		CrashHandler.Attach(this, logger);
+	}
+
+	public App()
+	{
+		InitializeComponent();
+
+		// Not on the last window closing, which is the default: this process has no window, and is ended only
+		// by Exit on its menu, or by whatever stops it from outside.
+		DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
+	}
 
 	public TrayOptions Options { get; private set; } = new();
 
 	/// <summary>
-	/// The secret this run's operator API is gated on, and what the inspector is launched with.
+	/// The secret this run's operator API is gated on, and what the RoseMCP app is launched with.
 	/// <para>
 	/// Minted here rather than read from the environment, because the tray is the thing that knows
 	/// the person asking is at the keyboard: it hands the token only to a process it starts itself.
-	/// A new one every run, so an inspector left open from yesterday is told to reopen from the tray
+	/// A new one every run, so a window left open from yesterday is told to reopen from the tray
 	/// rather than silently authorised.
 	/// </para>
 	/// </summary>
@@ -45,14 +72,25 @@ public partial class App : Application
 
 	protected override async void OnLaunched(LaunchActivatedEventArgs args)
 	{
-		// Every line of this is inside the try. It is an async void override, so nothing awaits it and
-		// nothing catches what it throws: a port already in use, or an unparsable --port, ends the
-		// process with no window, no dialog and no log line. That is the worst way for this app to
-		// fail, because what a user notices is every warm worker on the machine going with it.
+		// The icon first, before anything that can fail or take time, so that starting is a state a person
+		// can see. One that cannot be created ends the process before the broker holds anything: with no
+		// window and no icon, nobody could see this tray or exit it.
 		try
 		{
 			Options = TrayOptions.Parse(Environment.GetCommandLineArgs());
+			_tray = new TrayIconHost(this);
+		}
+		catch (Exception exception)
+		{
+			Fail(exception);
+			return;
+		}
 
+		// Every line of this is inside the try. It is an async void override, so nothing awaits it and
+		// nothing catches what it throws: a port already in use would otherwise end the process with no
+		// word anywhere, which is the worst way for this app to fail.
+		try
+		{
 			var builder = WebApplication.CreateBuilder();
 			builder.Logging.ClearProviders();
 			builder.Logging.AddDebug();
@@ -112,26 +150,76 @@ public partial class App : Application
 
 			await _broker.StartAsync();
 
-			// After the broker, because its services hold the logger, and before the window, so a
-			// failure while the window is being built has somewhere to go.
-			CrashHandler.Attach(this, Services.GetRequiredService<ILogger<App>>());
+			// After the broker, because its services hold the logger.
+			AttachCrashHandler(_broker.Services.GetRequiredService<ILogger<App>>());
 
-			_window = new MainWindow();
-			_window.Activate();
+			// An Exit chosen while the broker was starting has already let the icon go.
+			if (!_exiting) _tray.Serving(_broker.Services);
 		}
 		catch (Exception exception)
 		{
-			Fail(exception);
+			await NotServingAsync(exception);
 		}
 	}
 
 	/// <summary>
-	/// Reports a startup failure and stops, having no window to report it in.
+	/// Records a broker that did not start, lets go of whatever of it did, and leaves the icon up saying
+	/// so, rather than exiting: the person can read why, open the log and exit, and a tray that vanished
+	/// at sign-in would say nothing at all.
 	/// <para>
-	/// The log is the only place this can go. It writes through a factory of its own rather than the
-	/// broker's, because the failure worth catching here happens before the broker starts and a
-	/// logger taken from the broker's services would be unavailable exactly then.
+	/// The log is written through a factory of its own rather than the broker's, because the failure
+	/// worth catching here happens before the broker starts and a logger taken from the broker's
+	/// services would be unavailable exactly then.
 	/// </para>
+	/// </summary>
+	private async Task NotServingAsync(Exception exception)
+	{
+		var portTaken = false;
+		for (var cause = exception; cause is not null; cause = cause.InnerException)
+		{
+			portTaken |= cause is AddressInUseException;
+		}
+
+		var reason = portTaken
+			? $"port {Options.Port} on {Options.Host} is in use by another program"
+			: exception.Message.TrimEnd('.');
+
+		_fallbackLogging ??= LoggerFactory.Create(builder => builder.AddRoseFileLogging("Tray"));
+		var logger = _fallbackLogging.CreateLogger<App>();
+
+		logger.LogCritical(
+			exception,
+			"RoseMCP could not start on http://{Host}:{Port}: {Reason}. Its log is at {Log}.",
+			Options.Host,
+			Options.Port,
+			reason,
+			RoseFileLogging.Destination ?? "(nowhere)");
+
+		if (_broker is { } broker)
+		{
+			_broker = null;
+
+			try
+			{
+				// A start that failed part of the way may have started some of the broker's services; they
+				// are stopped here rather than left holding anything for the rest of the process's life.
+				await broker.StopAsync();
+				await broker.DisposeAsync();
+			}
+			catch (Exception stopping)
+			{
+				logger.LogWarning(stopping, "Stopping the broker that did not start failed as well.");
+			}
+		}
+
+		AttachCrashHandler(logger);
+
+		if (!_exiting) _tray?.CouldNotStart(reason, logger);
+	}
+
+	/// <summary>
+	/// Reports a failure to create the icon and stops, having nowhere to report it but the log. Only
+	/// reached before the broker starts, so nothing is lost by exiting.
 	/// </summary>
 	private void Fail(Exception exception)
 	{
@@ -141,28 +229,55 @@ public partial class App : Application
 
 			logging.CreateLogger<App>().LogCritical(
 				exception,
-				"RoseMCP could not start on http://{Host}:{Port}. Its log is at {Log}.",
-				Options.Host,
-				Options.Port,
+				"RoseMCP could not create its tray icon, so it is not starting. Its log is at {Log}.",
 				RoseFileLogging.Destination ?? "(nowhere)");
 		}
 		catch (Exception)
 		{
-			// Nothing left to report with, which is the state this used to be in for every startup
-			// failure. Exiting quietly is no worse than before, and the attempt costs nothing.
+			// Nothing left to report with. Exiting quietly is all there is, and the attempt costs nothing.
 		}
 
 		Exit();
 	}
 
 	/// <summary>
-	/// Stops the broker, which closes every worker's stdin and so takes the workers with it. Leaving
-	/// Roslyn hosts behind holding whole solutions in memory is invisible until a machine runs out.
+	/// Stops the broker, which closes every worker's stdin and so takes the workers with it, then removes
+	/// the icon and ends the process. Leaving Roslyn hosts behind holding whole solutions in memory is
+	/// invisible until a machine runs out.
+	/// <para>
+	/// The icon is told first, so it stops reading the broker before the broker stops, and shows that it
+	/// is stopping for as long as that takes. Everything after the first line is inside the try, so a
+	/// failure anywhere -- the icon included -- still stops the broker, removes the icon and exits: an
+	/// Exit that did nothing would leave a process nobody can end from its menu again.
+	/// </para>
 	/// </summary>
-	public async Task ShutdownAsync()
+	public async Task ExitAsync()
 	{
-		if (_broker is not null) await _broker.StopAsync();
+		if (_exiting) return;
 
-		Exit();
+		_exiting = true;
+
+		try
+		{
+			_tray?.Stopping();
+
+			if (_broker is not null) await _broker.StopAsync();
+		}
+		catch (Exception exception)
+		{
+			System.Diagnostics.Debug.WriteLine($"The tray did not stop cleanly: {exception.Message}");
+		}
+		finally
+		{
+			try
+			{
+				_tray?.Dispose();
+				_fallbackLogging?.Dispose();
+			}
+			finally
+			{
+				Exit();
+			}
+		}
 	}
 }

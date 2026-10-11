@@ -11,7 +11,7 @@ namespace RoseMcp.Inspector;
 /// <summary>
 /// The entry point, written by hand because two things have to happen before a window exists.
 /// <para>
-/// One inspector per machine. Clicking Inspect on a second session in the tray should bring the
+/// One inspector per machine. Opening the inspector on a second session should bring the
 /// window that is open to the front on that session, not open another one beside it -- two windows
 /// polling the same broker is twice the traffic to show the same thing, and the person now has to
 /// remember which is which. The key has to be claimed before <c>Application.Start</c>, because by

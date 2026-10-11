@@ -224,7 +224,7 @@ Register it as stdio and the two stop being alternatives. With a tray already ru
 starts no workers of its own and relays to the tray, which owns them, so every session shares one
 warm worker per solution and still resolves a bare call against its own working directory.
 [Why that is the arrangement worth having](https://github.com/AtomicBlom/RoseMCP/wiki/Transports-and-the-tray),
-and what the tray window shows.
+and what a RoseMCP window shows.
 
 ### Debugging and XAML
 

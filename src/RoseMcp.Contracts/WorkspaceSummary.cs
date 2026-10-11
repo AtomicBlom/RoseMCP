@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>
-/// One row of the tray window, and of GET /admin/workspaces, and what rose_workspace_open answers
+/// One row of a RoseMCP window, and of GET /admin/workspaces, and what rose_workspace_open answers
 /// with.
 /// <para>
 /// The path and the short key come from <see cref="WorkspaceScopedResult"/> rather than from two

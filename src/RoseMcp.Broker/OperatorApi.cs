@@ -59,8 +59,8 @@ public static class OperatorApi
 						{
 							Status = StatusCodes.Status401Unauthorized,
 							Message = "This endpoint needs the operator token for this run of the broker. The tray "
-								+ "mints one when it starts and passes it to the inspector it launches; use Open "
-								+ "inspector, or Copy inspector command, from the tray.",
+								+ "mints one when it starts and passes it to the window it launches; use Open "
+								+ "RoseMCP on the tray's icon.",
 						},
 						ContractJson.Options);
 

@@ -30,7 +30,6 @@ src/RoseMcp.LiveApp/Xaml/XamlTap.cs	issue	1
 src/RoseMcp.LiveApp/Xaml/XamlTaps.cs	issue	1
 src/RoseMcp.Logging/RoseLogFile.cs	issue	1
 src/RoseMcp.Server/TrayRelay.cs	history	1
-src/RoseMcp.Tray/App.xaml.cs	history	1
 src/RoseMcp.Ui.Core/Inspector/XamlTreeBuilder.cs	history	1
 src/RoseMcp.Worker/ChangeSignatureService.cs	issue	1
 src/RoseMcp.Worker/DiagnosticTarget.cs	history	2

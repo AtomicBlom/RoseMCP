@@ -33,7 +33,7 @@ public static class InspectorText
 		if (mismatch is null) return null;
 
 		return $"{mismatch} If something here is missing or refused, that difference is the likelier "
-			+ "cause; open the inspector from the tray to get the one built with it.";
+			+ "cause; open RoseMCP from the tray's icon to get the one built with it.";
 	}
 
 	/// <summary>
@@ -42,12 +42,12 @@ public static class InspectorText
 	/// </summary>
 	public const string TokenRefused =
 		"The tray refused this inspector's token. It changes each time the tray starts, so an "
-			+ "inspector left open across a restart holds an old one. Open the inspector from the tray again.";
+			+ "inspector left open across a restart holds an old one. Open RoseMCP from the tray's icon again.";
 
 	/// <summary>Started by hand, with no token to present.</summary>
 	public const string NoToken =
-		"This inspector was started without a token, so the tray will not answer it. Use Inspect on a "
-			+ "session in the tray, or Copy inspector command from its menu to get one.";
+		"This inspector was started without a token, so the tray will not answer it. Open RoseMCP from the "
+			+ "tray's icon, which starts it with this run's token.";
 
 	/// <summary>The tray is answering and has no debug sessions.</summary>
 	public const string NoSessions =

@@ -133,7 +133,7 @@ public sealed class LiveAppSessionTests
 				(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeFalse();
 			}
 
-			// The tray window and GET /admin/sessions read the whole picture, and still do: their reader
+			// A RoseMCP window and GET /admin/sessions read the whole picture, and still do: their reader
 			// is the person running the broker rather than one of its clients.
 			manager.Describe().ShouldContain(row => row.SessionId == session.SessionId);
 

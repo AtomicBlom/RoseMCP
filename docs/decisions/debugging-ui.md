@@ -2,9 +2,9 @@
 
 **Decision.** A person inspecting a debug session gets `RoseMcp.Inspector`, a WinUI 3 app of its own,
 launched from the tray and talking to the tray's in-process broker over a loopback http surface
-mounted at `/operator`. The tray grows a debug-sessions section beside its workspace cards; the
-inspector holds everything else -- the event tail, breakpoints, the call stack, locals, threads, and
-the live visual tree.
+mounted at `/operator`. The tray has no window of its own (see
+[the decision](the-tray-process-owns-only-its-icon.md)); the inspector holds everything -- the event
+tail, breakpoints, the call stack, locals, threads, and the live visual tree.
 
 **Why a second process rather than another tray window.** The tray *is* the broker. Restarting it
 drops every loaded solution and detaches every debug session, so iterating on a tree viewer inside it
@@ -76,8 +76,9 @@ lives in `RoseMcp.XamlDiff`, both because the host that owns the behaviour canno
 a test. The split is what makes the rows and the formatting testable, and the 489-test unit suite
 covers them on Linux as a result.
 
-**What stays in the tray.** `WorkspaceRow`, because it reaches for `InfoBarSeverity`;
-`StartupRegistration`, because an inspector does not start with Windows; and `TrayOptions`.
+**What stays in the tray.** `StartupRegistration`, because an inspector does not start with Windows;
+`TrayIconArt`, because it draws with `System.Drawing`; and `TrayOptions`. What the icon says is in
+`RoseMcp.Ui.Core`, for the same reason as the rows.
 
 ## A referenced project's assets land under its project name, and the library owns that path
 

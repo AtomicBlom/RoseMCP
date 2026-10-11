@@ -224,8 +224,8 @@ public sealed partial class MainWindow : Window
 		{
 			ShowEmpty(
 				"Several targets are being debugged",
-				"This window is about one process, and nothing here says which one you meant. Open the "
-					+ "inspector from a session in the tray. Right now: "
+				"This window is about one process, and nothing here says which one you meant. An agent "
+					+ "opens it on its own session by attaching with showInspector. Right now: "
 					+ string.Join(", ", sessions.Select(session => session.TargetDescription)) + ".");
 
 			return false;

@@ -43,7 +43,7 @@ public static class AdminApi
 		// Started with the host rather than at the first call, so the record says the broker started when it did.
 		app.Services.GetRequiredService<ActivityRecord>();
 
-		// Exactly what the tray window renders, so the two cannot disagree.
+		// Exactly what a RoseMCP window renders, so the two cannot disagree.
 		app.MapGet(
 			"/admin/workspaces",
 			(WorkspaceManager workspaces) => Results.Json(workspaces.Describe(), ContractJson.Options));

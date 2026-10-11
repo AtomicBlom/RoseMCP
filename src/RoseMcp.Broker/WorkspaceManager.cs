@@ -71,7 +71,7 @@ public sealed class WorkspaceManager(
 
 	/// <summary>
 	/// One row per worker, running or stopped, memory and in-flight work included. The same model backs
-	/// the tray window and GET /admin/workspaces, so the UI can never show something the API disagrees
+	/// a RoseMCP window and GET /admin/workspaces, so the UI can never show something the API disagrees
 	/// with. A stopped row says so in <see cref="Contracts.WorkspaceSummary.Alive"/>.
 	/// </summary>
 	public IReadOnlyList<Contracts.WorkspaceSummary> Describe() => [.. Workers.Select(worker => Describe(worker))];

@@ -163,6 +163,22 @@ public sealed class ProducedFactTests
 		["CommitsPast.Count"] = "Card 5.9: the RoseMCP window says how far the checkout has moved on.",
 		["CommitsPast.Unknown"] = "Card 5.9: the RoseMCP window says why it cannot say how far.",
 
+		// A workspace's row, with its cost, its load and why it stopped, is the RoseMCP window's Workspaces view;
+		// the tray has no window to draw it in.
+		["WorkspaceSummary.ExitReason"] = WorkspacesView,
+		["WorkspaceSummary.WorkingSetBytes"] = WorkspacesView,
+		["WorkspaceSummary.ManagedHeapBytes"] = WorkspacesView,
+		["WorkspaceSummary.WorkerLogPath"] = WorkspacesView,
+		["WorkspaceSummary.BuildConfiguration"] = WorkspacesView,
+		["WorkspaceSummary.ProjectCount"] = WorkspacesView,
+		["WorkspaceSummary.FailedProjects"] = WorkspacesView,
+		["WorkspaceSummary.DegradedReasons"] = WorkspacesView,
+		["WorkspaceSummary.LoadSeconds"] = WorkspacesView,
+		["WorkspaceSummary.Health"] = WorkspacesView,
+		["MemoryReport.Workers"] = MemoryBar,
+		["ProcessMemory.WorkingSetBytes"] = MemoryBar,
+		["ProcessMemory.ManagedHeapBytes"] = MemoryBar,
+
 		// The activity record is read by the RoseMCP window's Activity view, which shows what each agent did.
 		["ActivityEntry.StartedUtc"] = ActivityView,
 		["ActivityEntry.FinishedUtc"] = ActivityView,

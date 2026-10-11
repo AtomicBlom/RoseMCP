@@ -25,8 +25,8 @@ own docstring, and the bearer token is what authenticates it.
 **Why a token and not loopback-only.** Loopback is not a boundary on a developer machine: every
 process on it, including the target being debugged, can reach a loopback port. The operator surface
 reads memory out of an attached process and can move it, so "anything local" is the wrong audience.
-The tray mints one per run, hands it to the inspector it launches, and offers it on a menu item for
-a window started by hand. Per run rather than persisted, because a token that outlives the process
+The tray mints one per run and hands it to the window it launches; a window started by hand has no
+way to it until the RoseMCP window offers one (#463). Per run rather than persisted, because a token that outlives the process
 is one that has to be revoked; the cost is that an inspector left open across a tray restart is
 refused, which it says in as many words.
 

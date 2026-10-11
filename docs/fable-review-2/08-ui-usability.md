@@ -734,23 +734,9 @@ running or finished, names its client and the directory it came from.
   `rose_xaml_selection` returns anchor, target and the four gaps. That turns a picture into a fact
   the agent can act on, which is the difference between this tool and a screenshot.
 
-### USE-15 The tray's two menus are maintained as two hand-written copies and already differ
-
-- **Severity:** Low
-- **Effort:** S
-- **Where:** `src/RoseMcp.Tray/MainWindow.xaml:75-89` (tray flyout) and `:121-159` (window flyout);
-  `MainWindow.xaml.cs:469-507` (`OnMenuOpening` loops over pairs of named controls)
-- **What:** Six items appear in both menus, declared twice in XAML with different icon markup, and
-  kept in sync at runtime by `OnMenuOpening` iterating explicit arrays of paired controls
-  (`[TrayStartWithWindows, WindowStartWithWindows]` and two more). The tray menu additionally carries
-  "Show workspaces", which the window menu does not and should not.
-- **Why it matters:** Mostly a maintenance cost (structural cause: the same duplication UIP-10 finds
-  between the two windows), but it has a product edge: the next item added will be added to one menu,
-  and a person who learned it from the tray icon will not find it in the window. The runtime sync
-  code is already the shape that only works while somebody remembers to extend the arrays.
-- **Suggested change:** One `MenuFlyout` built once in code or declared once as a resource and
-  referenced twice, with "Show workspaces" conditionally prepended. Pattern: *one declaration, two
-  attachment points*.
+### ~~USE-15 The tray's two menus are maintained as two hand-written copies and already differ~~
+**#462.** The tray's window carried a second, hand-kept copy of its icon's menu. The tray has no window,
+and its icon has one menu.
 
 ### USE-16 The wiki pitch and the shipped windows disagree about what the inspector is and about what the panel is for
 
@@ -773,20 +759,8 @@ running or finished, names its client and the directory it came from.
   magnifier smooths pixels and cannot be told not to, so it can neither read a colour nor show a
   one-pixel gap (USE-08).
 
-### USE-17 The tray spends 44px of a 400px minimum-height window on its own name
-
-- **Severity:** Low
-- **Effort:** S
-- **Where:** `src/RoseMcp.Tray/MainWindow.xaml:94-99`, `MainWindow.xaml.cs:46-49`
-- **What:** A 44px title bar containing a 18px mark and the caption "RoseMCP", all of it drag region.
-  The word also appears in the taskbar, in the tray tooltip (`DescribeTooltip`), and 6px below in the
-  headline's context. The inspector's equivalent is 40px and earns it, because its title names the
-  process being debugged and that is how a person picks between two inspector windows.
-- **Why it matters:** Small, but it is the top 11% of the minimum window and it is the only element
-  in the tray that shows nothing. Everything below it is information.
-- **Suggested change:** Shrink to 32px and put the endpoint or the state summary in it, or make the
-  headline row itself the drag region (`SetTitleBar` accepts any element). Either way the space goes
-  to something a reader acts on.
+### ~~USE-17 The tray spends 44px of a 400px minimum-height window on its own name~~
+**#462.** The tray's window spent the top of its height on an empty title bar. The tray has no window.
 
 ---
 
@@ -800,8 +774,8 @@ less than it costs, in maintenance, in screen space, or in risk to somebody's ru
 | ~~The pixel lens and the hex colour readout~~ **Withdrawn.** | `tap_tool_zoom.h` | -- | The first draft cut this as an OS duplicate. It is not one: Windows Magnifier filters bilinearly with no way to disable it, so it cannot read an exact colour or show a one-pixel gap at a corner radius. Keep the feature; write down why it exists (USE-08). |
 | **The Threads pane** | `ThreadsPane.xaml` + `.xaml.cs` + `ThreadRow` | ~245 lines | A strict subset of Visual Studio's Threads window, answering no supervision question, and the only pane that freezes somebody's application as a side effect of being on screen. |
 | **The Breakpoints compose form's position** (not the form) | `BreakpointsPane.xaml:17-150` | reorder only | Keep the flow -- it is good -- but it is a driving feature sitting where the supervision view should be. Demote to a disclosure. |
-| **The tray's 44px title bar** | `MainWindow.xaml:94-99` | 6 lines | The only element in the tray that shows nothing, occupying 11% of the minimum window. |
-| **The second copy of the tray menu** | `MainWindow.xaml:121-159` | ~40 lines | Two hand-maintained copies already differ; `OnMenuOpening` syncs them by iterating named pairs. |
+| ~~The tray's 44px title bar~~ **#462.** | -- | -- | The tray has no window. |
+| ~~The second copy of the tray menu~~ **#462.** | -- | -- | The tray has one menu, on its icon. |
 | **`loaded in 24.3s` in the permanent facts line** | `WorkspaceRow.DescribeFacts` | 1 line | Actionable once, noise for the rest of the worker's life. Belongs in the on-demand detail (USE-01), not on the card forever. |
 
 Two things I considered cutting and would keep:

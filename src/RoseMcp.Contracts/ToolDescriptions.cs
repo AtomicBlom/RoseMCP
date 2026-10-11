@@ -387,7 +387,7 @@ public static class ToolDescriptions
 	/// </summary>
 	public const string ShowInspectorArgument =
 		"Open the RoseMCP Inspector on this session: userPreference (default) honours what the person "
-			+ "chose in the tray, always opens it, never does not. Leave it alone unless somebody asked "
+			+ "chose in the Inspector, always opens it, never does not. Leave it alone unless somebody asked "
 			+ "to see it, or asked not to be interrupted.";
 
 	public const string ExecutablePathArgument = "Path to a local .NET executable (.exe).";

@@ -68,7 +68,7 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   [the decision](../decisions/a-relay-names-its-session-to-the-broker.md).
   An http broker serves every repository on the machine and, with two solutions open, cannot know
   which one a bare call means; a stdio process cannot not know. Relaying buys both that and one warm
-  worker per solution shared across sessions, and it keeps the tray's window reading a live
+  worker per solution shared across sessions, and it keeps the RoseMCP windows reading one live
   `WorkspaceManager` rather than a pushed copy that could drift. With no tray, a relay running from an
   install's relay folder starts the install root's server as a child with `--no-relay` and relays to
   it, rather than hosting a broker from its own assemblies, which are as old as the last relay
@@ -137,7 +137,7 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   stdio hop is ordered, being one reader.
 - **Every slow path says where it has got to.** Workers report progress on the operations that take
   real time, the broker records every call it forwards in an `ActivityLog`, and `WorkspaceSummary`
-  carries both the running and the recently finished ones. The tray window and
+  carries both the running and the recently finished ones. A RoseMCP window and
   `GET /admin/workspaces` read that same model, so they cannot disagree. A percentage is per
   operation and only ever rises; no percentage means "cannot say", which shows as an indeterminate
   bar rather than one frozen at a number that has stopped meaning anything. A worker tool reaches
@@ -184,7 +184,7 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   reason as a degraded reason, and that nothing was started -- because starting a worker there would reload the solution and wipe the reason, and
   a session checking status now and then would keep it warm and never learn it was evicted. A
   stopped row is not *open*: anything saying which workspaces are open or loaded -- the routing
-  failure's list, a change's sibling notice, the tray's headline -- reads `IsAlive`, not the
+  failure's list, a change's sibling notice, the tray icon's tooltip -- reads `IsAlive`, not the
   registry. A stopped row reports no memory figures either: Windows hands a dead process's id to
   the next process it starts, so sampling it would show somebody else's memory as the solution's.
   The manager stops the sweep, and waits for it, before it disposes the gate the sweep

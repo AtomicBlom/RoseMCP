@@ -40,7 +40,7 @@ public partial class App : Application
 		CrashHandler.Attach(this, _logging.CreateLogger<App>());
 
 		// A second launch redirects its activation here rather than opening a window of its own,
-		// which is what makes Inspect in the tray focus this window on the session it names.
+		// which is what makes opening the inspector on a session focus this window on the session it names.
 		AppInstance.GetCurrent().Activated += OnRedirected;
 
 		_window = new MainWindow();

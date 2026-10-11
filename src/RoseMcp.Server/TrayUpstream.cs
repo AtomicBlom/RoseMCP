@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 
 using ModelContextProtocol.Client;
@@ -42,6 +43,8 @@ public sealed class TrayUpstream : RelayUpstream
 	private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
 
 	private int _saidCannotWatch;
+
+	private int _saidCannotIntroduce;
 
 	/// <summary>The tray at <paramref name="endpoint"/>.</summary>
 	public TrayUpstream(Uri endpoint, ILoggerFactory loggerFactory)
@@ -166,6 +169,39 @@ public sealed class TrayUpstream : RelayUpstream
 		return WatchEnd.Closed;
 	}
 
+	/// <summary>
+	/// Posts what the relay knows of its session. A broker that refuses it is from before the route, and is
+	/// said once at information; any other refusal is logged with the broker's reason. Neither throws: the
+	/// broker keeps the table for a person to read, and a session works the same whether or not it is in it.
+	/// </summary>
+	public override async Task IntroduceAsync(RelayClient client, CancellationToken cancellationToken)
+	{
+		using var request = Request(RelayProtocol.ClientRoute, HttpMethod.Post);
+		request.Content = JsonContent.Create(client, options: ContractJson.Options);
+
+		using var answer = await _http.SendAsync(request, cancellationToken);
+		if (answer.IsSuccessStatusCode) return;
+
+		var unknownRoute = answer.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed;
+		if (unknownRoute)
+		{
+			if (Interlocked.Exchange(ref _saidCannotIntroduce, 1) == 0)
+			{
+				_logger.LogInformation(
+					"The tray at {Endpoint} does not keep a table of its clients, so this session is not named in its window.", _endpoint);
+			}
+
+			return;
+		}
+
+		var reason = await answer.Content.ReadAsStringAsync(cancellationToken);
+		_logger.LogDebug(
+			"The tray at {Endpoint} refused this relay's introduction ({Status}): {Reason}",
+			_endpoint,
+			(int)answer.StatusCode,
+			reason.Length > 500 ? reason[..500] : reason);
+	}
+
 	/// <inheritdoc/>
 	public override ValueTask DisposeAsync()
 	{
@@ -173,9 +209,9 @@ public sealed class TrayUpstream : RelayUpstream
 		return ValueTask.CompletedTask;
 	}
 
-	private HttpRequestMessage Request(string route)
+	private HttpRequestMessage Request(string route, HttpMethod? method = null)
 	{
-		var request = new HttpRequestMessage(HttpMethod.Get, new Uri(_endpoint, route));
+		var request = new HttpRequestMessage(method ?? HttpMethod.Get, new Uri(_endpoint, route));
 		foreach (var (name, value) in _headers) request.Headers.Add(name, value);
 
 		return request;

@@ -57,6 +57,15 @@ public static class CallSession
 
 		if (meta?[MetaKey] is not JsonValue value || !value.TryGetValue(out string? named)) return null;
 
+		return Relayed(named);
+	}
+
+	/// <summary>
+	/// The client a relay's name for its session stands for -- <c>relayed-</c> and the name -- or null where the
+	/// name is not in the shape <see cref="Mint"/> gives, since whatever is read here is compared and logged.
+	/// </summary>
+	public static string? Relayed(string? named)
+	{
 		var wellFormed = named is { Length: >= 16 and <= 64 } && named.All(char.IsAsciiHexDigitLower);
 
 		return wellFormed ? $"relayed-{named}" : null;

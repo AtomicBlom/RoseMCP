@@ -77,6 +77,7 @@ public static class OperatorApi
 
 		MapHello(operators);
 		MapSessions(operators);
+		MapClients(operators);
 		MapDebugging(operators);
 		MapXaml(operators);
 		MapHealth(operators);
@@ -158,6 +159,13 @@ public static class OperatorApi
 				return Json(new LiveSessionClosed { Closed = closed, DetachFailure = session.DetachFailure });
 			});
 	}
+
+	/// <summary>
+	/// Which clients are connected: each agent session behind a relay, named by what its relay said of it, and
+	/// the clients that reached the broker without one. The same table <c>GET /admin/clients</c> reads.
+	/// </summary>
+	private static void MapClients(RouteGroupBuilder operators) =>
+		operators.MapGet("/clients", (ConnectedClients clients) => Json(clients.Describe()));
 
 	/// <summary>Watching a target and steering it.</summary>
 	private static void MapDebugging(RouteGroupBuilder operators)

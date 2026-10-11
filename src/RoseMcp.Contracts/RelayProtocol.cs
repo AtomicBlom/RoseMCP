@@ -18,10 +18,13 @@ public static class RelayProtocol
 	/// <summary>
 	/// The version of this contract. Raise it with any change a relay of the previous version would
 	/// misread: a header, a route or the shape it answers, a <c>_meta</c> key the relay sends, or
-	/// what an instance id means. <c>tools/published-layout.json</c> carries the same number, which is
-	/// what a deploy compares with the installed relay's, and a unit test holds the two together.
+	/// what an instance id means. Raise it too with any change to what the relay itself does, such as a
+	/// route it starts calling: a deploy replaces an installed relay only when this number moves, so a
+	/// relay change shipped without it never reaches a running install. <c>tools/published-layout.json</c>
+	/// carries the same number, which is what a deploy compares with the installed relay's, and a unit
+	/// test holds the two together.
 	/// </summary>
-	public const int Version = 1;
+	public const int Version = 2;
 
 	/// <summary>
 	/// The folder under an install root the relay is installed in, apart from the files a deploy
@@ -56,6 +59,13 @@ public static class RelayProtocol
 	/// asking it anything on a timer. While it is open the relay is counted as connected.
 	/// </summary>
 	public const string WatchRoute = "/admin/relays/watch";
+
+	/// <summary>
+	/// Where a relay says whom it serves: a POST of a <see cref="RelayClient"/>, with the relay's id in
+	/// <see cref="RelayHeader"/>, answered with no content. Sent once the client has introduced itself, and
+	/// again after every reconnect and whenever what it says changes, since the broker keeps it only in memory.
+	/// </summary>
+	public const string ClientRoute = "/admin/relays/client";
 
 	/// <summary>A new relay id: thirty-two lowercase hex digits.</summary>
 	public static string NewRelayId() => Guid.NewGuid().ToString("N");

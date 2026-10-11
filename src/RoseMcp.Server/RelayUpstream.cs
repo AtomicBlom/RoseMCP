@@ -43,6 +43,14 @@ public abstract class RelayUpstream : IAsyncDisposable
 	/// <param name="cancellationToken">Ends the watch, when the relay does.</param>
 	public abstract Task<WatchEnd> WatchAsync(McpClient client, string? instance, CancellationToken cancellationToken);
 
+	/// <summary>
+	/// Tells the broker whom this relay serves, at <see cref="RelayProtocol.ClientRoute"/>. Nothing by default:
+	/// a broker this relay started serves only this session, and nothing reads a table of its clients.
+	/// </summary>
+	/// <param name="client">What the relay knows of its session.</param>
+	/// <param name="cancellationToken">Ends the attempt, when the relay does or its budget runs out.</param>
+	public virtual Task IntroduceAsync(RelayClient client, CancellationToken cancellationToken) => Task.CompletedTask;
+
 	/// <inheritdoc/>
 	public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

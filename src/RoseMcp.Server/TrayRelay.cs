@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json.Nodes;
 using System.Threading.Channels;
 
 using ModelContextProtocol;
@@ -38,6 +39,12 @@ namespace RoseMcp.Server;
 /// <c>notifications/tools/list_changed</c>, after which the client lists the tools again without
 /// reconnecting. Either way the first result after a restart carries one line saying what happened.
 /// See <c>docs/decisions/a-deploy-replaces-the-relay-only-when-its-protocol-changes.md</c>.
+/// </para>
+/// <para>
+/// It also tells the broker whom it serves -- the client's folder, roots, branch, process, name and label,
+/// and whether the client holds the broker's tools -- once the client has made its first request, again
+/// after every reconnect, and whenever any of that changes. See
+/// <c>docs/decisions/a-relay-names-its-session-to-the-broker.md</c>.
 /// </para>
 /// </summary>
 public sealed class TrayRelay : IAsyncDisposable
@@ -84,9 +91,10 @@ public sealed class TrayRelay : IAsyncDisposable
 	/// The name this relay gives the session it serves, minted once for the life of the process and sent on every
 	/// call. The tray's http transport has no session of its own to tell relayed clients apart by, and without this
 	/// every one of them is the same caller to it: one agent acknowledging a reason would quiet it for all of them.
-	/// See <see cref="CallSession.Of"/>.
+	/// See <see cref="CallSession.Of"/>. Sent with the relay's own listings and reads too, so the broker never
+	/// takes them for a client of its own.
 	/// </summary>
-	private readonly string _session = CallSession.Mint();
+	private readonly string _session;
 	private readonly SemaphoreSlim _reconnecting = new(1, 1);
 	private readonly CancellationTokenSource _lifetime = new();
 	private readonly TaskCompletionSource _ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -141,12 +149,25 @@ public sealed class TrayRelay : IAsyncDisposable
 
 	private Task _watching = Task.CompletedTask;
 
+	/// <summary>What the relay knows of its client, sent to the broker by <see cref="IntroduceAgain"/>.</summary>
+	private readonly ClientIntroduction _introduction;
+
+	/// <summary>Guards <see cref="_introducing"/> and <see cref="_introductionQueued"/>.</summary>
+	private readonly Lock _introducingGate = new();
+
+	/// <summary>The last introduction started, which every later one waits on, so they reach the broker in order.</summary>
+	private Task _introducing = Task.CompletedTask;
+
+	/// <summary>Whether an introduction is waiting to start; one waiting already sends the latest facts, so another is not queued behind it.</summary>
+	private bool _introductionQueued;
+
 	private TrayRelay(
 		RelayUpstream upstream,
 		McpClient tray,
 		string? instance,
 		ToolSurface surface,
 		string workingDirectory,
+		string session,
 		ILoggerFactory loggerFactory)
 	{
 		_upstream = upstream;
@@ -155,8 +176,16 @@ public sealed class TrayRelay : IAsyncDisposable
 		_surface = surface;
 		_served = surface;
 		_workingDirectory = workingDirectory;
+		_session = session;
 		_logger = loggerFactory.CreateLogger<TrayRelay>();
 		Instructions = surface.Instructions;
+
+		_introduction = new ClientIntroduction(
+			session,
+			workingDirectory,
+			Environment.GetEnvironmentVariable(ClientIntroduction.LabelVariable),
+			ClientProcess.Find,
+			_logger);
 	}
 
 	/// <summary>
@@ -234,11 +263,12 @@ public sealed class TrayRelay : IAsyncDisposable
 			using var reading = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 			reading.CancelAfter(ReadBudget);
 
+			var session = CallSession.Mint();
 			var hello = await upstream.HelloAsync(tray, reading.Token);
-			var tools = await ListAsync(tray, reading.Token);
+			var tools = await ListAsync(tray, session, reading.Token);
 
 			var relay = new TrayRelay(
-				upstream, tray, hello?.Instance, ToolSurface.Of(tools, tray.ServerInstructions), workingDirectory, loggerFactory);
+				upstream, tray, hello?.Instance, ToolSurface.Of(tools, tray.ServerInstructions), workingDirectory, session, loggerFactory);
 
 			relay._retries.Learn(tools);
 			relay.SayIfAnotherBuild(tray);
@@ -286,17 +316,24 @@ public sealed class TrayRelay : IAsyncDisposable
 		InvokeAsync(
 			async (tray, token) =>
 			{
-				var tools = await ListAsync(tray, token);
+				var tools = await ListAsync(tray, _session, token);
 
 				// The same list the client gets, read once on the way past. It decides whether a call may
 				// be re-sent after the connection dies, and it is what the client now holds, which is what
 				// a broker met after a restart is compared with.
 				_retries.Learn(tools);
 
+				bool heldChanged;
 				lock (_servedGate)
 				{
-					_served = ToolSurface.Of(tools, _served.Instructions);
+					var listed = ToolSurface.Of(tools, _served.Instructions);
+					heldChanged = !string.Equals(listed.Fingerprint, _served.Fingerprint, StringComparison.Ordinal);
+					_served = listed;
 				}
+
+				// What the client holds is part of what the broker is told of it: a client that has just
+				// listed the tools a restart changed holds the broker's tools again.
+				if (heldChanged) IntroduceAgain();
 
 				return new ListToolsResult { Tools = tools };
 			},
@@ -349,6 +386,79 @@ public sealed class TrayRelay : IAsyncDisposable
 	}
 
 	/// <summary>
+	/// Takes the server one of the client's requests arrived on, which carries the client's name and what it
+	/// declared, and tells the broker whom this relay serves the first time there is anyone to name. Called on
+	/// every listing and call before it is forwarded; it starts the introduction and returns at once, so no
+	/// request waits on it.
+	/// </summary>
+	public void Introduce(McpServer client)
+	{
+		if (_introduction.Learn(client)) IntroduceAgain();
+	}
+
+	/// <summary>Asks the client its roots again and tells the broker, as the client's <c>roots/list_changed</c> asks.</summary>
+	public void RootsChanged()
+	{
+		_introduction.RootsChanged();
+		IntroduceAgain();
+	}
+
+	/// <summary>
+	/// Starts telling the broker whom this relay serves, after any introduction already under way, unless one
+	/// is already waiting -- it will send the latest facts when it starts -- or the client has not yet made a
+	/// request, so there is nobody to name, or the relay is ending.
+	/// <para>
+	/// Not any call's work: it is detached from whichever call or reconnect asked for it, bounded by
+	/// <see cref="ReadBudget"/> and by the relay's lifetime, and never throws, so neither a broker from before
+	/// the route nor a client that will not say its roots can fail anything the session asked for.
+	/// </para>
+	/// </summary>
+	private void IntroduceAgain()
+	{
+		if (!_introduction.Known) return;
+
+		lock (_introducingGate)
+		{
+			if (_introductionQueued || _lifetime.IsCancellationRequested) return;
+
+			_introductionQueued = true;
+			var previous = _introducing;
+			_introducing = Detached.Run(() => IntroduceAfterAsync(previous));
+		}
+	}
+
+	private async Task IntroduceAfterAsync(Task previous)
+	{
+		await previous;
+
+		lock (_introducingGate)
+		{
+			_introductionQueued = false;
+		}
+
+		try
+		{
+			using var bounded = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+			bounded.CancelAfter(ReadBudget);
+
+			string held;
+			string offered;
+			lock (_servedGate)
+			{
+				held = _served.Fingerprint;
+				offered = Volatile.Read(ref _surface).Fingerprint;
+			}
+
+			var client = await _introduction.GatherAsync(held, string.Equals(held, offered, StringComparison.Ordinal), bounded.Token);
+			await _upstream.IntroduceAsync(client, bounded.Token);
+		}
+		catch (Exception exception)
+		{
+			_logger.LogDebug(exception, "Could not tell {Upstream} whom this relay serves.", _upstream.Name);
+		}
+	}
+
+	/// <summary>
 	/// Stops watching, then closes the connection and the upstream. A broker this relay started goes
 	/// with its connection, and its workers with it.
 	/// <para>
@@ -370,12 +480,26 @@ public sealed class TrayRelay : IAsyncDisposable
 			_logger.LogDebug(exception, "The watch ended with an error as the relay closed.");
 		}
 
+		// Never faults, and the lifetime it is bounded by is cancelled: an introduction in flight ends now.
+		Task introducing;
+		lock (_introducingGate)
+		{
+			introducing = _introducing;
+		}
+
+		await introducing;
+
 		await DisposeQuietlyAsync(_tray);
 		await _upstream.DisposeAsync();
 	}
 
-	private static async Task<Tool[]> ListAsync(McpClient tray, CancellationToken cancellationToken) =>
-		[.. (await tray.ListToolsAsync(cancellationToken: cancellationToken)).Select(tool => tool.ProtocolTool)];
+	/// <summary>The broker's tools, asked for under the relay's session, so the broker counts the listing as this session's rather than an unnamed client's.</summary>
+	private static async Task<Tool[]> ListAsync(McpClient tray, string session, CancellationToken cancellationToken)
+	{
+		var options = new RequestOptions { Meta = new JsonObject { [CallSession.MetaKey] = session } };
+
+		return [.. (await tray.ListToolsAsync(options, cancellationToken)).Select(tool => tool.ProtocolTool)];
+	}
 
 	/// <summary>
 	/// Logs where the broker is another build than this relay, naming both commits.
@@ -424,7 +548,7 @@ public sealed class TrayRelay : IAsyncDisposable
 		try
 		{
 			var listing = await CancellableToolCall.InvokeAsync(
-				tray, ToolNames.DebugList, NoArguments, progress: null, cancellationToken, _workingDirectory);
+				tray, ToolNames.DebugList, NoArguments, progress: null, cancellationToken, _workingDirectory, session: _session);
 
 			_debugSessions.Record(reading, DebugSessionMemory.Read(listing));
 		}
@@ -592,6 +716,9 @@ public sealed class TrayRelay : IAsyncDisposable
 				// in between paired this connection with the instance before it.
 				Interlocked.Increment(ref _adoptions);
 				adopting.TrySetResult();
+
+				// A broker met by a reconnect is usually a new one, which knows nothing of this session.
+				IntroduceAgain();
 			}
 
 			CancelQuietly(Volatile.Read(ref _watch));
@@ -620,7 +747,7 @@ public sealed class TrayRelay : IAsyncDisposable
 
 		try
 		{
-			var tools = await ListAsync(fresh, reading.Token);
+			var tools = await ListAsync(fresh, _session, reading.Token);
 
 			_retries.Learn(tools);
 			surface = ToolSurface.Of(tools, fresh.ServerInstructions);

@@ -133,6 +133,20 @@ internal sealed class FakeUpstream : RelayUpstream
 		};
 	}
 
+	/// <summary>Every introduction the relay has sent, in order, each with the broker it reached.</summary>
+	public ConcurrentQueue<(FakeBroker? Broker, RelayClient Client)> Introductions { get; } = new();
+
+	/// <summary>Whether an introduction fails, as one to a broker that has just gone does.</summary>
+	public bool IntroductionsFail { get; set; }
+
+	public override Task IntroduceAsync(RelayClient client, CancellationToken cancellationToken)
+	{
+		if (IntroductionsFail) throw new HttpRequestException("Nothing is listening.");
+
+		Introductions.Enqueue((_current, client));
+		return Task.CompletedTask;
+	}
+
 	public override async Task<WatchEnd> WatchAsync(McpClient client, string? instance, CancellationToken cancellationToken)
 	{
 		_watching = _owners.GetValueOrDefault(client);

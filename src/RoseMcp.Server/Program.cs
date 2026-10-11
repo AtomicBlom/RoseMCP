@@ -159,14 +159,35 @@ internal static class Program
 					server.ServerInstructions = relay.Instructions;
 					server.Capabilities = new() { Tools = new() { ListChanged = true } };
 					server.ToolCollection = relay.ToolsChanged;
+
+					// A client whose roots change says so; the relay asks again and tells the broker.
+					server.Handlers.NotificationHandlers =
+					[
+						new(ClientIntroduction.RootsChangedNotification, (_, _) =>
+						{
+							relay.RootsChanged();
+							return ValueTask.CompletedTask;
+						}),
+					];
 				})
 				.WithStdioServerTransport()
 
 				// First, and here rather than in the tray: this is the outermost Rose process a relayed
 				// call reaches, so the id it mints is the one the tray and the worker repeat.
 				.WithCallCorrelation()
-				.WithListToolsHandler((_, token) => relay.ListToolsAsync(token))
-				.WithCallToolHandler((context, token) => relay.CallToolAsync(context.Params!, context.Server, token))
+
+				// Each request carries who the client is, which the relay tells the broker once there is
+				// someone to name; the request itself does not wait on it.
+				.WithListToolsHandler((context, token) =>
+				{
+					relay.Introduce(context.Server);
+					return relay.ListToolsAsync(token);
+				})
+				.WithCallToolHandler((context, token) =>
+				{
+					relay.Introduce(context.Server);
+					return relay.CallToolAsync(context.Params!, context.Server, token);
+				})
 
 				// This is an MCP boundary like any other, and declaring no tools of its own is exactly
 				// why it was missed: a boundary is wherever an exception meets the SDK. Without it a

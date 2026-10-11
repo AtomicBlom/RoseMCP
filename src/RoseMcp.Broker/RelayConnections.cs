@@ -97,6 +97,18 @@ public sealed class RelayConnections
 		}
 	}
 
+	/// <summary>
+	/// The relays watching now, by id, each with the process it said it is: a copy, so a caller holding a lock
+	/// of its own reads it without taking this one inside that.
+	/// </summary>
+	public IReadOnlyDictionary<string, int?> Watchers()
+	{
+		lock (_gate)
+		{
+			return _watches.ToDictionary(pair => pair.Key, pair => pair.Value.ProcessId, StringComparer.Ordinal);
+		}
+	}
+
 	private void Release(string relayId)
 	{
 		lock (_gate)

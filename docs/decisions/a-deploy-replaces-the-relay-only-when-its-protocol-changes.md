@@ -37,11 +37,12 @@ compares a file rather than loading an assembly Windows PowerShell 5.1 cannot. T
 only: elsewhere a running file can be replaced, and a Linux client registers the server in the root.
 
 **What the relay protocol is.** Everything a relay and a broker agree on beyond MCP: the headers a
-relay names itself with, `/admin/relays` and `/admin/relays/watch` and what they answer, the
+relay names itself with, `/admin/relays`, `/admin/relays/watch` and `/admin/relays/client` and what they answer, the
 `_meta` keys a relay sends, and what an instance id means. MCP between two builds of Rose is the same
 protocol however much the tools change, so a relay from an older deploy forwards for a newer broker
 perfectly well until this changes. Raise `RelayProtocol.Version` and the layout's `protocol` together
--- a test holds them equal -- with any change an older relay would misread. A relay that meets a broker
+-- a test holds them equal -- with any change an older relay would misread, and with any change to
+what the relay itself does, since an installed relay that is never replaced never does it. A relay that meets a broker
 speaking another protocol says so in the line and in its log, since no reconnect can mend it.
 
 **Noticing the broker go.** The relay holds `GET /admin/relays/watch` open. The broker writes one

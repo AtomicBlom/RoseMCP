@@ -152,6 +152,10 @@ public static class ServiceCollectionExtensions
 		// Which relays are connected, and which instance of the broker this is; read by the admin routes.
 		services.AddSingleton<RelayConnections>();
 
+		// Who each client is and when it last called: written by every call and by what relays say of their
+		// sessions, read by the admin and operator routes.
+		services.AddSingleton<ConnectedClients>();
+
 		// No inspector unless a host that has an operator endpoint replaces this. A stdio broker
 		// genuinely cannot open one, and saying so beats a tool argument that silently does nothing.
 		services.TryAddSingleton<IInspectorPresenter>(NoInspector.WithoutAnEndpoint);
@@ -193,6 +197,7 @@ public static class ServiceCollectionExtensions
 			.WithArgumentAliases(aliases)
 			.WithIgnoredArgumentNotices()
 			.WithCallOrigin()
+			.WithClientRecord()
 			.WithToolErrorMessages()
 			.WithLeanListing();
 	}
@@ -286,6 +291,40 @@ public static class ServiceCollectionExtensions
 		// sending it is for.
 		return Path.IsPathFullyQualified(directory) && Directory.Exists(directory) ? directory : null;
 	}
+
+	/// <summary>
+	/// Records every call and every listing in <see cref="ConnectedClients"/>, against the client that made it:
+	/// the session a relay named, else the transport's session, else the one unnamed client.
+	/// <para>
+	/// A filter, for the reason <see cref="WithCallOrigin"/> is one: every call passes through it, so no tool can
+	/// be added that a client's last call misses. The call is recorded as it starts, since a long call is the
+	/// client being busy rather than gone. The relay's name is read with no transport session in the way,
+	/// because the table keys a relayed client by its relay's name however the transport carried the call.
+	/// </para>
+	/// </summary>
+	private static IMcpServerBuilder WithClientRecord(this IMcpServerBuilder builder) =>
+		builder.WithRequestFilters(filters =>
+		{
+			filters.AddCallToolFilter(next => async (context, cancellationToken) =>
+			{
+				var server = context.Server;
+				server.Services?.GetService<ConnectedClients>()?.Called(
+					CallSession.Of(null, context.Params?.Meta), server.SessionId, server.ClientInfo?.Name, server.ClientInfo?.Version);
+
+				return await next(context, cancellationToken);
+			});
+
+			filters.AddListToolsFilter(next => async (context, cancellationToken) =>
+			{
+				var result = await next(context, cancellationToken);
+
+				var server = context.Server;
+				server.Services?.GetService<ConnectedClients>()?.Listed(
+					CallSession.Of(null, context.Params?.Meta), server.SessionId, server.ClientInfo?.Name, server.ClientInfo?.Version);
+
+				return result;
+			});
+		});
 
 	/// <summary>
 	/// Applies <see cref="ToolListing.Trim"/> at the one place every listing passes through, so no tool

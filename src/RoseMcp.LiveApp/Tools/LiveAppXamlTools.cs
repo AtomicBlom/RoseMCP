@@ -108,4 +108,17 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 	public LiveXamlSelection XamlSelectElement(
 		[Description(ToolDescriptions.XamlHandleArgument)] ulong handle)
 		=> host.SelectXamlElement(handle);
+
+	[McpServerTool(
+		Name = ToolNames.LiveAppXamlChangeMarks,
+		Title = "Live-app XAML change marks",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("Turn the app's marks of what live edits changed on or off, as the in-app toolbar's Changes button does.")]
+	public LiveXamlSelection XamlChangeMarks(
+		[Description("True to mark the changed elements in the app, false to take the marks down.")] bool shown)
+		=> host.SetXamlChangeMarks(shown);
 }

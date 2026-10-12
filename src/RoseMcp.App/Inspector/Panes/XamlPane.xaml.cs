@@ -5,17 +5,25 @@ using RoseMcp.Contracts;
 
 using RoseMcp.Ui.Core;
 using RoseMcp.Ui.Core.Inspector;
+using RoseMcp.Ui.Core.Views;
 
 using Windows.ApplicationModel.DataTransfer;
 
 namespace RoseMcp.App.Inspector.Panes;
 
 /// <summary>
-/// The running app's visual tree, what each element's properties are, and what set them.
+/// The running app's visual tree, what each element's properties are, and what set them -- and what
+/// live edits changed this session, from what to what, and who changed it.
 /// <para>
 /// Browsing a tree through an agent costs tokens for a question a person answers in seconds, which
 /// is the whole reason this pane exists. Clicking a node here highlights it in the app; pressing
-/// Select Element in the app selects it here.
+/// Select Element in the app selects it here. The tree can be searched and narrowed to the app's own
+/// markup or to what changed, and while the target is stopped it stays readable as it was last read.
+/// </para>
+/// <para>
+/// The record of live edits is the broker's, so it is waited on rather than polled and asking it costs
+/// the app nothing: it is watched while the pane is on screen, stopped target or not, and the watch
+/// stops when the pane is hidden, its session ends or its window closes.
 /// </para>
 /// <para>
 /// Every call goes through one gate. The provider serves one XAML request at a time on the app's
@@ -51,13 +59,28 @@ public sealed partial class XamlPane : UserControl
 
 	private OperatorClient? _client;
 	private Action<Exception>? _report;
+	private Action<NoteSubject, FrameworkElement>? _ask;
+	private Action<Func<NoteSubject?>>? _regard;
 	private InspectedSession? _session;
 	private PollLoop? _selectionPoll;
+	private ViewWatch<LiveXamlChangeList>? _changeWatch;
 	private CancellationTokenSource? _reading;
 
 	private bool _visible;
 	private bool _stopped;
 	private bool _readOnce;
+
+	/// <summary>Whether the tree on screen came from a stopped target, so it is read again once the target runs.</summary>
+	private bool _readWhileStopped;
+
+	/// <summary>Whether the change watch is already failing, so a broker that went is said once rather than every retry.</summary>
+	private bool _changesFailed;
+
+	/// <summary>
+	/// When the tree on screen was read: now-ish for a fresh read, or the time a stopped target's last read was taken.
+	/// What a stopped target's tree is labelled with.
+	/// </summary>
+	private DateTime? _treeReadUtc;
 
 	/// <summary>
 	/// Whether the selection on screen is one this window set rather than one somebody clicked. A
@@ -75,22 +98,46 @@ public sealed partial class XamlPane : UserControl
 
 	public XamlPane() => InitializeComponent();
 
-	public void Attach(OperatorClient client, Action<Exception> report)
+	/// <param name="client">The app's client.</param>
+	/// <param name="report">Puts a failure in front of the reader.</param>
+	/// <param name="ask">Opens the window's composer about a subject, beside an element.</param>
+	/// <param name="regard">Says which element was last selected, which the window's shortcut asks about.</param>
+	public void Attach(
+		OperatorClient client,
+		Action<Exception> report,
+		Action<NoteSubject, FrameworkElement> ask,
+		Action<Func<NoteSubject?>> regard)
 	{
 		_client = client;
 		_report = report;
+		_ask = ask;
+		_regard = regard;
 
 		// Quiet on failure: the body reports its own, once per run of them.
 		_selectionPoll = new PollLoop(PollSelectionAsync, SelectionInterval, static _ => { });
+
+		_changeWatch = new ViewWatch<LiveXamlChangeList>(
+			(after, waitSeconds, cancellationToken) => _session is { } session
+				? client.XamlChangesAsync(session.SessionId, after, waitSeconds, cancellationToken)
+				: Task.FromCanceled<LiveXamlChangeList>(new CancellationToken(canceled: true)),
+			list => list.Version,
+			OnChanges,
+			OnChangesFailed);
 	}
 
 	public void Bind(InspectedSession session)
 	{
 		_session = session;
 		_readOnce = false;
+		_readWhileStopped = false;
+		_treeReadUtc = null;
 
 		Tree.ItemsSource = session.Xaml.Roots;
 		PropertyRows.ItemsSource = session.Xaml.Properties;
+		FindBox.Text = session.Xaml.FindText;
+
+		// A new session's record is a different list: what the watch held was another app's.
+		_changeWatch?.Kick();
 
 		Show(session.Xaml);
 	}
@@ -107,41 +154,55 @@ public sealed partial class XamlPane : UserControl
 		if (!visible)
 		{
 			_selectionPoll?.Stop();
+			_changeWatch?.Stop();
 			Cancel();
 			return;
 		}
 
 		_selectionPoll?.Start();
+		if (_session is not null) _changeWatch?.Start();
 
-		if (!_readOnce && !_stopped) _ = RefreshAsync();
+		if (!_readOnce) _ = RefreshAsync();
 	}
 
 	/// <summary>
-	/// Takes each poll of the session. A stopped target cannot answer about its visual tree at all,
-	/// so the buttons that would ask go dead and the pane says why.
+	/// Takes each poll of the session. A stopped target cannot answer about its visual tree at all, so
+	/// the buttons that would ask it go dead and the pane says why -- while the tree it last read stays
+	/// readable, and searchable, beside the stack. Running again, the element on screen is read again,
+	/// and a tree that came from before the stop is replaced by a fresh one.
 	/// </summary>
 	public void Observe(SessionRow row)
 	{
+		var resumed = _stopped && !row.IsStopped;
 		_stopped = row.IsStopped;
 
-		// Not while a read is in flight either: every one of these waits on the same gate, so a click
-		// during a thirty-second tree read does nothing visible and then snaps back, which reads as a
-		// button that does not work.
-		Buttons(!_stopped && _reading is null);
+		if (resumed && _readWhileStopped) _readOnce = false;
+
+		Buttons(_reading is null);
 
 		if (_session is { } session) Show(session.Xaml);
 
-		if (_visible && !_readOnce && !_stopped) _ = RefreshAsync();
+		if (_visible && !_readOnce) _ = RefreshAsync();
+
+		if (resumed && _visible && _session?.Xaml.Selected is { } selected) _ = ChooseAsync(selected, push: false);
 	}
 
-	/// <summary>Whether the app can be asked anything from here.</summary>
-	private void Buttons(bool enabled)
+	/// <summary>
+	/// Which buttons can be pressed. Refreshing reads the tree, which a stopped target answers with the one it last
+	/// read; everything else asks the app's UI thread, which a stopped target cannot lend. Not while a read is in
+	/// flight either: every one of these waits on the same gate, so a click during a thirty-second tree read does
+	/// nothing visible and then snaps back, which reads as a button that does not work.
+	/// </summary>
+	private void Buttons(bool idle)
 	{
-		RefreshButton.IsEnabled = enabled;
-		PickButton.IsEnabled = enabled;
-		JustMyXamlButton.IsEnabled = enabled;
-		DeselectButton.IsEnabled = enabled;
-		IncludeDefaultsBox.IsEnabled = enabled;
+		var live = idle && !_stopped;
+
+		RefreshButton.IsEnabled = idle;
+		PickButton.IsEnabled = live;
+		JustMyXamlButton.IsEnabled = live;
+		DeselectButton.IsEnabled = live;
+		IncludeDefaultsBox.IsEnabled = live;
+		MarkInAppButton.IsEnabled = live;
 	}
 
 	/// <summary>
@@ -156,11 +217,13 @@ public sealed partial class XamlPane : UserControl
 		_ = RefreshAsync();
 	}
 
-	/// <summary>Reads the whole visual tree, merging it into the rows already on screen.</summary>
+	/// <summary>
+	/// Reads the whole visual tree, merging it into the rows already on screen. A stopped target is answered with the
+	/// tree it last gave, stamped with when, which asks the app nothing; the next read once it runs replaces it.
+	/// </summary>
 	private async Task RefreshAsync()
 	{
 		if (_client is not { } client || _session is not { } session) return;
-		if (_stopped) return;
 
 		using var cancel = new CancellationTokenSource();
 
@@ -175,8 +238,19 @@ public sealed partial class XamlPane : UserControl
 
 			var tree = await client.XamlTreeAsync(session.SessionId, cancel.Token);
 
-			session.Xaml.Absorb(tree);
+			// A stopped target with no tree to give answers with only a detail, which must not empty a tree already on
+			// screen: that one is as good as anything the app could say now.
+			var nothingToShow = tree.Nodes.Count == 0 && tree.AsOfUtc is null && session.Xaml.Count > 0 && _stopped;
+			if (!nothingToShow)
+			{
+				session.Xaml.Absorb(tree);
+				_treeReadUtc = tree.AsOfUtc ?? DateTime.UtcNow;
+			}
+
+			// Read once either way, so a stopped target is not asked every poll; one that came from before the stop is
+			// read again once the target runs.
 			_readOnce = true;
+			_readWhileStopped = tree.AsOfUtc is not null || nothingToShow;
 			Show(session.Xaml);
 		}
 		catch (OperationCanceledException)
@@ -191,9 +265,46 @@ public sealed partial class XamlPane : UserControl
 		{
 			_reading = null;
 			Busy.Visibility = Visibility.Collapsed;
-			Buttons(!_stopped);
+			Buttons(idle: true);
 			_gate.Release();
 		}
+	}
+
+	/// <summary>
+	/// Takes the record of live edits: marks the changed rows, narrows the tree again where it shows only what changed,
+	/// and puts each change beside its property. An answer about another session -- one bound before this, still in
+	/// flight -- is dropped.
+	/// </summary>
+	private void OnChanges(LiveXamlChangeList list)
+	{
+		if (_session is not { } session || list.SessionId != session.SessionId) return;
+
+		if (_changesFailed)
+		{
+			_changesFailed = false;
+			if (DetailBar.Severity == InfoBarSeverity.Warning) DetailBar.IsOpen = false;
+		}
+
+		session.Xaml.Absorb(list);
+
+		var dropped = XamlChangeText.Dropped(list.Dropped);
+		ToolTipService.SetToolTip(
+			ChangedButton,
+			"Show only the elements a live edit changed in this session." + (dropped.Length > 0 ? $" {dropped}" : string.Empty));
+
+		Show(session.Xaml);
+	}
+
+	/// <summary>
+	/// A read of the record that failed, said once per run of them. A broker that is not answering is the session
+	/// poll's to say, in the window's own words, so it is not said twice.
+	/// </summary>
+	private void OnChangesFailed(Exception exception)
+	{
+		if (_changesFailed || OperatorException.IsBrokerGone(exception)) return;
+
+		_changesFailed = true;
+		ShowDetail($"Not following the record of live edits: {exception.Message}", InfoBarSeverity.Warning);
 	}
 
 	/// <summary>
@@ -292,6 +403,17 @@ public sealed partial class XamlPane : UserControl
 		if (_client is not { } client || _session is not { } session) return;
 
 		Choose(row);
+		_regard?.Invoke(() => SubjectOf(row));
+
+		// A stopped target is asked nothing: its handles are not sent anywhere until it runs, and what changed on the
+		// element is the broker's record, which needs no app to answer.
+		if (_stopped)
+		{
+			session.Xaml.ShowChangesOnly(InspectorText.PropertiesNeedARunningTarget);
+			Show(session.Xaml);
+			return;
+		}
+
 		Show(session.Xaml);
 
 		await _gate.WaitAsync(CancellationToken.None);
@@ -376,18 +498,28 @@ public sealed partial class XamlPane : UserControl
 			? "Visual tree"
 			: $"Visual tree ({Format.Count(xaml.Count, "element")})";
 
+		ChangedButton.Content = xaml.ChangedCount == 0 ? "Changed" : $"Changed ({xaml.ChangedCount})";
+		FilterNote.Text = xaml.FilterNote;
+		FilterNote.Visibility = xaml.FilterNote.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
 		ShowToggles(xaml);
 		ShowElement(xaml);
 
 		// The stopped sentence wins, because it is the reason everything else on this pane is doing
-		// nothing and every other detail here is about a read that is not going to happen.
+		// nothing and every other detail here is about a read that is not going to happen. With a tree
+		// on screen it says which moment that tree is from, since it is still worth reading.
 		if (_stopped)
 		{
-			ShowDetail(InspectorText.XamlNeedsARunningTarget, InfoBarSeverity.Informational);
+			var readAt = xaml.AsOfUtc ?? _treeReadUtc;
+			var said = xaml.Count > 0 && readAt is { } at
+				? InspectorText.TreeAsOf(at)
+				: InspectorText.XamlNeedsARunningTarget;
+
+			ShowDetail(said, InfoBarSeverity.Informational);
 			return;
 		}
 
-		if (_pollFailed) return;
+		if (_pollFailed || _changesFailed) return;
 
 		if (xaml.HasTreeDetail) ShowDetail(xaml.TreeDetail, InfoBarSeverity.Informational);
 		else DetailBar.IsOpen = false;
@@ -398,12 +530,16 @@ public sealed partial class XamlPane : UserControl
 		PickButton.IsChecked = xaml.Armed;
 		JustMyXamlButton.IsChecked = xaml.JustMyXaml;
 		IncludeDefaultsBox.IsChecked = xaml.IncludeDefaults;
+		MarkInAppButton.IsChecked = xaml.ChangeMarks;
+		ChangedButton.IsChecked = xaml.ChangedOnly;
 	}
 
 	private void ShowElement(XamlInspection xaml)
 	{
 		PropertiesDetail.Text = xaml.PropertiesDetail;
 		PropertiesDetail.Visibility = xaml.HasPropertiesDetail ? Visibility.Visible : Visibility.Collapsed;
+
+		AskButton.IsEnabled = xaml.Selected is not null;
 
 		if (xaml.Selected is not { } selected)
 		{
@@ -609,5 +745,79 @@ public sealed partial class XamlPane : UserControl
 			await Task.Delay(TimeSpan.FromSeconds(1.5));
 			CopyAddressButton.Content = "Copy";
 		});
+	}
+
+	/// <summary>Narrows the tree to what the find box holds, as it is typed. The tree is the window's own, so nothing is asked of the app.</summary>
+	private void OnFindChanged(object sender, TextChangedEventArgs args)
+	{
+		if (_session is not { } session) return;
+
+		session.Xaml.FindText = FindBox.Text;
+		Show(session.Xaml);
+	}
+
+	/// <summary>Narrows the tree to the elements live edits changed this session, or puts it back.</summary>
+	private void OnToggleChanged(object sender, RoutedEventArgs args)
+	{
+		if (_session is not { } session) return;
+
+		session.Xaml.ChangedOnly = ChangedButton.IsChecked == true;
+		Show(session.Xaml);
+	}
+
+	/// <summary>
+	/// Turns the app's marks of what live edits changed on or off. The app's own switch rather than this window's, so
+	/// the toggle shows what the app says afterwards: its Changes button may have moved it since.
+	/// </summary>
+	private async void OnToggleMarkInApp(object sender, RoutedEventArgs args)
+	{
+		if (_client is not { } client || _session is not { } session) return;
+
+		var wanted = MarkInAppButton.IsChecked == true;
+
+		await _gate.WaitAsync(CancellationToken.None);
+
+		try
+		{
+			session.Xaml.Absorb(await client.SetXamlChangeMarksAsync(session.SessionId, wanted, CancellationToken.None));
+		}
+		catch (Exception exception)
+		{
+			_report?.Invoke(exception);
+		}
+		finally
+		{
+			_gate.Release();
+		}
+
+		ShowToggles(session.Xaml);
+	}
+
+	/// <summary>Asks an agent about the element on screen, with what changed on it.</summary>
+	private void OnAskElement(object sender, RoutedEventArgs args)
+	{
+		if (_session?.Xaml.Selected is not { } selected) return;
+
+		if (SubjectOf(selected) is { } subject) _ask?.Invoke(subject, AskButton);
+	}
+
+	/// <summary>Asks an agent about the element a row's context menu was opened on.</summary>
+	private void OnAskRow(object sender, RoutedEventArgs args)
+	{
+		if ((sender as FrameworkElement)?.Tag is not XamlNodeRow row) return;
+
+		if (SubjectOf(row) is { } subject) _ask?.Invoke(subject, this);
+	}
+
+	/// <summary>
+	/// The note's subject for an element, made when it is asked for: null once the row is no longer in the tree this
+	/// pane shows -- another session bound, or the element gone -- so a shortcut pressed later asks about nothing
+	/// rather than about an element that is not there.
+	/// </summary>
+	private NoteSubject? SubjectOf(XamlNodeRow row)
+	{
+		if (_session is not { } session || !ReferenceEquals(session.Xaml.Row(row.Handle), row)) return null;
+
+		return AskAgent.Element(session.SessionId, row, session.Xaml.ChangesOf(row.Handle));
 	}
 }

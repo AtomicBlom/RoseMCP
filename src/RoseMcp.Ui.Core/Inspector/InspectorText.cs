@@ -147,6 +147,45 @@ public static class InspectorText
 		"The target is stopped, so it cannot answer about its visual tree: the XAML provider runs on the "
 			+ "app's own UI thread and the debugger is holding it. Continue it from the header first (F5).";
 
+	/// <summary>
+	/// What the tree on screen is while the target is stopped: the last one read, as of when. The tree can be browsed
+	/// and searched, and the record of live edits read, but nothing on it can be asked of the app until it runs.
+	/// </summary>
+	public static string TreeAsOf(DateTime readUtc) =>
+		$"The target is stopped, so this is the tree as it was last read, at "
+			+ $"{readUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture)}. Browse and search it, and see what live "
+			+ "edits changed; reading an element's properties, picking and the app's marks wait until it runs (F5).";
+
+	/// <summary>Why a stopped target's element shows only what live edits changed on it.</summary>
+	public const string PropertiesNeedARunningTarget =
+		"The target is stopped, so this element's properties cannot be read. What live edits changed on it is listed, "
+			+ "from the record the broker keeps; the rest arrives when it runs again.";
+
+	/// <summary>
+	/// What the filters above the tree left of it, where that is not the whole tree; empty where it is. Just my XAML
+	/// that could not narrow anything says so, because a filter silently doing nothing reads as an app made entirely
+	/// of its own markup.
+	/// </summary>
+	public static string Filtered(XamlTreeQuery query, XamlTreeFiltered filtered, int total)
+	{
+		ArgumentNullException.ThrowIfNull(query);
+		ArgumentNullException.ThrowIfNull(filtered);
+
+		var noSource = filtered.JustMyXamlApplied
+			? string.Empty
+			: "This app's tree carries no source info, so Just my XAML cannot tell its markup from a template's and leaves everything in.";
+
+		if (!query.Seeks) return noSource;
+
+		var matched = filtered.Matched == 0
+			? query.ChangedOnly && query.Text.Trim().Length == 0
+				? "No element in this tree has been changed by a live edit this session."
+				: "Nothing in the tree matches."
+			: $"{Format.Count(filtered.Matched, "element")} of {total} match.";
+
+		return noSource.Length == 0 ? matched : $"{matched} {noSource}";
+	}
+
 	/// <summary>Nothing is selected, which is the state the pane opens in.</summary>
 	public const string NoElementSelected =
 		"Pick an element in the tree, or use Pick from app and click one in the running app.";

@@ -103,6 +103,8 @@ public sealed class ProducedFactTests
 		typeof(NoteList),
 		typeof(LiveAppAgent),
 		typeof(LiveBreakpointSetter),
+		typeof(LiveXamlChange),
+		typeof(LiveXamlChangeList),
 		typeof(RunningApp),
 		typeof(RunningAppList),
 		typeof(InstalledApp),

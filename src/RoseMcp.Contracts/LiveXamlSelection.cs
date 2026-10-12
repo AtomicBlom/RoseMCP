@@ -37,6 +37,12 @@ public sealed record LiveXamlSelection : LiveResult
 	/// </summary>
 	public bool JustMyXaml { get; init; } = true;
 
+	/// <summary>
+	/// Whether the app marks the elements live edits changed, read from the toolbar like <see cref="Armed"/>: its
+	/// Changes button and a window's toggle are one switch, and either can move it without the other being told.
+	/// </summary>
+	public bool ChangeMarks { get; init; } = true;
+
 	public ulong Handle { get; init; }
 
 	public string? TypeName { get; init; }

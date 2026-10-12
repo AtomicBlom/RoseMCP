@@ -434,6 +434,14 @@ public sealed class OperatorClient : IDisposable
 			PollBudget(waitSeconds),
 			cancellationToken);
 
+	/// <summary>Turns the app's marks of what live edits changed on or off, answered with where the switch is after.</summary>
+	public Task<LiveXamlSelection> SetXamlChangeMarksAsync(string sessionId, bool shown, CancellationToken cancellationToken) =>
+		PostAsync<XamlChangeMarksRequest, LiveXamlSelection>(
+			$"/operator/sessions/{sessionId}/xaml/change-marks",
+			new XamlChangeMarksRequest { Shown = shown },
+			Xaml,
+			cancellationToken);
+
 	public Task<LiveSessionClosed> DetachAsync(string sessionId, CancellationToken cancellationToken) =>
 		PostAsync<object?, LiveSessionClosed>($"/operator/sessions/{sessionId}/detach", null, Quick, cancellationToken);
 

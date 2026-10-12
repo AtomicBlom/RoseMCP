@@ -581,6 +581,13 @@ public static class OperatorApi
 				Json(await Require(sessions, sessionId).EnterXamlSelectModeAsync(
 					body.IncludeAllElements, body.JustMyXaml, body.Arm, context.RequestAborted)));
 
+		// The app's marks of what live edits changed: the toolbar's Changes button, which a person can also press from
+		// a window. Here and not on the agent surface, because the marks are for whoever is looking at the app.
+		operators.MapPost(
+			"/sessions/{sessionId}/xaml/change-marks",
+			async (string sessionId, XamlChangeMarksRequest body, LiveAppSessionManager sessions, HttpContext context) =>
+				Json(await Require(sessions, sessionId).SetXamlChangeMarksAsync(body.Shown, context.RequestAborted)));
+
 		// The live edits made to the app, with who made each. Broker-side, like every view a window holds open: the
 		// record is the broker's, so waiting on it asks the app nothing, and an apply pulses it as it lands.
 		operators.MapGet(

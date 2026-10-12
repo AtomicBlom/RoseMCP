@@ -87,6 +87,29 @@ public static class AskAgent
 	};
 
 	/// <summary>
+	/// An element of the live visual tree, by its handle, said as the tree names it and where its markup declares it --
+	/// with what live edits changed on it this session, newest first, since that is usually what the question is about.
+	/// </summary>
+	public static NoteSubject Element(string sessionId, XamlNodeRow row, IReadOnlyList<LiveXamlChange> changes)
+	{
+		ArgumentNullException.ThrowIfNull(row);
+		ArgumentNullException.ThrowIfNull(changes);
+
+		var named = row.Address is { Length: > 0 } address && address != row.Label ? $"{row.Label} ({address})" : row.Label;
+		var where = row.HasWhere ? $" in {row.Where}" : string.Empty;
+		var latest = changes.MaxBy(change => change.Sequence);
+		var changed = latest is null ? string.Empty : $", changed: {XamlChangeText.Line(latest)}";
+
+		return new NoteSubject
+		{
+			Kind = NoteSubjectKind.Element,
+			Readable = $"element {named}{where}{changed}",
+			Session = sessionId,
+			Element = row.Handle.ToString(System.Globalization.CultureInfo.InvariantCulture),
+		};
+	}
+
+	/// <summary>
 	/// Whom a note about something in a debug session can go to: the agent sessions in it -- the one that started it,
 	/// or the one a person shared theirs with -- that the client table lists as sessions it can tell apart, where
 	/// <paramref name="persons"/> says whether the person started it. Says why there is none where there is none.

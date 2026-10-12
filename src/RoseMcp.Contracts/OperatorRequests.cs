@@ -95,6 +95,13 @@ public sealed record XamlSelectModeRequest
 	public bool JustMyXaml { get; init; } = true;
 }
 
+/// <summary>Whether the app marks the elements live edits changed: the in-app toolbar's Changes button, from a window.</summary>
+public sealed record XamlChangeMarksRequest
+{
+	/// <summary>True to mark the changed elements in the app, false to take the marks down.</summary>
+	public bool Shown { get; init; } = true;
+}
+
 /// <summary>Which element to select without a click.</summary>
 public sealed record XamlSelectElementRequest
 {

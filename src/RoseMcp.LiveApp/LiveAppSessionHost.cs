@@ -331,6 +331,9 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	/// <inheritdoc cref="TargetXaml.SelectElement"/>
 	public LiveXamlSelection SelectXamlElement(ulong handle) => _xaml.SelectElement(Asking(), handle);
 
+	/// <inheritdoc cref="TargetXaml.SetChangeMarks"/>
+	public LiveXamlSelection SetXamlChangeMarks(bool shown) => _xaml.SetChangeMarks(Asking(), shown);
+
 	/// <inheritdoc cref="TargetXaml.Apply"/>
 	public LiveXamlApplyResult ApplyXaml(string? oldXaml, string? newXaml, string? filePath)
 		=> _xaml.Apply(Asking(), oldXaml, newXaml, filePath);

@@ -27,6 +27,18 @@ public sealed class XamlInspection : Observable
 	private string _propertiesDetail = string.Empty;
 	private bool _hasPropertiesDetail;
 	private string _observedNote = string.Empty;
+	private string _findText = string.Empty;
+	private bool _changedOnly;
+	private bool _changeMarks = true;
+	private int _changedCount;
+	private string _filterNote = string.Empty;
+	private DateTime? _asOfUtc;
+
+	/// <summary>The live edits this session made, by the element they landed on.</summary>
+	private Dictionary<ulong, List<LiveXamlChange>> _changes = [];
+
+	/// <summary>The selected element's properties as last read, kept so a change landing re-marks them without reading the app.</summary>
+	private IReadOnlyList<LiveXamlProperty> _readProperties = [];
 
 	/// <summary>Every element by handle, which is how a pick in the app finds its row.</summary>
 	internal Dictionary<ulong, XamlNodeRow> Index { get; private set; } = [];
@@ -119,8 +131,150 @@ public sealed class XamlInspection : Observable
 		private set => Set(ref _observedNote, value);
 	}
 
+	/// <summary>Text the tree is narrowed to: rows whose name, type, address or file hold it, and the way down to them.</summary>
+	public string FindText
+	{
+		get => _findText;
+		set
+		{
+			var text = value ?? string.Empty;
+			if (text == _findText) return;
+
+			Set(ref _findText, text);
+			Refilter();
+		}
+	}
+
+	/// <summary>Whether the tree is narrowed to the elements live edits changed this session.</summary>
+	public bool ChangedOnly
+	{
+		get => _changedOnly;
+		set
+		{
+			if (value == _changedOnly) return;
+
+			Set(ref _changedOnly, value);
+			Refilter();
+		}
+	}
+
+	/// <summary>
+	/// Whether the app marks the elements live edits changed, read from the app because its toolbar's Changes button
+	/// and this window's toggle are one switch.
+	/// </summary>
+	public bool ChangeMarks
+	{
+		get => _changeMarks;
+		private set => Set(ref _changeMarks, value);
+	}
+
+	/// <summary>How many elements in the tree a live edit changed this session, which the Changed filter is labelled with.</summary>
+	public int ChangedCount
+	{
+		get => _changedCount;
+		private set => Set(ref _changedCount, value);
+	}
+
+	/// <summary>What the filters left of the tree, said where it is not the whole of it; empty otherwise.</summary>
+	public string FilterNote
+	{
+		get => _filterNote;
+		private set => Set(ref _filterNote, value);
+	}
+
+	/// <summary>
+	/// When the tree on screen was read, where it is not a fresh read: the target is stopped and this is the last tree
+	/// read from it. Null for a fresh read.
+	/// </summary>
+	public DateTime? AsOfUtc
+	{
+		get => _asOfUtc;
+		private set => Set(ref _asOfUtc, value);
+	}
+
+	/// <summary>The live edits that landed on an element this session, oldest first; empty where none did.</summary>
+	public IReadOnlyList<LiveXamlChange> ChangesOf(ulong handle) => _changes.TryGetValue(handle, out var changes) ? changes : [];
+
 	/// <summary>The row for a handle, or null when this tree does not have it.</summary>
 	public XamlNodeRow? Row(ulong handle) => Index.GetValueOrDefault(handle);
+
+	/// <summary>
+	/// Takes the record of live edits made this session: marks each changed element's row, narrows the tree again where
+	/// it shows only what changed, and puts each change beside its property for the element on screen. Read from the
+	/// broker rather than the app, so it is taken while the target is stopped as well.
+	/// </summary>
+	public void Absorb(LiveXamlChangeList list)
+	{
+		ArgumentNullException.ThrowIfNull(list);
+
+		_changes = list.Changes
+			.Where(change => change.Handle is not null)
+			.GroupBy(change => change.Handle!.Value)
+			.ToDictionary(group => group.Key, group => group.OrderBy(change => change.Sequence).ToList());
+
+		Mark();
+		Refilter();
+
+		if (Selected is not null) ShowProperties();
+	}
+
+	/// <summary>
+	/// Shows the selected element's live edits in place of its properties, for a target that is stopped and so cannot be
+	/// read: what changed is the broker's record, and still true; what the rest of the element says is not knowable now.
+	/// </summary>
+	public void ShowChangesOnly(string why)
+	{
+		if (Selected is not { } selected) return;
+
+		_readProperties = [];
+		Properties.Clear();
+		foreach (var row in PropertyRow.Sort([], ChangesOf(selected.Handle)))
+		{
+			Properties.Add(row);
+		}
+
+		PropertiesDetail = why;
+		HasPropertiesDetail = why.Length > 0;
+		ObservedNote = string.Empty;
+	}
+
+	/// <summary>Marks each row a live edit changed, and counts them for the Changed filter's label.</summary>
+	private void Mark()
+	{
+		var changed = 0;
+
+		foreach (var (handle, row) in Index)
+		{
+			var changes = ChangesOf(handle);
+			row.IsChanged = changes.Count > 0;
+			row.ChangeNote = changes.Count > 0 ? XamlChangeText.Note(changes) : string.Empty;
+
+			if (row.IsChanged) changed++;
+		}
+
+		ChangedCount = changed;
+	}
+
+	/// <summary>Narrows the tree to the filters as they stand, and says what that left where it is not everything.</summary>
+	private void Refilter()
+	{
+		var query = new XamlTreeQuery(FindText, ChangedOnly, JustMyXaml);
+		var filtered = XamlTreeFilter.Apply(this, query);
+
+		FilterNote = InspectorText.Filtered(query, filtered, Count);
+	}
+
+	/// <summary>The selected element's properties as last read, with this session's changes beside them.</summary>
+	private void ShowProperties()
+	{
+		if (Selected is not { } selected) return;
+
+		Properties.Clear();
+		foreach (var property in PropertyRow.Sort(_readProperties, ChangesOf(selected.Handle)))
+		{
+			Properties.Add(property);
+		}
+	}
 
 	/// <summary>How many times this window has read an element's properties.</summary>
 	public int Reads(ulong handle) => _reads.GetValueOrDefault(handle);
@@ -132,6 +286,12 @@ public sealed class XamlInspection : Observable
 
 		TreeDetail = Describe(tree);
 		HasTreeDetail = TreeDetail.Length > 0;
+		AsOfUtc = tree.AsOfUtc;
+
+		// A row that has just appeared is marked and filtered like the rest, rather than arriving unmarked and on show
+		// whatever the filters say.
+		Mark();
+		Refilter();
 	}
 
 	/// <summary>Takes what the builder worked out, and drops a selection the tree no longer has.</summary>
@@ -163,6 +323,7 @@ public sealed class XamlInspection : Observable
 		if (ReferenceEquals(row, Selected)) return;
 
 		Selected = row;
+		_readProperties = [];
 		Properties.Clear();
 		PropertiesDetail = string.Empty;
 		HasPropertiesDetail = false;
@@ -179,12 +340,9 @@ public sealed class XamlInspection : Observable
 		if (Selected is not { } selected || selected.Handle != properties.Handle) return;
 
 		_reads[properties.Handle] = Reads(properties.Handle) + 1;
+		_readProperties = properties.Properties;
 
-		Properties.Clear();
-		foreach (var property in PropertyRow.Sort(properties.Properties))
-		{
-			Properties.Add(property);
-		}
+		ShowProperties();
 
 		PropertiesDetail = properties.Detail ?? string.Empty;
 		HasPropertiesDetail = PropertiesDetail.Length > 0;
@@ -198,7 +356,14 @@ public sealed class XamlInspection : Observable
 	public void Absorb(LiveXamlSelection selection)
 	{
 		Armed = selection.Armed;
+		ChangeMarks = selection.ChangeMarks;
+
+		// Just my XAML narrows the tree as well as the pick, so the two cannot disagree about which elements are the
+		// app's: the tree is narrowed again when the app's own toggle moves.
+		if (selection.JustMyXaml == JustMyXaml) return;
+
 		JustMyXaml = selection.JustMyXaml;
+		Refilter();
 	}
 
 	/// <summary>

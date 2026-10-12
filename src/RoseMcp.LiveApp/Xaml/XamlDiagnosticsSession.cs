@@ -110,6 +110,15 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 	/// </summary>
 	public LiveXamlProvider Provider => _provider.Residency;
 
+	/// <summary>
+	/// The last tree read whole, and when, for a target that cannot be asked now. Null until a tree has been read.
+	/// Replaced whole under the request lock and read without it, so a reader sees one read or the next and never
+	/// half of one.
+	/// </summary>
+	public XamlTreeRead? LastTree => Volatile.Read(ref _lastTree);
+
+	private XamlTreeRead? _lastTree;
+
 	private LiveXamlTree ReadTreeCore(int pid)
 	{
 		var (pipe, unready) = _provider.Connect(pid);
@@ -122,6 +131,7 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 
 		var nodes = XamlProviderWire.ParseTree(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
 		_logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid} over the pipe.", nodes.Count, pid);
+		Volatile.Write(ref _lastTree, new XamlTreeRead(nodes, DateTime.UtcNow, PipeChannel));
 		return new LiveXamlTree { Nodes = nodes, Channel = PipeChannel };
 	}
 
@@ -339,6 +349,36 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 	}
 
 	/// <summary>
+	/// Turns the app's marks of what live edits changed on or off: the toolbar's Changes button, reached from a
+	/// window. Answered from the overlay's own state afterwards, as arming is, because the person can press the
+	/// button in the app without this side being told.
+	/// </summary>
+	public LiveXamlSelection SetChangeMarks(int pid, bool shown)
+	{
+		lock (_requests) return SetChangeMarksCore(pid, shown);
+	}
+
+	private LiveXamlSelection SetChangeMarksCore(int pid, bool shown)
+	{
+		var (pipe, unready) = _provider.Connect(pid);
+		if (pipe is null) return new LiveXamlSelection { Detail = unready };
+
+		var request = shown ? "changes on" : "changes off";
+		if (pipe.Request(request, Reply) is null)
+		{
+			return new LiveXamlSelection { Detail = Unanswered(request, "the app's change marks to be switched") };
+		}
+
+		var after = ReadSelectionCore();
+		return after with
+		{
+			Detail = after.ChangeMarks
+				? "The app marks the elements live edits changed, each tagged with its change, until the tags fade."
+				: "The app does not mark what live edits changed; the XAML view still does.",
+		};
+	}
+
+	/// <summary>
 	/// Selects the element a handle names, with no hit test involved.
 	/// <para>
 	/// The reason this exists is that some controls cannot be clicked on. A slider is the reported
@@ -417,6 +457,15 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 
 	private LiveXamlSelection ReadSelectionCore()
 	{
+		var selection = ReadPickCore(out var changeMarks);
+		return changeMarks is { } marks ? selection with { ChangeMarks = marks } : selection;
+	}
+
+	/// <summary>What is picked and the mode, with whether the app marks changes beside it when the toolbar answered.</summary>
+	private LiveXamlSelection ReadPickCore(out bool? changeMarks)
+	{
+		changeMarks = null;
+
 		if (_provider.ResidentPipe is null)
 		{
 			return new LiveXamlSelection { Detail = "No XAML tool has run against this session yet, so the in-app toolbar is not installed." };
@@ -426,6 +475,8 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		// answers from what it holds, and the reply is matched to this request by the id it echoes.
 		var report = SelectionOverPipe();
 		if (report is null) return new LiveXamlSelection { Detail = Unanswered("selection", "what is selected") };
+
+		changeMarks = report.ChangeMarks;
 
 		var (mode, justMyXaml, rows, gone) = (report.Mode, report.JustMyXaml, report.Rows, report.Gone);
 
@@ -592,15 +643,18 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		var header = XamlWire.Fields(lines[0]);
 		if (header.Length < 3) return null;
 
+		// The fourth field is whether the app marks what live edits changed. A header without one says
+		// nothing about it, and on is what the toolbar starts with.
 		return new OverlayReport(
 			header[0],
 			header[1] == "1",
 			header[2],
+			header.Length < 4 || header[3] == "1",
 			[.. lines.Skip(1).Where(line => line.Length > 0)]);
 	}
 
 	/// The overlay's answer about the pick, as one reply rather than three files.
-	private sealed record OverlayReport(string Mode, bool JustMyXaml, string Gone, List<string> Rows);
+	private sealed record OverlayReport(string Mode, bool JustMyXaml, string Gone, bool ChangeMarks, List<string> Rows);
 
 	/// <summary>
 	/// Live-edits the target by diffing two XAML versions and applying the edits to its visual tree (#12).

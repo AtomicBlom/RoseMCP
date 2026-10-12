@@ -673,6 +673,13 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["handle"] = handle },
 			cancellationToken);
 
+	/// <summary>Turns the app's marks of what live edits changed on or off, and answers with where the switch is after.</summary>
+	public Task<LiveXamlSelection> SetXamlChangeMarksAsync(bool shown, CancellationToken cancellationToken)
+		=> SendAsync<LiveXamlSelection>(
+			ToolNames.LiveAppXamlChangeMarks,
+			new Dictionary<string, object?> { ["shown"] = shown },
+			cancellationToken);
+
 	/// <summary>
 	/// The handle an element reference names: a decimal handle, an <c>x:Name</c> with or without a
 	/// leading <c>#</c>, or the address the tree and the selection report.

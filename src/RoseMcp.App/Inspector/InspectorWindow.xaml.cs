@@ -153,7 +153,7 @@ public sealed partial class InspectorWindow : Window
 		Breakpoints.Counted += (_, count) => BreakpointsView.Text = count == 0 ? "Breakpoints" : $"Breakpoints ({count})";
 		Execution.Attach(_client, Report);
 		Execution.DetachRequested += OnDetach;
-		Xaml.Attach(_client, Report);
+		Xaml.Attach(_client, Report, Ask, Regard);
 		Start.Attach(_client, Report, Open);
 
 		_sessionPoll = new PollLoop(RefreshAsync, SessionInterval, Report);

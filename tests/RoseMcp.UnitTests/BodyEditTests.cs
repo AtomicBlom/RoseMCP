@@ -236,6 +236,49 @@ public sealed class BodyEditTests
 	}
 
 	/// <summary>
+	/// A needle on one line says nothing about endings, so it cannot be the caller saying their LFs are
+	/// deliberate: a replacement that adds a line takes the ending of the line the match is on, with the
+	/// same report as a needle that spans lines. Splicing its LF as given left one bare LF in a CRLF
+	/// literal, which fails dotnet format while no build complains.
+	/// </summary>
+	[Test]
+	public void Gives_a_one_line_needles_replacement_the_ending_of_its_line()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		var body = BodyEdit.Anchored(
+			"{\r\n\tvar text = \"\"\"\r\n\t\tfirst\r\n\t\tsecond\r\n\t\t\"\"\";\r\n}",
+			"second",
+			"second\n\t\tinserted",
+			includeTrivia: true,
+			literals => rewritten = literals);
+
+		body.ShouldContain("\t\tsecond\r\n\t\tinserted\r\n", Case.Sensitive);
+		body.Replace("\r\n", string.Empty, StringComparison.Ordinal).ShouldNotContain('\n');
+		rewritten.ShouldNotBeNull().ShouldHaveSingleItem();
+	}
+
+	/// <summary>
+	/// The ending of the line the match is on, not the file's: in a literal written with bare LFs inside a
+	/// CRLF body, a line added by a one-line needle keeps the literal's LF and changes nothing about it.
+	/// </summary>
+	[Test]
+	public void Keeps_a_line_feed_literals_ending_for_a_one_line_needle()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		var body = BodyEdit.Anchored(
+			"{\r\n\tvar text = \"\"\"\r\n\t\tfirst\nsecond\n\t\t\"\"\";\r\n}",
+			"second",
+			"second\nthird",
+			includeTrivia: true,
+			literals => rewritten = literals);
+
+		body.ShouldContain("first\nsecond\nthird\n", Case.Sensitive);
+		rewritten.ShouldBeNull();
+	}
+
+	/// <summary>
 	/// Endings rewritten inside a comment are layout, as they are anywhere outside a literal, so the
 	/// replacement takes the body's endings and nothing is said about it.
 	/// </summary>

@@ -173,6 +173,12 @@ public static class BodyEdit
 	/// pass writes around it.
 	/// </para>
 	/// <para>
+	/// A needle on one line has no ending to follow, so it says nothing either way, and the replacement's
+	/// bare LFs are read as artefacts. They take the ending of the line the match is on, which inside a
+	/// literal is the ending the string already has, so a line added to a literal written with bare LFs
+	/// keeps them and one added to a CRLF literal does not leave a bare LF in it.
+	/// </para>
+	/// <para>
 	/// What is reported of that is decided on the body as it will be written, since a replacement is
 	/// as often the words inside a string already in the file as code carrying a literal of its own:
 	/// only the endings that land inside a literal's value changed a string, and the rest are layout.
@@ -207,6 +213,13 @@ public static class BodyEdit
 					written = Normalised(replace, lineEnding ?? ending, out changed);
 				}
 			}
+		}
+		else if (!find.Contains('\n', StringComparison.Ordinal))
+		{
+			// A needle on one line matched as written without saying anything about endings, so the
+			// replacement's bare LFs are read as transport too. They take the ending of the line the match
+			// is on rather than the file's, since inside a literal that is the ending the string already has.
+			written = Normalised(replace, EndingAfter(body, matches[0]) ?? lineEnding ?? Whitespace.Dominant(body), out changed);
 		}
 
 		if (matches.Count == 0)
@@ -260,6 +273,17 @@ public static class BodyEdit
 		}
 
 		return found;
+	}
+
+	/// <summary>
+	/// The ending of the line <paramref name="at"/> is on, or null where it is on the last line and has none.
+	/// </summary>
+	private static string? EndingAfter(string body, int at)
+	{
+		var feed = body.IndexOf('\n', at);
+		if (feed < 0) return null;
+
+		return feed > 0 && body[feed - 1] == '\r' ? "\r\n" : "\n";
 	}
 
 	/// <summary>

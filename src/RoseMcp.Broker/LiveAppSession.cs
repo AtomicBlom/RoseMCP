@@ -258,9 +258,48 @@ public sealed class LiveAppSession : IAsyncDisposable
 			XamlProvider = info?.XamlProvider ?? LiveXamlProvider.None,
 			HostLogPath = info?.HostLogPath,
 			LastEventAge = info?.LastEvent is { } beat ? now - beat.TimestampUtc : null,
+
+			// A press in an app that has gone is not a question anybody can be shown the subject of.
+			XamlAsk = state == LiveAppSessionState.Ended ? null : info?.XamlAsk,
+			XamlAskAge = state == LiveAppSessionState.Ended || info?.XamlAsk is not { } ask ? null : now - ask.CollectedUtc,
 			InfoAge = _infoUtc is { } read ? now - read : null,
 		};
 	}
+
+	/// <summary>
+	/// How old a press of the panel's Ask button can be and still open the Inspector. A press is collected within a
+	/// second of being made and the broker reads it within another, so anything older was made before the broker was
+	/// watching -- a broker that restarted, a session it picked up -- and opening a window about it now would answer a
+	/// question nobody is waiting on.
+	/// </summary>
+	public static readonly TimeSpan AskFreshFor = TimeSpan.FromSeconds(30);
+
+	/// <summary>The sequence of the last press this session opened the Inspector for.</summary>
+	private long _askOpened;
+
+	/// <summary>
+	/// The press of the panel's Ask button that should open the Inspector now, or null: one this session has not
+	/// opened a window for, made recently enough that somebody is waiting on it. Taking it marks it opened, so a press
+	/// opens one window however many polls report it. Called by the session manager's poll, one at a time.
+	/// </summary>
+	public LiveXamlAsk? TakeAskToOpen(DateTime nowUtc)
+	{
+		// Read once: the poll that replaces it may land between two reads.
+		var ask = _info?.XamlAsk;
+		if (!ShouldOpen(ask, _askOpened, nowUtc)) return null;
+
+		_askOpened = ask!.Sequence;
+		return ask;
+	}
+
+	/// <summary>
+	/// Whether a press opens the Inspector: there is one, it is not the press a window was last opened for, and it is
+	/// fresh. A press whose sequence went backwards is a new one, from a provider that started counting again.
+	/// </summary>
+	public static bool ShouldOpen(LiveXamlAsk? ask, long opened, DateTime nowUtc) =>
+		ask is not null
+		&& ask.Sequence != opened
+		&& nowUtc - ask.CollectedUtc <= AskFreshFor;
 
 	/// <summary>
 	/// Records something the broker has to say about this session that the host did not. It rides

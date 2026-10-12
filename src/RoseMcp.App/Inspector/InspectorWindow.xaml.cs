@@ -381,6 +381,7 @@ public sealed partial class InspectorWindow : Window
 			_ended = false;
 			_regarded.Forget();
 			_solutionOf = null;
+			_panelAskHandled = 0;
 
 			// One keeper per session, because a hold is about a target: carrying one across would let the bar give back
 			// a hold on a process this window is no longer about.
@@ -435,6 +436,8 @@ public sealed partial class InspectorWindow : Window
 		Code.Observe(_row);
 		Execution.Observe(_row);
 		Xaml.Observe(_row);
+
+		if (AskAgent.PanelAskToOpen(summary, _panelAskHandled) is { } ask) OpenPanelAsk(summary.SessionId, ask);
 	}
 
 	/// <summary>
@@ -724,6 +727,29 @@ public sealed partial class InspectorWindow : Window
 
 		AskFlyout.ShowAt(anchor);
 		_ = OfferAsync(row);
+	}
+
+	/// <summary>The press of the in-app panel's Ask button this window last opened a note about, in its session.</summary>
+	private long _panelAskHandled;
+
+	/// <summary>
+	/// Opens the note about a press of the in-app panel's Ask button: the XAML view, with the element the press was
+	/// about found in the tree, and the composer filled in with what the panel said. The panel takes no text, so this
+	/// is where the person says what the question is; nothing is sent until they send it.
+	/// </summary>
+	private void OpenPanelAsk(string sessionId, LiveXamlAsk ask)
+	{
+		_panelAskHandled = ask.Sequence;
+
+		if (XamlView.Visibility == Visibility.Visible)
+		{
+			XamlView.IsSelected = true;
+			ShowView();
+			if (ask.Element is { } element) Xaml.Reveal(element);
+		}
+
+		BringToFront();
+		Ask(AskAgent.FromPanel(sessionId, ask), Views);
 	}
 
 	/// <summary>Offers the composer the agent sessions in the debug session, read as it opens because sessions come and go.</summary>

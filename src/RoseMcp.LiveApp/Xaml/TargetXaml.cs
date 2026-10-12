@@ -349,6 +349,20 @@ internal sealed class TargetXaml(ILogger logger) : IDisposable
 	}
 
 	/// <summary>
+	/// Collects a press of the panel's Ask button, where there is a diagnostics session to collect it from and a
+	/// target able to answer. A stopped target is not asked: the provider answers on its own thread, but a press it
+	/// collected relights the panel on the UI thread a stop is holding, and the reader would wait there until the
+	/// target runs again. See <see cref="XamlDiagnosticsSession.CollectAsk"/>.
+	/// </summary>
+	internal void CollectAsk(XamlAsk ask)
+	{
+		if (Current is not { } xaml) return;
+		if (WhyUnservable(ask.Session) is not null) return;
+
+		xaml.CollectAsk();
+	}
+
+	/// <summary>
 	/// Live-edits the target by diffing two XAML versions and applying the edits to its visual tree.
 	/// Returns each computed edit with its outcome. Naming a file rather than passing both versions is
 	/// the continuous-apply path (#12): the XAML session remembers what it has already sent.

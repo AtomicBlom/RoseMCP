@@ -115,4 +115,16 @@ public sealed record LiveAppSessionSummary
 	/// </para>
 	/// </summary>
 	public TimeSpan? InfoAge { get; init; }
+
+	/// <summary>
+	/// The latest press of the in-app panel's Ask button, as the host collected it; null before there has been one,
+	/// and for a session that has ended.
+	/// </summary>
+	public LiveXamlAsk? XamlAsk { get; init; }
+
+	/// <summary>
+	/// How long ago the host collected <see cref="XamlAsk"/>, so a window opened by the press can tell it from one
+	/// pressed long before the window was: an age rather than the moment, like <see cref="LastEventAge"/>.
+	/// </summary>
+	public TimeSpan? XamlAskAge { get; init; }
 }

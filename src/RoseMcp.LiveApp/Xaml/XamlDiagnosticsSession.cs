@@ -363,10 +363,12 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		var (pipe, unready) = _provider.Connect(pid);
 		if (pipe is null) return new LiveXamlSelection { Detail = unready };
 
-		var request = shown ? "changes on" : "changes off";
-		if (pipe.Request(request, Reply) is null)
+		if (XamlPanelRequests.ChangeMarks(pipe, shown, Reply) is null)
 		{
-			return new LiveXamlSelection { Detail = Unanswered(request, "the app's change marks to be switched") };
+			return new LiveXamlSelection
+			{
+				Detail = Unanswered(shown ? "changes on" : "changes off", "the app's change marks to be switched"),
+			};
 		}
 
 		var after = ReadSelectionCore();
@@ -376,6 +378,50 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 				? "The app marks the elements live edits changed, each tagged with its change, until the tags fade."
 				: "The app does not mark what live edits changed; the XAML view still does.",
 		};
+	}
+
+	/// <summary>
+	/// How long a collection of Ask waits for the provider. Short, because the provider answers it on its reader
+	/// thread without the app's UI thread, and a reply that is late is collected on the next turn instead.
+	/// </summary>
+	private static readonly TimeSpan AskBound = TimeSpan.FromSeconds(2);
+
+	private LiveXamlAsk? _ask;
+
+	/// <summary>
+	/// The latest press of the panel's Ask button collected from the provider, or null before there has been one.
+	/// Replaced whole, so a reader sees one press or the next.
+	/// </summary>
+	public LiveXamlAsk? LastAsk => Volatile.Read(ref _ask);
+
+	/// <summary>
+	/// Collects a press of the panel's Ask button, if there is a new one. The app never speaks first on the pipe, so a
+	/// press waits in the provider until this asks.
+	/// <para>
+	/// Skipped rather than queued while another request holds the pipe: a tree read can take seconds, and a press is
+	/// still there to collect on the next turn. Asks nothing of a provider that is not resident, since a session that
+	/// has not injected one has no panel to press.
+	/// </para>
+	/// </summary>
+	public void CollectAsk()
+	{
+		if (!_requests.TryEnter()) return;
+
+		try
+		{
+			if (_provider.ResidentPipe is not { } pipe) return;
+
+			var held = Volatile.Read(ref _ask);
+			var (answered, press) = XamlPanelRequests.Ask(pipe, held?.Sequence ?? 0, AskBound);
+			if (!answered || press is null || press.Sequence == held?.Sequence) return;
+
+			Volatile.Write(ref _ask, LiveXamlAsk.From(press, DateTime.UtcNow));
+			_logger.LogInformation("Collected press {Sequence} of the panel's Ask button: {Readable}", press.Sequence, press.Readable);
+		}
+		finally
+		{
+			_requests.Exit();
+		}
 	}
 
 	/// <summary>

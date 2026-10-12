@@ -73,15 +73,73 @@ public:
 		m_sizeLabel = Label(L"click an element to anchor", 11.0, 0xC8, nullptr);
 		m_marginLabel = Label(L"", 11.0, 0xE8, nullptr);
 		m_paddingLabel = Label(L"", 11.0, 0xE8, nullptr);
+		m_pinLabel = Label(L"", 11.0, 0xFF, nullptr);
 
 		m_sizePill = Pill(m_sizeLabel);
 		m_marginPill = Pill(m_marginLabel);
 		m_paddingPill = Pill(m_paddingLabel);
+		m_pinPill = Pill(m_pinLabel);
+		m_pinPill.Background(Brush(0xFF, 0x0E, 0x7C, 0x96));
+		Fill(m_pinLabel, m_pinPill, std::wstring());
 
 		m_rulersRow.Children().Append(m_sizePill);
 		m_rulersRow.Children().Append(m_marginPill);
 		m_rulersRow.Children().Append(m_paddingPill);
+		m_rulersRow.Children().Append(m_pinPill);
 		return m_rulersRow;
+	}
+
+	/// <summary>
+	/// Whether a measurement is pinned: drawn and held still, whatever the pointer is over, until it is
+	/// let go. It is what the toolbar's Ask sends as "a pinned measurement".
+	/// </summary>
+	bool Pinned() const { return m_pinned; }
+
+	/// <summary>The pinned measurement in words, naming both elements, for an agent to read.</summary>
+	std::wstring const& PinnedWords() const { return m_pinnedWords; }
+
+	/// <summary>The element the pinned measurement was taken to; its anchor is the pick.</summary>
+	InstanceHandle PinnedHandle() const { return m_pinnedHandle; }
+
+	/// <summary>Whether <paramref name="element"/> is the one the pinned measurement was taken to.</summary>
+	bool IsPinnedTo(xaml::UIElement const& element) const
+	{
+		return m_pinned && m_pinnedElement && element == m_pinnedElement;
+	}
+
+	/// <summary>
+	/// Pins the measurement from the anchor to <paramref name="element"/>: the dimension lines stay on it
+	/// as the pointer moves on, which is what lets a measurement be read out or sent. Nothing is pinned
+	/// without an anchor, since a measurement is from the anchor.
+	/// </summary>
+	void Pin(xaml::UIElement const& element, InstanceHandle handle, winrt::Windows::Foundation::Rect const& rect)
+	{
+		if (!element || !m_pick.Has() || !m_pick.Element()) return;
+
+		m_pinned = true;
+		m_pinnedElement = element;
+		m_pinnedHandle = handle;
+		m_pinnedAnchor = m_pick.Handle();
+		DrawPinned(rect);
+
+		Log(L"overlay: pinned " + m_pinnedWords);
+		m_surface.Chrome();
+	}
+
+	/// <summary>Lets the pinned measurement go, so the lines follow the pointer again.</summary>
+	void Unpin()
+	{
+		if (!m_pinned) return;
+
+		m_pinned = false;
+		m_pinnedElement = nullptr;
+		m_pinnedHandle = 0;
+		m_pinnedAnchor = 0;
+		m_pinnedWords.clear();
+		Fill(m_pinLabel, m_pinPill, std::wstring());
+		HideLeaders();
+
+		m_surface.Chrome();
 	}
 
 	/// <summary>
@@ -95,6 +153,11 @@ public:
 	{
 		const bool rulers = armed;
 		if (m_rulersRow) m_rulersRow.Visibility(rulers ? xaml::Visibility::Visible : xaml::Visibility::Collapsed);
+
+		// A pin is a measurement from one anchor, so it goes with the mode, and with the anchor: held over
+		// a different pick it would be a number about two elements nobody is pointing at any more.
+		if (!rulers || m_pick.Handle() != m_pinnedAnchor) Unpin();
+
 		if (!rulers)
 		{
 			HideBands();
@@ -108,6 +171,15 @@ public:
 			HideBands();
 			SetRulersText(std::wstring(), std::wstring(), std::wstring());
 			return;
+		}
+
+		// The anchor moved, or the app laid out again: a pinned measurement is taken again rather than left
+		// describing where the two elements were. One whose element has gone is let go.
+		if (m_pinned)
+		{
+			winrt::Windows::Foundation::Rect pinnedRect{};
+			if (m_surface.Bounds(m_pinnedElement, pinnedRect)) DrawPinned(pinnedRect);
+			else Unpin();
 		}
 
 		const auto margin = ToEdges(m_pick.Element().Margin());
@@ -141,18 +213,21 @@ public:
 		Fill(m_paddingLabel, m_paddingPill, padding);
 	}
 
-	// Measures whatever is under the pointer against the anchor, or takes the leaders away when there
-	// is nothing to measure.
-
-	// Measures whatever is under the pointer against the anchor, or takes the leaders away when there
-	// is nothing to measure.
 	// Takes the dimension lines away, for the moments when there is nothing to measure: leaving the
 	// mode, the pointer leaving the window, and the pointer sitting on the anchor itself. The bands
-	// stay, because they describe the anchor rather than a gap to anything.
-	void ClearMeasurement() { HideLeaders(); }
+	// stay, because they describe the anchor rather than a gap to anything; so does a pinned
+	// measurement, which is held still precisely so the pointer can go elsewhere.
+	void ClearMeasurement()
+	{
+		if (!m_pinned) HideLeaders();
+	}
 
+	// Measures whatever is under the pointer against the anchor, or takes the leaders away when there
+	// is nothing to measure. A pinned measurement holds the lines, so the pointer moves nothing.
 	void MeasureTo(xaml::UIElement const& element, winrt::Windows::Foundation::Rect const& rect)
 	{
+		if (m_pinned) return;
+
 		if (!element || !m_pick.Has() || !m_pick.Element())
 		{
 			HideLeaders();
@@ -421,6 +496,42 @@ private:
 		PlaceStrip(band.Right, inner.Right(), inner.Top, outer.Right() - inner.Right(), inner.Height);
 	}
 
+
+	// Draws the pinned measurement and says it, in the row as a few numbers and for Ask as a sentence.
+	void DrawPinned(winrt::Windows::Foundation::Rect const& rect)
+	{
+		const auto measurement = Measure(ToRuler(m_pick.AnchorRect()), ToRuler(rect));
+		DrawMeasurement(measurement);
+
+		const std::wstring anchor = m_pick.Element() ? RosePick::Describe(m_pick.Element()) : std::wstring(L"the anchor");
+		const std::wstring other = m_pinnedElement ? RosePick::Describe(m_pinnedElement) : std::wstring(L"the other element");
+
+		m_pinnedWords = L"the measurement from " + anchor + L" to " + other + L": "
+			+ AxisWords(measurement.Horizontal, L"horizontally", L"left", L"right") + L"; "
+			+ AxisWords(measurement.Vertical, L"vertically", L"top", L"bottom");
+
+		Fill(m_pinLabel, m_pinPill,
+			L"Pinned to " + other + L": \x2194 " + AxisNumbers(measurement.Horizontal)
+				+ L"  \x2195 " + AxisNumbers(measurement.Vertical));
+	}
+
+	// One axis as a person would say it: a gap where the two miss each other, and where they overlap,
+	// how far apart each pair of edges is -- which for a nested element is its padding or margin.
+	static std::wstring AxisWords(RulerAxis const& axis, const wchar_t* direction, const wchar_t* low, const wchar_t* high)
+	{
+		if (axis.Separated) return Number(axis.Gap) + L" px apart " + direction;
+
+		return std::wstring(L"their ") + low + L" edges " + Number(axis.Low) + L" px apart and their " + high
+			+ L" edges " + Number(axis.High) + L" px apart";
+	}
+
+	// The same, as the row's numbers: the gap alone, or both edges' distances.
+	static std::wstring AxisNumbers(RulerAxis const& axis)
+	{
+		if (axis.Separated) return Number(axis.Gap);
+
+		return Number(axis.Low) + L" / " + Number(axis.High);
+	}
 
 	void DrawMeasurement(RulerMeasurement const& measurement)
 	{
@@ -720,7 +831,18 @@ private:
 	xcontrols::Border m_sizePill{ nullptr };
 	xcontrols::Border m_marginPill{ nullptr };
 	xcontrols::Border m_paddingPill{ nullptr };
+	xcontrols::TextBlock m_pinLabel{ nullptr };
+	xcontrols::Border m_pinPill{ nullptr };
 	std::vector<Leader> m_leaders;
+
+	// The pinned measurement: whether there is one, the element it was taken to and that element's
+	// handle, the anchor it was taken from, and what it says. The element is held while it is pinned,
+	// because the measurement has to be taken again when the app lays out; letting the pin go lets it go.
+	bool m_pinned = false;
+	xaml::UIElement m_pinnedElement{ nullptr };
+	InstanceHandle m_pinnedHandle = 0;
+	InstanceHandle m_pinnedAnchor = 0;
+	std::wstring m_pinnedWords;
 
 	// Where this measurement's numbers have been put, so the next one can be kept off them. Held for
 	// one measurement only; DrawMeasurement empties it.

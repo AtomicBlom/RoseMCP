@@ -45,6 +45,7 @@ public sealed partial class TapTierTests
 		["tap_tool_zoom.h"] = 3,
 		["tap_pick.h"] = 3,
 		["tap_tool_rulers.h"] = 3,
+		["tap_tool_changes.h"] = 3,
 		["tap_overlay.h"] = 3,
 	};
 

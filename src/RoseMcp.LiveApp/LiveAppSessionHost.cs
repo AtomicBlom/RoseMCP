@@ -111,6 +111,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 					?? "this session has no target process yet, so its loaded modules cannot be read",
 				XamlProvider = xaml?.Provider ?? LiveXamlProvider.None,
 				LastEvent = _events.Newest(),
+				XamlAsk = xaml?.LastAsk,
 				HostLogPath = RoseFileLogging.Destination,
 			};
 		}
@@ -544,14 +545,65 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return CurrentInfo();
 	}
 
+	/// <summary>How often the panel's Ask button is collected: about as quickly as a person looks for the window it opens.</summary>
+	private static readonly TimeSpan AskInterval = TimeSpan.FromSeconds(1);
+
+	/// <summary>How long stopping waits for a collection of Ask in flight, which is itself bounded at two seconds.</summary>
+	private static readonly TimeSpan AskStopBudget = TimeSpan.FromSeconds(3);
+
+	/// <summary>Ends the collection of Ask when the host stops.</summary>
+	private readonly CancellationTokenSource _stopping = new();
+
+	private Task _askWatch = Task.CompletedTask;
+
+	/// <summary>
+	/// Collects presses of the in-app panel's Ask button for as long as the host runs, once a second, so the broker
+	/// sees one on its next poll of <see cref="CurrentInfo"/> and can open the Inspector about it.
+	/// <para>
+	/// The host asks because the app never speaks first on the pipe. What it asks costs the app nothing it would
+	/// notice -- the provider answers from a latch on its reader thread, without the UI thread -- and nothing is
+	/// asked of a session that has no provider resident, which is every session nobody has pointed a XAML tool at.
+	/// </para>
+	/// </summary>
+	private async Task WatchAsksAsync(CancellationToken cancellationToken)
+	{
+		using var timer = new PeriodicTimer(AskInterval);
+
+		try
+		{
+			while (await timer.WaitForNextTickAsync(cancellationToken))
+			{
+				try
+				{
+					// Off the timer's thread: collecting is a blocking exchange on the pipe.
+					await Task.Run(() => _xaml.CollectAsk(Asking()), cancellationToken);
+				}
+				catch (Exception exception) when (exception is not OperationCanceledException)
+				{
+					logger.LogDebug(exception, "Collecting the panel's Ask button failed; the next turn tries again.");
+				}
+			}
+		}
+		catch (OperationCanceledException)
+		{
+			// The host is stopping, which is the only way this ends.
+		}
+	}
+
 	public Task StartAsync(CancellationToken cancellationToken)
 	{
 		Establish();
+		_askWatch = WatchAsksAsync(_stopping.Token);
 		return Task.CompletedTask;
 	}
 
-	public Task StopAsync(CancellationToken cancellationToken)
+	public async Task StopAsync(CancellationToken cancellationToken)
 	{
+		// The collection of Ask goes first, so nothing asks the provider while it is being given back. Waited for briefly
+		// rather than for good: an exchange in flight is bounded, and the dispose below takes the same request lock.
+		_stopping.Cancel();
+		await Task.WhenAny(_askWatch, Task.Delay(AskStopBudget, CancellationToken.None));
+
 		CorDebugSession? session;
 		XamlDiagnosticsSession? xaml;
 		lock (_gate)
@@ -574,7 +626,6 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		DisableUwpDebugging();
 		EndLaunchedTarget();
 
-		return Task.CompletedTask;
 	}
 
 	/// <summary>

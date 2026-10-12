@@ -131,3 +131,19 @@ Read before changing `src/RoseMcp.Xaml.Tap/tap_overlay.h` or `tap_measure.h`.
   confident wrong answer about an element laid out perfectly well, and `TransformToVisual` across two
   roots does not fail in a way that says otherwise. Drawing anyway would put the mark at the right
   coordinates in the wrong window, which is the failure #45 and #51 are already about.
+- **A change mark finds its element by handle every time it is drawn, and its timer runs only while one
+  is on screen.** The marks of what live edits changed (`tap_tool_changes.h`) are placed once a second,
+  each asking the app for its element by handle and for that element's rectangle, because an element an
+  agent edited is as free to move as any other and a mark drawn once is left behind by the next layout.
+  Holding the element instead would keep alive one the app has let go; a handle that resolves to nothing,
+  or to an element elsewhere, is simply not drawn that second. The timer stops when no mark is inside its
+  ten minutes and when the switch goes off, and `EndSession` drops every mark through `ForgetChanges` --
+  a session's marks over an app nobody is any longer reading about are noise in somebody else's window.
+  They are teal rather than the accent because the accent is the pick's: an element both picked and
+  changed would otherwise wear two rose outlines that read as one.
+- **What the toolbar's Ask sends is what was on screen when the pointer left it for the button.** The
+  lens follows only moves off the toolbar, so reaching for Ask leaves it reading the colour it was
+  reading rather than the app's pixel under the button, and a ruler measurement is pinned with a click
+  before the pointer goes anywhere -- one that followed the pointer would be gone by the time it arrived.
+  See [the decision](../decisions/a-ruler-measurement-is-pinned-by-the-first-click.md). Ask is
+  disabled with nothing to send, and lit from a press until the host collects it.

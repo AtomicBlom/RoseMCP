@@ -110,6 +110,62 @@ public static class AskAgent
 	}
 
 	/// <summary>
+	/// How old a press of the in-app panel's Ask button can be when a window first reads it and still open the note.
+	/// The broker opens the window within a second or two of the press, and a window takes a few more to start; a
+	/// press older than this was made before the window was asked for, and opening a note about it unprompted would
+	/// be a window answering a question nobody is waiting on.
+	/// </summary>
+	public static readonly TimeSpan PanelAskFreshFor = TimeSpan.FromSeconds(60);
+
+	/// <summary>
+	/// The press of the in-app panel's Ask button a window should open its note about, or null: one newer than the
+	/// press it last handled, and recent enough that somebody is waiting on it.
+	/// </summary>
+	/// <param name="summary">The session as the window just read it.</param>
+	/// <param name="handled">The sequence of the press the window last opened a note about; zero for none.</param>
+	public static LiveXamlAsk? PanelAskToOpen(LiveAppSessionSummary summary, long handled)
+	{
+		ArgumentNullException.ThrowIfNull(summary);
+
+		if (summary.XamlAsk is not { } ask || ask.Sequence == handled) return null;
+
+		return summary.XamlAskAge is { } age && age <= PanelAskFreshFor ? ask : null;
+	}
+
+	/// <summary>
+	/// What a press of the in-app panel's Ask button was about, as the note's subject. A pick or a measurement is about
+	/// an element -- a measurement's anchor, with the element it was taken to in its words -- and a colour is about the
+	/// app's window, since a pixel belongs to no one element.
+	/// </summary>
+	public static NoteSubject FromPanel(string sessionId, LiveXamlAsk ask)
+	{
+		ArgumentNullException.ThrowIfNull(ask);
+
+		var readable = ask.Kind switch
+		{
+			"measurement" when ask.OtherElement is { } other => $"{ask.Readable} (to element {Handle(other)})",
+			_ => ask.Readable,
+		};
+
+		return ask.Element is { } element && ask.Kind != "colour"
+			? new NoteSubject
+			{
+				Kind = NoteSubjectKind.Element,
+				Readable = readable,
+				Session = sessionId,
+				Element = Handle(element),
+			}
+			: new NoteSubject
+			{
+				Kind = NoteSubjectKind.AppWindow,
+				Readable = readable,
+				Session = sessionId,
+			};
+	}
+
+	private static string Handle(ulong handle) => handle.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+	/// <summary>
 	/// Whom a note about something in a debug session can go to: the agent sessions in it -- the one that started it,
 	/// or the one a person shared theirs with -- that the client table lists as sessions it can tell apart, where
 	/// <paramref name="persons"/> says whether the person started it. Says why there is none where there is none.

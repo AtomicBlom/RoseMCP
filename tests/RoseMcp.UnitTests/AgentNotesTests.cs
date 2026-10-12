@@ -378,6 +378,8 @@ public sealed class AgentNotesTests
 			new() { Kind = NoteSubjectKind.DebugEvent, Readable = "Stopped", Session = "a1b2c3d4", EventSequence = 0 },
 			new() { Kind = NoteSubjectKind.Breakpoint, Readable = "Beat", Session = "a1b2c3d4" },
 			new() { Kind = NoteSubjectKind.Breakpoint, Readable = "Beat", Session = "a1b2c3d4", Breakpoint = "bp 3; rm" },
+			new() { Kind = NoteSubjectKind.AppWindow, Readable = "the colour #FF0000" },
+			new() { Kind = NoteSubjectKind.AppWindow, Readable = "the colour #FF0000", Session = "a1b2c3d4", Element = "Ok" },
 			new() { Kind = (NoteSubjectKind)99, Readable = "?" },
 		];
 
@@ -433,6 +435,38 @@ public sealed class AgentNotesTests
 
 		notices[0].ShouldContain("debug session a1b2c3d4, event sequence 42");
 		notices[1].ShouldContain("debug session a1b2c3d4, breakpoint tp-2");
+	}
+
+	/// <summary>
+	/// A note about something read off an app's window with its panel -- a colour under the lens -- keeps the session,
+	/// and an element only where it was read off one, since a pixel belongs to no one element.
+	/// </summary>
+	[Test]
+	public void A_note_about_the_apps_window_keeps_its_session_and_an_element_only_where_it_names_one()
+	{
+		var (notes, clients, _) = Store();
+		var mine = Session(clients);
+		var id = IdOf(clients, mine);
+
+		var colour = notes.Post(new NoteRequest
+		{
+			Client = id,
+			Text = "Should this be the accent?",
+			Subject = new NoteSubject
+			{
+				Kind = NoteSubjectKind.AppWindow,
+				Readable = "the colour #C2185B under the pixel lens",
+				Session = "a1b2c3d4",
+				Path = "this.Brush",
+			},
+		}).Subject;
+
+		colour.Session.ShouldBe("a1b2c3d4");
+		colour.Element.ShouldBeNull();
+		colour.Path.ShouldBeNull("a colour is found by nothing but the session it was read in");
+
+		var notices = notes.Claim(mine, null, ToolNames.Outline, null).Notes.Select(AgentNotes.Notice).ToList();
+		notices[0].ShouldContain("the colour #C2185B under the pixel lens (debug session a1b2c3d4)");
 	}
 
 	/// <summary>

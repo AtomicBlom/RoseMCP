@@ -218,6 +218,24 @@ public sealed partial class XamlPane : UserControl
 	}
 
 	/// <summary>
+	/// Finds an element in the tree and selects it, for a press of the in-app panel's Ask button that named one. Only
+	/// while the pane is on screen: a hidden pane asks the app nothing.
+	/// </summary>
+	public async void Reveal(ulong handle)
+	{
+		if (!_visible || _session is null) return;
+
+		try
+		{
+			await RevealAsync(handle);
+		}
+		catch (Exception exception)
+		{
+			_report?.Invoke(exception);
+		}
+	}
+
+	/// <summary>
 	/// Reads the whole visual tree, merging it into the rows already on screen. A stopped target is answered with the
 	/// tree it last gave, stamped with when, which asks the app nothing; the next read once it runs replaces it.
 	/// </summary>

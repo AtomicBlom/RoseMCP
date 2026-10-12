@@ -150,3 +150,12 @@ Read before changing `src/RoseMcp.Xaml.Tap/tap_object.h`, the pipe's wire format
   out of `Microsoft.Internal.FrameworkUdk.dll` rather than `Microsoft.UI.Xaml.dll`, an **absolute**
   path to the tap (`DebugTool.cpp` fail-fasts on a relative one), and the threading above. Attaching
   to a running WinUI 3 app works, and there is a test for it.
+- **The app never speaks first, including when a person presses Ask.** The press goes into a latch
+  (`RoseTapAsk`, `g_ask`) and the host collects it with `ask <seen>` once a second. It is the one piece of
+  tap state with a lock of its own, because the toolbar writes it on the UI thread and the reader thread
+  answers from it without dispatching -- which is what makes asking once a second cost the app nothing.
+  The `seen` argument is how the provider learns its press arrived; the chip's accent coming off is the
+  only UI-thread work in the exchange, and the host does not ask while the target is stopped, since the
+  reader would wait there on a UI thread the stop holds. `EndSession` forgets the press, or the next host
+  to connect would open a window about a question nobody asked it. See
+  [the decision](../decisions/the-panels-ask-is-collected-by-the-host-and-opens-the-inspector.md).

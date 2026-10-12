@@ -20,7 +20,8 @@ namespace RoseMcp.Broker;
 public sealed class LiveAppSessionManager(
 	IOptions<BrokerOptions> options,
 	ILoggerFactory loggerFactory,
-	ILogger<LiveAppSessionManager> logger) : IAsyncDisposable
+	ILogger<LiveAppSessionManager> logger,
+	IInspectorPresenter? inspector = null) : IAsyncDisposable
 {
 	/// <summary>
 	/// The open sessions, by session id.
@@ -887,14 +888,15 @@ public sealed class LiveAppSessionManager(
 	public const string DropOperation = "drop session";
 
 	/// <summary>
-	/// One session's poll, bounded and swallowing its own failure.
+	/// One session's poll, bounded and swallowing its own failure, then the Inspector opened on a new press of the
+	/// in-app panel's Ask button.
 	/// <para>
 	/// Bounded per session rather than per sweep, so one host that has stopped answering does not stop
 	/// the others being asked. Swallowing, because this is nobody's call: a failure has already been
 	/// recorded on the session, and there is no caller here to throw at.
 	/// </para>
 	/// </summary>
-	private static async Task RefreshOneAsync(LiveAppSession session, CancellationToken cancellationToken)
+	private async Task RefreshOneAsync(LiveAppSession session, CancellationToken cancellationToken)
 	{
 		try
 		{
@@ -907,6 +909,34 @@ public sealed class LiveAppSessionManager(
 		{
 			// RefreshInfoAsync records what it learned; anything past it belongs to no caller.
 		}
+
+		if (session.TakeAskToOpen(DateTime.UtcNow) is { } ask) OpenInspectorFor(session, ask);
+	}
+
+	/// <summary>
+	/// Opens the Inspector about a session whose panel's Ask button was pressed, or brings forward the one already
+	/// open: the window is one per debugged process, and a second launch for the same process reaches it. The
+	/// window opens its note about the press when it reads the session. A host with no Inspector to open says so in
+	/// the log, which is all it can do: the person pressed a button in an app, and nothing else is listening.
+	/// </summary>
+	private void OpenInspectorFor(LiveAppSession session, LiveXamlAsk ask)
+	{
+		if (inspector is null) return;
+
+		var obstacle = inspector.Show(session.SessionId, session.Describe().TargetProcessId);
+		if (obstacle is null)
+		{
+			logger.LogInformation(
+				"Opened the Inspector on session {Session} for press {Sequence} of the panel's Ask button.",
+				session.SessionId,
+				ask.Sequence);
+			return;
+		}
+
+		logger.LogWarning(
+			"The panel's Ask button was pressed in session {Session}, and the Inspector could not be opened: {Obstacle}",
+			session.SessionId,
+			obstacle);
 	}
 
 	/// <summary>

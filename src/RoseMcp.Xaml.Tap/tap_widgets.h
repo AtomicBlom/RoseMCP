@@ -21,9 +21,9 @@
 // and worth checking against the font's own character map, which is how two glyphs that are simply
 // absent from Segoe UI were caught before they shipped as boxes.
 //
-// These follow what Visual Studio's live-tree toolbar does: a plain pointer for the neutral mode, a
-// pointer inside a marquee for picking, and a chevron to fold away.
-static const wchar_t* const IconIdle = L"\xE8B0";   // Cursor -- a plain arrow pointer
+// These follow what Visual Studio's live-tree toolbar does: a pointer inside a marquee for picking,
+// and a chevron to fold away.
+static const wchar_t* const IconPointer = L"\xE8B0"; // Cursor -- a plain arrow pointer, inside the marquee
 static const wchar_t* const IconHide = L"\xE76B";   // ChevronLeft
 static const wchar_t* const IconMyXaml = L"\xE943"; // Code -- braces, for "just my XAML"
 static const wchar_t* const IconDeselect = L"\xE711"; // Cancel -- a plain cross, for clearing the pick
@@ -132,7 +132,7 @@ protected:
 
 	// A pointer inside a marquee. MDL2 has no single glyph for it -- the nearest, SelectAll, is a
 	// dense grid that turns to mush at button size -- so it is composed: a dashed rectangle with the
-	// same pointer the Idle button uses, smaller and offset, sitting in it.
+	// plain arrow pointer, smaller and offset, sitting in it.
 	static xaml::UIElement SelectIcon()
 	{
 		auto host = xcontrols::Grid();
@@ -152,11 +152,77 @@ protected:
 		marquee.VerticalAlignment(xaml::VerticalAlignment::Center);
 		host.Children().Append(marquee);
 
-		auto pointer = Glyph(IconIdle, 10.0);
+		auto pointer = Glyph(IconPointer, 10.0);
 		pointer.HorizontalAlignment(xaml::HorizontalAlignment::Center);
 		pointer.VerticalAlignment(xaml::VerticalAlignment::Center);
 		pointer.Margin(xaml::Thickness{ 4, 3, 0, 0 });
 		host.Children().Append(pointer);
+
+		return host;
+	}
+
+	// A dashed box with a dot on its corner: an element marked as changed. Composed for the same reason
+	// the marquee is -- MDL2 has nothing that says "this was edited" at button size -- and drawn the way
+	// the marks themselves are drawn over the app, so the button and what it switches look alike.
+	static xaml::UIElement ChangesIcon()
+	{
+		auto host = xcontrols::Grid();
+		host.Width(16);
+		host.Height(16);
+
+		auto box = xshapes::Rectangle();
+		box.Stroke(Brush(0xFF, 0xDC, 0xDC, 0xDC));
+		box.StrokeThickness(1);
+		box.StrokeDashArray().Append(2);
+		box.StrokeDashArray().Append(1.5);
+		box.Width(11);
+		box.Height(11);
+		box.HorizontalAlignment(xaml::HorizontalAlignment::Left);
+		box.VerticalAlignment(xaml::VerticalAlignment::Bottom);
+		box.Margin(xaml::Thickness{ 1, 0, 0, 1 });
+		host.Children().Append(box);
+
+		auto dot = xshapes::Ellipse();
+		dot.Fill(Brush(0xFF, 0xDC, 0xDC, 0xDC));
+		dot.Width(5);
+		dot.Height(5);
+		dot.HorizontalAlignment(xaml::HorizontalAlignment::Right);
+		dot.VerticalAlignment(xaml::VerticalAlignment::Top);
+		dot.Margin(xaml::Thickness{ 0, 1, 1, 0 });
+		host.Children().Append(dot);
+
+		return host;
+	}
+
+	// A speech bubble: a rounded box with a tail at its lower left. Shapes rather than a glyph, because
+	// the chat glyphs differ between Segoe MDL2 Assets and Segoe Fluent Icons and a missing one draws a
+	// hollow box -- and a hollow box is exactly what a button nobody has pressed yet cannot afford to be.
+	static xaml::UIElement AskIcon()
+	{
+		auto host = xcontrols::Grid();
+		host.Width(16);
+		host.Height(16);
+
+		auto bubble = xshapes::Rectangle();
+		bubble.Stroke(Brush(0xFF, 0xDC, 0xDC, 0xDC));
+		bubble.StrokeThickness(1.2);
+		bubble.RadiusX(1.5);
+		bubble.RadiusY(1.5);
+		bubble.Width(13);
+		bubble.Height(9);
+		bubble.HorizontalAlignment(xaml::HorizontalAlignment::Center);
+		bubble.VerticalAlignment(xaml::VerticalAlignment::Top);
+		bubble.Margin(xaml::Thickness{ 0, 2, 0, 0 });
+		host.Children().Append(bubble);
+
+		auto tail = xshapes::Polyline();
+		tail.Stroke(Brush(0xFF, 0xDC, 0xDC, 0xDC));
+		tail.StrokeThickness(1.2);
+		tail.StrokeLineJoin(xmedia::PenLineJoin::Round);
+		tail.Points().Append(winrt::Windows::Foundation::Point{ 4.5f, 10.5f });
+		tail.Points().Append(winrt::Windows::Foundation::Point{ 4.5f, 14.0f });
+		tail.Points().Append(winrt::Windows::Foundation::Point{ 8.0f, 10.5f });
+		host.Children().Append(tail);
 
 		return host;
 	}

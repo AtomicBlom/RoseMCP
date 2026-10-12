@@ -228,6 +228,104 @@ public sealed class XamlProviderPipeTests
 	}
 
 	/// <summary>
+	/// A press of the panel's Ask button is collected by asking, since the app never speaks first, and each ask names
+	/// the press already held -- which is how the provider knows its press arrived and lets the chip go back to rest.
+	/// A provider with no press answers <c>none</c>, which is an answer and not a silence.
+	/// </summary>
+	[Test]
+	public async Task Collects_a_press_of_ask_naming_the_press_it_already_holds()
+	{
+		using var pipe = new XamlProviderPipe(NullLogger.Instance);
+		pipe.Listen().ShouldBeNull();
+
+		using var provider = await GreetAsync(pipe);
+		var asked = new List<string>();
+
+		var serving = Task.Run(async () =>
+		{
+			var (first, none) = await ReadRequestAsync(provider);
+			asked.Add(none);
+			await SendFrameAsync(provider, XamlWire.Frame(first, "none\n"));
+
+			var (second, fresh) = await ReadRequestAsync(provider);
+			asked.Add(fresh);
+			await SendFrameAsync(provider, XamlWire.Frame(second, "ask\t1\telement\tthe element Button · Ok picked in the app\t42\t0\t\n"));
+
+			var (third, held) = await ReadRequestAsync(provider);
+			asked.Add(held);
+			await SendFrameAsync(provider, XamlWire.Frame(third, "ask\t1\telement\tthe element Button · Ok picked in the app\t42\t0\t\n"));
+		});
+
+		XamlPanelRequests.Ask(pipe, 0, Patience).ShouldBe((true, null));
+
+		var (answered, press) = XamlPanelRequests.Ask(pipe, 0, Patience);
+		answered.ShouldBeTrue();
+		press.ShouldNotBeNull();
+		press.Sequence.ShouldBe(1);
+		press.Kind.ShouldBe("element");
+		press.Element.ShouldBe(42UL);
+		press.OtherElement.ShouldBeNull();
+		press.Colour.ShouldBeNull();
+
+		XamlPanelRequests.Ask(pipe, press.Sequence, Patience).Press!.Sequence.ShouldBe(1);
+
+		await serving;
+		asked.ShouldBe(["ask 0", "ask 0", "ask 1"]);
+	}
+
+	/// <summary>
+	/// A provider that does not answer an ask is told apart from one with nothing pressed, so a host that gave up
+	/// waiting does not take the silence for "no press" -- it asks again on its next turn.
+	/// </summary>
+	[Test]
+	public async Task An_ask_the_provider_does_not_answer_is_not_read_as_no_press()
+	{
+		using var pipe = new XamlProviderPipe(NullLogger.Instance);
+		pipe.Listen().ShouldBeNull();
+
+		using var provider = await GreetAsync(pipe);
+		var reading = Task.Run(() => ReadRequestAsync(provider));
+
+		XamlPanelRequests.Ask(pipe, 0, TimeSpan.FromMilliseconds(300)).Answered.ShouldBeFalse();
+		(await reading).Request.ShouldBe("ask 0");
+	}
+
+	/// <summary>
+	/// The change marks are switched by name, and the answer is where the provider says the switch is afterwards --
+	/// not what was asked for, since the person can press the panel's own button at any moment.
+	/// </summary>
+	[Test]
+	public async Task Switches_the_change_marks_and_reads_where_the_provider_left_them()
+	{
+		using var pipe = new XamlProviderPipe(NullLogger.Instance);
+		pipe.Listen().ShouldBeNull();
+
+		using var provider = await GreetAsync(pipe);
+
+		var serving = Task.Run(async () =>
+		{
+			var (first, off) = await ReadRequestAsync(provider);
+			off.ShouldBe("changes off");
+			await SendFrameAsync(provider, XamlWire.Frame(first, "off\n"));
+
+			var (second, on) = await ReadRequestAsync(provider);
+			on.ShouldBe("changes on");
+
+			// Somebody pressed the panel's button between the two: the provider's answer is the truth.
+			await SendFrameAsync(provider, XamlWire.Frame(second, "off\n"));
+
+			var (third, _) = await ReadRequestAsync(provider);
+			await SendFrameAsync(provider, XamlWire.Frame(third, "something else\n"));
+		});
+
+		XamlPanelRequests.ChangeMarks(pipe, shown: false, Patience).ShouldBe(false);
+		XamlPanelRequests.ChangeMarks(pipe, shown: true, Patience).ShouldBe(false);
+		XamlPanelRequests.ChangeMarks(pipe, shown: true, Patience).ShouldBeNull();
+
+		await serving;
+	}
+
+	/// <summary>
 	/// The mismatch the protocol version exists for. The host and the provider ship together, so the
 	/// way two versions meet is a stale copy, and one that greets without a version is older than the
 	/// host. Refused before anything is asked of it, since it would read rows it was not written for

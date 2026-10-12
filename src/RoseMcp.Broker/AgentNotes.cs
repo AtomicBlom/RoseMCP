@@ -320,6 +320,11 @@ public sealed class AgentNotes
 				$"frame {subject.FrameIndex}",
 			],
 			NoteSubjectKind.Element => [$"debug session {subject.Session}", $"element {subject.Element}"],
+			NoteSubjectKind.AppWindow =>
+			[
+				$"debug session {subject.Session}",
+				.. subject.Element is { } element ? [$"element {element}"] : Array.Empty<string>(),
+			],
 			NoteSubjectKind.DebugEvent => [$"debug session {subject.Session}", $"event sequence {subject.EventSequence}"],
 			NoteSubjectKind.Breakpoint => [$"debug session {subject.Session}", $"breakpoint {subject.Breakpoint}"],
 			NoteSubjectKind.WorkspaceReason =>
@@ -386,6 +391,13 @@ public sealed class AgentNotes
 				Readable = readable,
 				Session = SessionId(subject.Session),
 				Element = ElementHandle(subject.Element),
+			},
+			NoteSubjectKind.AppWindow => new NoteSubject
+			{
+				Kind = subject.Kind,
+				Readable = readable,
+				Session = SessionId(subject.Session),
+				Element = subject.Element is null ? null : ElementHandle(subject.Element),
 			},
 			NoteSubjectKind.DebugEvent => new NoteSubject
 			{

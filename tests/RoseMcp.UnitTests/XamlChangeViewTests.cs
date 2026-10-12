@@ -68,6 +68,7 @@ public sealed class XamlChangeViewTests
 	public void A_search_keeps_its_matches_and_the_way_down_to_them()
 	{
 		var inspection = Inspection();
+		inspection.Absorb(new LiveXamlSelection { JustMyXaml = false });
 		inspection.Row(3)!.IsExpanded = false;
 
 		inspection.FindText = "widthlabel";

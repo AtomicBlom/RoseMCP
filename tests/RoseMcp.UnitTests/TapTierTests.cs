@@ -176,6 +176,29 @@ public sealed partial class TapTierTests
 		ProjectionNames(new CppSource(code), new HashSet<string>(StringComparer.Ordinal) { "xaml" }).Any().ShouldBe(projected);
 	}
 
+	/// <summary>
+	/// Only a person's click on the toolbar's Ask chip raises a question. The latch is written in one place, the
+	/// overlay's Ask, and Ask is called from one place, the chip's click -- so nothing the app does, no pointer move,
+	/// tree change or request from the host, can put a question in front of the person or an agent. Read as text,
+	/// like the tiers, because no native test can drive the toolbar.
+	/// </summary>
+	[Test]
+	public void Only_the_ask_chips_click_raises_a_question()
+	{
+		var raises = Headers()
+			.SelectMany(header => Regex.Matches(header.Source.Code, @"\bg_ask\s*\.\s*Raise\s*\(").Select(_ => header.Name))
+			.ToList();
+
+		raises.ShouldBe(["tap_overlay.h"], "the latch is written by the overlay's Ask and nowhere else");
+
+		var overlay = Headers().Single(header => header.Name == "tap_overlay.h").Source.Code;
+		var calls = Regex.Matches(overlay, @"(?<![\w.>])Ask\s*\(\s*\)\s*;").Select(match => match.Index).ToList();
+
+		calls.ShouldHaveSingleItem("Ask is reached from one place");
+		Regex.IsMatch(overlay, @"Chip\s*\(\s*AskIcon\s*\(\s*\)[^;]*\[\s*this\s*\]\s*\{\s*Ask\s*\(\s*\)\s*;\s*\}\s*\)\s*;")
+			.ShouldBeTrue("and that place is the Ask chip's click");
+	}
+
 	private static string TapFolder => Checkout.RepositoryFile("src", "RoseMcp.Xaml.Tap");
 
 	private static IEnumerable<(string Name, int Tier, CppSource Source)> Headers() =>

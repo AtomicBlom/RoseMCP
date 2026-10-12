@@ -94,6 +94,18 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 			fontSize.ShouldNotBeNull();
 			fontSize!.Value.ShouldBe("40");
 
+			// What it was is read by the provider in the walk that found the property, and the edit lands on
+			// the element the tree hands out a handle for -- which is how a window finds the row to mark.
+			edit.Handle.ShouldBe(caption.Handle);
+			edit.OldValue.ShouldBe("24");
+
+			// And the session keeps it, as a window reads it: the element, the property, before and after.
+			var recorded = session.XamlChanges.Snapshot().Changes.Select(kept => kept.Change).LastOrDefault(
+				change => change.Handle == caption.Handle && change.Property == "FontSize");
+			recorded.ShouldNotBeNull("an edit that took is recorded for the session");
+			recorded!.OldValue.ShouldBe("24");
+			recorded.NewValue.ShouldBe("40");
+
 			// And the struct-valued edit is now read back too, rather than trusted from its status.
 			// It used to be asserted only through "applied", because a CornerRadius came back as an
 			// empty string -- which is #21, and is fixed, so the weaker assertion has no reason left.
@@ -508,6 +520,38 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
 			(await BackgroundAtAsync(session, tree, "#Themed", cancellationToken)).ShouldBe(Now);
 
+		}
+	}
+
+	/// <summary>
+	/// The app's change marks are switched from the host the way the panel's Changes button switches them, and the
+	/// answer is where the provider says the switch is afterwards. On is where it starts and where it is left.
+	/// <para>
+	/// Phase B, because the switch is the app's and has no owner smaller than it: a slot test reading the switch while
+	/// this one had it off would see somebody else's state.
+	/// </para>
+	/// </summary>
+	[Test]
+	[ClassicSession]
+	public async Task Switches_the_apps_change_marks_off_and_on()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
+
+		try
+		{
+			var off = await session.SetXamlChangeMarksAsync(shown: false, cancellationToken);
+			off.ChangeMarks.ShouldBeFalse($"expected the marks off; got detail: {off.Detail}");
+
+			var read = await session.ReadXamlSelectionAsync(cancellationToken);
+			read.ChangeMarks.ShouldBeFalse("a later read of the panel says what the switch was left at");
+		}
+		finally
+		{
+			var on = await session.SetXamlChangeMarksAsync(shown: true, CancellationToken.None);
+			on.ChangeMarks.ShouldBeTrue($"expected the marks back on; got detail: {on.Detail}");
 		}
 	}
 

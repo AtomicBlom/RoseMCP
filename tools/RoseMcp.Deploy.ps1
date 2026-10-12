@@ -27,15 +27,39 @@ function Test-OnWindows
     return $script:OnWindows
 }
 
-function Get-HostRuntime
+function Get-OSArchitecture
 {
     <#
-        The RID of the machine this is running on.
+        The machine's architecture as RuntimeInformation names it: 'X64', 'Arm64', 'X86'.
 
         OSArchitecture rather than ProcessArchitecture: PowerShell itself may be running emulated,
         and what matters is what the machine can execute natively, not what the shell happens to be.
+
+        Resolved through Type.GetType, which searches only the core library, and never through the
+        type literal. Windows PowerShell 5.1's inbox PSReadLine 2.0 defines a type of its own with the
+        same full name and only an OSDescription property, and in a process where the literal binds to
+        that one, OSArchitecture is a property that does not exist -- which PowerShell reads as $null,
+        with no error. Which of the two the literal binds to varies between shells on one machine.
     #>
-    $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
+    $runtimeInformation = [Type]::GetType('System.Runtime.InteropServices.RuntimeInformation')
+    return [string] $runtimeInformation::OSArchitecture
+}
+
+function Get-HostRuntime
+{
+    <#
+        The RID of the machine this is running on. An architecture with no mapping is refused rather
+        than guessed, because a guess installs a tree the machine runs emulated, or not at all, and
+        nothing downstream says so.
+    #>
+    $osArchitecture = Get-OSArchitecture
+    $arch = switch ($osArchitecture)
+    {
+        'Arm64' { 'arm64' }
+        'X64' { 'x64' }
+        default { throw "No RoseMCP runtime matches this machine's architecture ('$osArchitecture')." }
+    }
+
     $os = if ($script:OnWindows) { 'win' } else { 'linux' }
 
     return "$os-$arch"

@@ -73,6 +73,14 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   run that costs more than every compile together, and a break that only one architecture or the
   optimiser sees, in headers all of them share, is rare enough to be caught on main, before any tag,
   rather than paid for on every PR.
+- **The scripts read the machine's architecture through `Get-OSArchitecture`, never the
+  `[System.Runtime.InteropServices.RuntimeInformation]` type literal.** Windows PowerShell 5.1's
+  inbox PSReadLine 2.0 defines a type with that same full name and no `OSArchitecture`, and in some
+  5.1 processes the literal binds to it, so the property reads as `$null` without an error. A
+  `deploy.ps1` run in such a shell on an ARM64 machine promotes an x64 tree, whose worker cannot load
+  the ARM64 SDK's MSBuild. `Get-OSArchitecture` resolves the type with `Type.GetType`, which
+  searches only the core library, and `Get-HostRuntime` refuses an architecture it has no mapping
+  for rather than defaulting to one.
 - **`promote` builds the whole tree before it stops anything.** Every publish, and every native
   provider, goes into `artifacts/promote/<rid>` while the running instance keeps serving; only then
   are the RoseMCP app, tray and stdio servers stopped, the stage copied over the install, and the tray

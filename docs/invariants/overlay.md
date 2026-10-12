@@ -86,6 +86,16 @@ Read before changing `src/RoseMcp.Xaml.Tap/tap_overlay.h` or `tap_measure.h`.
   the live-app fixture's hand-back check is built on precisely that signal. Clearing the pick stays a
   separate act from leaving the mode, or "keep this one and stop capturing my clicks" becomes
   unreachable.
+- **A pick hit-tests the open popups before the page.** Flyouts, menus and tooltips live in the popup
+  root, beside `XamlRoot.Content()` rather than under it, so a hit test of the content alone looks
+  through an open flyout and reports the page behind it. `Under` walks
+  `GetOpenPopupsForXamlRoot` first, from the end of its list because the call does not say which
+  popup is on top and the last opened is the likely one, then the content. `Beneath` takes the first
+  usable element and `Record` writes the stack in that order. Hover and click both go through it, so
+  they cannot disagree about what is under the pointer. The toolbar's own tooltips are popups too,
+  outside the overlay's root, so `Chip` names each one `OverlayTipName` and `IsOurs` treats anything
+  inside an element of that name as the overlay's -- or a tooltip still up where somebody clicks is
+  picked as the app's.
 - **No padding is not padding of zero, and XAML declares `Padding` on no common base.** `Control`,
   `Border`, `TextBlock`, `RichTextBlock`, `ContentPresenter`, `StackPanel`, `Grid` and `RelativePanel`
   each declare their own, so the box model asks those projections in turn, and a type with none is

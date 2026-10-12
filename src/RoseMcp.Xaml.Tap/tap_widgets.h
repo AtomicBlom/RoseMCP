@@ -289,7 +289,13 @@ protected:
 		button.BorderThickness(xaml::Thickness{ 0, 0, 0, 0 });
 		button.CornerRadius(xaml::CornerRadius{ 3, 3, 3, 3 });
 		button.VerticalAlignment(xaml::VerticalAlignment::Center);
-		xcontrols::ToolTipService::SetToolTip(button, winrt::box_value(winrt::hstring{ tip }));
+		// A ToolTip rather than the bare string, so it can carry a name. It opens in the popup root, not
+		// under the overlay's own root, and a pick hit-tests the open popups before the page -- so a
+		// chip's tooltip still showing where somebody clicks would otherwise be picked as the app's.
+		auto toolTip = xcontrols::ToolTip();
+		toolTip.Content(winrt::box_value(winrt::hstring{ tip }));
+		toolTip.Name(OverlayTipName);
+		xcontrols::ToolTipService::SetToolTip(button, toolTip);
 
 		// Set outright rather than animated. A fade would be prettier and is what was there before, in
 		// effect, via the template's transitions -- and the whole complaint is that those do not settle

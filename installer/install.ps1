@@ -102,7 +102,7 @@ function Get-TargetRuntime
 
         Which architectures ship, and which OS architecture each is for, is the published layout's.
     #>
-    $arch = [string] [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+    $arch = Get-OSArchitecture
     $runtimes = @((Get-PublishedLayout).runtimes)
 
     $match = @($runtimes | Where-Object { $_.osArchitecture -eq $arch })

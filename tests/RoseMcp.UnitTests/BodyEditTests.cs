@@ -517,6 +517,53 @@ public sealed class BodyEditTests
 	}
 
 	/// <summary>
+	/// An interpolation hole holds code, and the compiler reads it as tokens like any other. The lexer
+	/// alone does not: to it the whole interpolated string, holes and all, is one token, so an anchor on
+	/// an expression inside a hole matched nothing and the refusal said the body did not contain it.
+	/// </summary>
+	[Test]
+	public void Matches_code_inside_an_interpolation_hole()
+	{
+		var body = BodyEdit.Anchored(
+			"{\n\tReport($\"frame {_frame()}, mode {mode}\", kept);\n}",
+			"_frame()",
+			"_machine.Frames");
+
+		body.ShouldBe("{\n\tReport($\"frame {_machine.Frames}, mode {mode}\", kept);\n}");
+	}
+
+	/// <summary>
+	/// Reading the holes as code must not cost the anchor that takes the interpolated string whole, which
+	/// is matched the same way from both sides.
+	/// </summary>
+	[Test]
+	public void Still_matches_an_interpolated_string_taken_whole()
+	{
+		var body = BodyEdit.Anchored(
+			"{\n\tReport($\"frame {_frame()}\", kept);\n}",
+			"Report($\"frame {_frame()}\",",
+			"Log($\"at {_frame()}\",");
+
+		body.ShouldBe("{\n\tLog($\"at {_frame()}\", kept);\n}");
+	}
+
+	/// <summary>
+	/// An interpolated string is a literal for the straddle guard too: a match from inside it across its
+	/// closing quote rewrites a delimiter, and one inside a hole is contained in the string.
+	/// </summary>
+	[Test]
+	public void Refuses_a_text_match_that_leaves_an_interpolated_string()
+	{
+		var thrown = Should.Throw<ArgumentException>(
+			() => BodyEdit.Anchored("{\r\n\treturn $\"total {n}\";\r\n}", "{n}\";", "{m}\";", includeTrivia: true)).ShouldBeOfType<ArgumentException>();
+
+		thrown.Message.ShouldContain("part of a string and part of the code", Case.Sensitive);
+
+		BodyEdit.Anchored("{\r\n\treturn $\"total {n}\";\r\n}", "total {n}", "count {m}", includeTrivia: true)
+			.ShouldBe("{\r\n\treturn $\"count {m}\";\r\n}");
+	}
+
+	/// <summary>
 	/// A replacement whose lines are written partly flush and partly at the destination's own
 	/// indentation has no reading that is right for all of them, and the fragment rule correctly
 	/// declines to call it written-for-the-destination -- so the flush reading is used and every line

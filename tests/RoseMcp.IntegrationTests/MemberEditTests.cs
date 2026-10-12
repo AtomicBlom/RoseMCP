@@ -1214,6 +1214,42 @@ public sealed class MemberEditTests
 	}
 
 	/// <summary>
+	/// A name after a dot is answered by an extension method only where the method takes the receiver,
+	/// which is the question the compiler's CS1061 asks. <c>Shouted</c> takes a string: called on one it
+	/// is imported, and called on an int nothing is. Importing it there would turn the CS1061 into a
+	/// CS1929 -- a different error, read as the name resolving -- and leave a using the call never needs.
+	/// </summary>
+	[Test]
+	[Arguments("string", true)]
+	[Arguments("int", false)]
+	public async Task Imports_an_extension_only_where_it_takes_the_receiver(string receiver, bool imports)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = $"public string Loud({receiver} value) => value.Shouted();",
+		});
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		if (imports)
+		{
+			result.IntroducedDiagnostics.ShouldBeEmpty();
+			text.ShouldContain("using Library.Extras;", Case.Sensitive);
+
+			return;
+		}
+
+		result.IntroducedDiagnostics.ShouldContain(entry => entry.Id == "CS1061");
+		result.Notices.ShouldContain(notice => notice.Contains("Shouted is used after a dot here", StringComparison.Ordinal));
+		text.ShouldNotContain("using Library.Extras;", Case.Sensitive);
+	}
+
+	/// <summary>
 	/// rose_delete_member takes no usings, so a deletion that leaves a remaining use binding only through
 	/// an unimported namespace is answered with rose_add_using alone. Advice to pass usings would name an
 	/// argument the call drops.

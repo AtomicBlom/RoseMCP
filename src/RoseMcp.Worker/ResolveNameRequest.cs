@@ -1,3 +1,5 @@
+using Microsoft.CodeAnalysis;
+
 namespace RoseMcp.Worker;
 
 /// <summary>Which name to resolve, and what is known about how it is being used.</summary>
@@ -28,6 +30,15 @@ public sealed record ResolveNameRequest
 	/// nothing, and every kind of candidate is searched.
 	/// </summary>
 	public NameUse Use { get; init; } = NameUse.Any;
+
+	/// <summary>
+	/// The type of what the name is called on, where it is used after a dot and the caller bound it in the
+	/// file's own compilation. An extension method answers only if it takes that type, which is the
+	/// question the compiler's CS1061 asks: one that does not turns the error into another and leaves an
+	/// import the call never needs. Null searches every extension of that name, as a caller with only the
+	/// name has to.
+	/// </summary>
+	public ITypeSymbol? Receiver { get; init; }
 
 	public int MaxResults { get; init; } = 20;
 }

@@ -1,5 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 using RoseMcp.Contracts;
 
@@ -89,7 +90,7 @@ public static class MissingImports
 			{
 				if (names.Count >= Looked) continue;
 
-				known = new UnresolvedName(found.Name, found.Use, path);
+				known = new UnresolvedName(found.Name, found.Use, found.Receiver, path);
 				names.Add(known);
 			}
 
@@ -125,7 +126,7 @@ public static class MissingImports
 	{
 		var resolution = await NameResolver.ResolveAsync(
 			snapshot,
-			new ResolveNameRequest { Name = name.Name, FilePath = name.FirstPath, Use = name.Use },
+			new ResolveNameRequest { Name = name.Name, FilePath = name.FirstPath, Use = name.Use, Receiver = name.Receiver },
 			cancellationToken);
 
 		var usable = resolution.Candidates
@@ -193,13 +194,16 @@ public static class MissingImports
 	/// One name that did not bind, with where: whether any of it is somewhere the tool's own
 	/// <c>usings</c> reaches, and every other file, in the order the errors came.
 	/// </summary>
-	private sealed class UnresolvedName(string name, NameUse use, string firstPath)
+	private sealed class UnresolvedName(string name, NameUse use, ITypeSymbol? receiver, string firstPath)
 	{
 		private readonly List<string> _elsewhere = [];
 
 		public string Name { get; } = name;
 
 		public NameUse Use { get; } = use;
+
+		/// <summary>What the name is called on where it first failed, when it is used after a dot.</summary>
+		public ITypeSymbol? Receiver { get; } = receiver;
 
 		/// <summary>Where the name is resolved from, which decides what is reachable.</summary>
 		public string FirstPath { get; } = firstPath;
@@ -236,9 +240,11 @@ public static class MissingImports
 
 	/// <summary>
 	/// The identifier the diagnostic is pointing at and how the code uses it, which together are the
-	/// question an import answers: not only what is called that, but what kind of thing could be.
+	/// question an import answers: not only what is called that, but what kind of thing could be. A name
+	/// after a dot also carries the type of what it is called on, since an extension method that does not
+	/// take that type is no answer however uniquely it is named.
 	/// </summary>
-	public static async Task<(string Name, NameUse Use)?> UnresolvedAtAsync(
+	public static async Task<(string Name, NameUse Use, ITypeSymbol? Receiver)?> UnresolvedAtAsync(
 		Solution solution,
 		string filePath,
 		int line,
@@ -258,6 +264,13 @@ public static class MissingImports
 		var position = textLine.Start + Math.Clamp(column - 1, 0, textLine.Span.Length);
 		var token = root.FindToken(position);
 
-		return token.IsKind(SyntaxKind.IdentifierToken) ? (token.ValueText, NameUses.Of(token)) : null;
+		if (!token.IsKind(SyntaxKind.IdentifierToken)) return null;
+
+		var use = NameUses.Of(token);
+		var receiver = use == NameUse.Member && token.Parent?.Parent is MemberAccessExpressionSyntax access
+			? (await document.GetSemanticModelAsync(cancellationToken))?.GetTypeInfo(access.Expression, cancellationToken).Type
+			: null;
+
+		return (token.ValueText, use, receiver);
 	}
 }

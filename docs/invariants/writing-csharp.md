@@ -243,7 +243,10 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   namespace already in scope. Each of those turns adding the obvious using into a second error
   rather than none. So does a candidate of the wrong kind, which is why the search is narrowed by
   how the code uses the name before anything is counted: a name called on its own is answered by no
-  type, one after a dot only by an extension, one in a type's place only by a type. And an import
+  type, one after a dot only by an extension that takes what it is called on, one in a type's place
+  only by a type. An extension of the right name for another receiver is the trap the check after
+  the import cannot see: importing it turns a CS1061 into a CS1501 or a CS1929, which reads as the
+  name resolving, and the using stays to become unused once the member is written. And an import
   that still leaves its own name failing, bound with the import in place, is taken back out before
   the write, since "the only namespace anything of that name is in" was true and not the one this
   code needs. Most of the value is in never being asked -- the write tools run the search

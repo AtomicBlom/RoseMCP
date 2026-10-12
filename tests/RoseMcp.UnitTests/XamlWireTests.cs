@@ -231,7 +231,7 @@ public sealed class XamlWireTests
 	[Test]
 	public void A_press_of_ask_is_read_with_what_it_names()
 	{
-		var measured = XamlWire.ReadAsk(XamlWire.Row("ask", "3", "measurement", "Button #Eraser ↔ Slider #Width: 14 apart", "11", "12", string.Empty) + "\n");
+		var measured = XamlWire.ReadAsk(XamlWire.Row("ask", "3", "measurement", "Button #Eraser ↔ Slider #Width: 14 apart", "11", "12", string.Empty, "1500") + "\n");
 
 		measured.ShouldNotBeNull();
 		measured.Sequence.ShouldBe(3);
@@ -240,21 +240,27 @@ public sealed class XamlWireTests
 		measured.Element.ShouldBe(11UL);
 		measured.OtherElement.ShouldBe(12UL);
 		measured.Colour.ShouldBeNull();
+		measured.Age.ShouldBe(TimeSpan.FromMilliseconds(1500), "how long ago it was pressed, by the app's clock");
 
-		var colour = XamlWire.ReadAsk(XamlWire.Row("ask", "4", "colour", "#C2185B at 10, 20", "0", "0", "#C2185B"));
+		var colour = XamlWire.ReadAsk(XamlWire.Row("ask", "4", "colour", "#C2185B at 10, 20", "0", "0", "#C2185B", "0"));
 
 		colour.ShouldNotBeNull();
 		colour.Element.ShouldBeNull();
 		colour.Colour.ShouldBe("#C2185B");
 	}
 
-	/// <summary>No press is no press, and so is a reply this format does not write.</summary>
+	/// <summary>
+	/// No press is no press, and so is a reply this format does not write -- including a press without its age, which
+	/// could have been made hours before it was collected.
+	/// </summary>
 	[Test]
 	[Arguments("none\n")]
 	[Arguments("")]
-	[Arguments("ask\t0\telement\tButton\t1\t0\t\n")]
-	[Arguments("ask\tthree\telement\tButton\t1\t0\t\n")]
+	[Arguments("ask\t0\telement\tButton\t1\t0\t\t5\n")]
+	[Arguments("ask\tthree\telement\tButton\t1\t0\t\t5\n")]
 	[Arguments("ask\t3\telement\n")]
+	[Arguments("ask\t3\telement\tButton\t1\t0\t\n")]
+	[Arguments("ask\t3\telement\tButton\t1\t0\t\tsoon\n")]
 	public void No_press_reads_as_none(string reply)
 	{
 		XamlWire.ReadAsk(reply).ShouldBeNull();

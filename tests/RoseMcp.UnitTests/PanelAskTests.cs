@@ -13,7 +13,7 @@ public sealed class PanelAskTests
 {
 	private static readonly DateTime Now = new(2026, 10, 13, 9, 0, 0, DateTimeKind.Utc);
 
-	private static LiveXamlAsk Press(long sequence, string kind = "element", DateTime? collected = null) => new()
+	private static LiveXamlAsk Press(long sequence, string kind = "element", DateTime? pressed = null) => new()
 	{
 		Sequence = sequence,
 		Kind = kind,
@@ -21,37 +21,45 @@ public sealed class PanelAskTests
 		Element = kind == "colour" ? null : 42UL,
 		OtherElement = kind == "measurement" ? 77UL : null,
 		Colour = kind == "colour" ? "#C2185B" : null,
-		CollectedUtc = collected ?? Now,
+		PressedUtc = pressed ?? Now,
 	};
 
-	/// <summary>The provider's row reads into the press the host keeps, with when it was collected.</summary>
+	/// <summary>
+	/// The provider's row reads into the press the host keeps, dated by the age the provider gave it rather than by
+	/// when it was collected: the panel outlives every session, so the two can be hours apart.
+	/// </summary>
 	[Test]
-	public void A_providers_row_reads_into_a_press()
+	public void A_providers_row_reads_into_a_press_dated_by_its_age()
 	{
-		var row = XamlWire.ReadAsk("ask\t3\tmeasurement\tthe measurement from A to B\t42\t77\t\n");
+		var row = XamlWire.ReadAsk("ask\t3\tmeasurement\tthe measurement from A to B\t42\t77\t\t7200000\n");
 
 		row.ShouldNotBeNull();
+		row.Age.ShouldBe(TimeSpan.FromHours(2));
+
 		var press = LiveXamlAsk.From(row, Now);
 		press.Sequence.ShouldBe(3);
 		press.Kind.ShouldBe("measurement");
 		press.Element.ShouldBe(42UL);
 		press.OtherElement.ShouldBe(77UL);
 		press.Colour.ShouldBeNull();
-		press.CollectedUtc.ShouldBe(Now);
+		press.PressedUtc.ShouldBe(Now - TimeSpan.FromHours(2));
 	}
 
 	/// <summary>
-	/// The broker opens the Inspector for a press it has not opened one for, and only a recent one: a press made before
-	/// the broker was watching is a question nobody is waiting on.
+	/// The broker opens the Inspector for a press it has not opened one for, and only one pressed recently: a press
+	/// made while nobody was watching is a question nobody is waiting on, however recently it was collected.
 	/// </summary>
 	[Test]
 	public void The_broker_opens_the_inspector_once_per_recent_press()
 	{
-		LiveAppSession.ShouldOpen(null, 0, Now).ShouldBeFalse();
-		LiveAppSession.ShouldOpen(Press(1), 0, Now).ShouldBeTrue();
-		LiveAppSession.ShouldOpen(Press(1), 1, Now).ShouldBeFalse("that press already opened a window");
-		LiveAppSession.ShouldOpen(Press(1), 4, Now).ShouldBeTrue("a provider that started counting again pressed anew");
-		LiveAppSession.ShouldOpen(Press(2, collected: Now - LiveAppSession.AskFreshFor - TimeSpan.FromSeconds(1)), 1, Now)
+		var first = Press(1);
+
+		LiveAppSession.ShouldOpen(null, null, Now).ShouldBeFalse();
+		LiveAppSession.ShouldOpen(first, null, Now).ShouldBeTrue();
+		LiveAppSession.ShouldOpen(first, first, Now).ShouldBeFalse("that press already opened a window");
+		LiveAppSession.ShouldOpen(Press(1, pressed: Now - TimeSpan.FromSeconds(2)), first, Now)
+			.ShouldBeTrue("a reconnected provider's press 1 is another press");
+		LiveAppSession.ShouldOpen(Press(2, pressed: Now - LiveAppSession.AskFreshFor - TimeSpan.FromSeconds(1)), first, Now)
 			.ShouldBeFalse();
 	}
 
@@ -78,10 +86,12 @@ public sealed class PanelAskTests
 			XamlAskAge = age,
 		};
 
-		AskAgent.PanelAskToOpen(Summary(null, null), 0).ShouldBeNull();
-		AskAgent.PanelAskToOpen(Summary(Press(1), TimeSpan.FromSeconds(3)), 0)!.Sequence.ShouldBe(1);
-		AskAgent.PanelAskToOpen(Summary(Press(1), TimeSpan.FromSeconds(3)), 1).ShouldBeNull();
-		AskAgent.PanelAskToOpen(Summary(Press(2), AskAgent.PanelAskFreshFor + TimeSpan.FromSeconds(1)), 1).ShouldBeNull();
+		var first = Press(1);
+
+		AskAgent.PanelAskToOpen(Summary(null, null), null).ShouldBeNull();
+		AskAgent.PanelAskToOpen(Summary(first, TimeSpan.FromSeconds(3)), null)!.Sequence.ShouldBe(1);
+		AskAgent.PanelAskToOpen(Summary(first, TimeSpan.FromSeconds(3)), first).ShouldBeNull();
+		AskAgent.PanelAskToOpen(Summary(Press(2), AskAgent.PanelAskFreshFor + TimeSpan.FromSeconds(1)), first).ShouldBeNull();
 	}
 
 	/// <summary>

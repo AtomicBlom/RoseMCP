@@ -38,6 +38,8 @@ delivery of notes, and a press that opened a note nobody could edit would send w
 write.
 
 **What it does not do.** The press is not written anywhere an agent reads: only a note the person sends
-reaches an agent. A press made before the broker was watching -- a broker that restarted, a press more
-than thirty seconds old -- opens nothing, and a window reading a press more than a minute old does not
-open a note about it, since the press could not have been what opened the window.
+reaches an agent. A press more than thirty seconds old opens nothing, and its age is the app's own
+reckoning of when it was pressed, carried in the reply, not when the host collected it: the panel
+outlives every session, so a press made while no host was connected is collected by the next, and the
+host acknowledges it without keeping it. A window reading a press more than a minute old does not open a
+note about it either, since the press could not have been what opened the window.

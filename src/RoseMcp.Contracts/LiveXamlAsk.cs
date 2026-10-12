@@ -29,10 +29,16 @@ public sealed record LiveXamlAsk
 	/// <summary>The lens's colour as <c>#RRGGBB</c>; null for every other kind.</summary>
 	public string? Colour { get; init; }
 
-	/// <summary>When the host collected the press, within a second of it being made.</summary>
-	public required DateTime CollectedUtc { get; init; }
+	/// <summary>
+	/// When the press was made: when the host collected it, less the age the provider gave it. What decides whether
+	/// anybody is still waiting on it.
+	/// </summary>
+	public required DateTime PressedUtc { get; init; }
 
-	/// <summary>The press as a live-app host reads it off the provider, collected now.</summary>
+	/// <summary>
+	/// The press as a live-app host reads it off the provider, dated by the age the provider gave it: the panel outlives
+	/// every session, so a press can be collected long after it was made.
+	/// </summary>
 	public static LiveXamlAsk From(XamlAskRow row, DateTime collectedUtc)
 	{
 		ArgumentNullException.ThrowIfNull(row);
@@ -45,7 +51,14 @@ public sealed record LiveXamlAsk
 			Element = row.Element,
 			OtherElement = row.OtherElement,
 			Colour = row.Colour,
-			CollectedUtc = collectedUtc,
+			PressedUtc = collectedUtc - row.Age,
 		};
 	}
+
+	/// <summary>
+	/// Whether <paramref name="other"/> is this same press. By its number and when it was made together: a provider
+	/// that reconnects numbers from wherever it is, and a number alone could be another press in a later connection.
+	/// </summary>
+	public bool IsSamePress(LiveXamlAsk? other) =>
+		other is not null && other.Sequence == Sequence && other.PressedUtc == PressedUtc;
 }

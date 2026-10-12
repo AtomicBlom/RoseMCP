@@ -50,7 +50,7 @@ static std::wstring g_pipeNonce;
 // XamlWire.ProtocolVersion on the host, and a unit test there reads this line to hold the two in step:
 // the host refuses a provider that greets with any other, because a stale copy reading rows it was not
 // written for answers with data rather than with an error.
-static constexpr int RoseTapProtocolVersion = 3;
+static constexpr int RoseTapProtocolVersion = 4;
 
 static std::mutex g_logMutex;
 

@@ -261,4 +261,23 @@ public sealed class XamlChangeViewTests
 		XamlChangeText.Values(change with { OldValue = null }).ShouldBe($"{XamlChangeText.Unread} \u2192 8");
 		XamlChangeText.Values(change with { OldValue = string.Empty }).ShouldBe("\"\" \u2192 8");
 	}
+
+	/// <summary>
+	/// The "mark changes in the app" toggle follows what the app says, and a read that did not reach the app says
+	/// nothing about it: an unknown switch leaves the toggle where it was rather than turning it on.
+	/// </summary>
+	[Test]
+	public void A_read_that_did_not_reach_the_app_leaves_the_change_marks_toggle_alone()
+	{
+		var inspection = Inspection();
+
+		inspection.Absorb(new LiveXamlSelection { ChangeMarks = false });
+		inspection.ChangeMarks.ShouldBeFalse();
+
+		inspection.Absorb(new LiveXamlSelection { Detail = "The XAML provider did not answer in time." });
+		inspection.ChangeMarks.ShouldBeFalse("a switch nobody read is not on");
+
+		inspection.Absorb(new LiveXamlSelection { ChangeMarks = true });
+		inspection.ChangeMarks.ShouldBeTrue();
+	}
 }

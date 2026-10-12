@@ -363,21 +363,7 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		var (pipe, unready) = _provider.Connect(pid);
 		if (pipe is null) return new LiveXamlSelection { Detail = unready };
 
-		if (XamlPanelRequests.ChangeMarks(pipe, shown, Reply) is null)
-		{
-			return new LiveXamlSelection
-			{
-				Detail = Unanswered(shown ? "changes on" : "changes off", "the app's change marks to be switched"),
-			};
-		}
-
-		var after = ReadSelectionCore();
-		return after with
-		{
-			Detail = after.ChangeMarks
-				? "The app marks the elements live edits changed, each tagged with its change, until the tags fade."
-				: "The app does not mark what live edits changed; the XAML view still does.",
-		};
+		return XamlPanelRequests.SwitchChangeMarks(pipe, shown, Reply, ReadSelectionCore);
 	}
 
 	/// <summary>
@@ -386,17 +372,17 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 	/// </summary>
 	private static readonly TimeSpan AskBound = TimeSpan.FromSeconds(2);
 
-	private LiveXamlAsk? _ask;
+	/// <summary>What has been collected of the panel's Ask button, under the request lock like every exchange.</summary>
+	private readonly XamlAskCollector _asks = new();
 
 	/// <summary>
-	/// The latest press of the panel's Ask button collected from the provider, or null before there has been one.
-	/// Replaced whole, so a reader sees one press or the next.
+	/// The latest fresh press of the panel's Ask button collected from the provider, or null before there has been one.
 	/// </summary>
-	public LiveXamlAsk? LastAsk => Volatile.Read(ref _ask);
+	public LiveXamlAsk? LastAsk => _asks.Latest;
 
 	/// <summary>
 	/// Collects a press of the panel's Ask button, if there is a new one. The app never speaks first on the pipe, so a
-	/// press waits in the provider until this asks.
+	/// press waits in the provider until this asks. Which presses are kept is <see cref="XamlAskCollector"/>'s rule.
 	/// <para>
 	/// Skipped rather than queued while another request holds the pipe: a tree read can take seconds, and a press is
 	/// still there to collect on the next turn. Asks nothing of a provider that is not resident, since a session that
@@ -411,12 +397,10 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		{
 			if (_provider.ResidentPipe is not { } pipe) return;
 
-			var held = Volatile.Read(ref _ask);
-			var (answered, press) = XamlPanelRequests.Ask(pipe, held?.Sequence ?? 0, AskBound);
-			if (!answered || press is null || press.Sequence == held?.Sequence) return;
-
-			Volatile.Write(ref _ask, LiveXamlAsk.From(press, DateTime.UtcNow));
-			_logger.LogInformation("Collected press {Sequence} of the panel's Ask button: {Readable}", press.Sequence, press.Readable);
+			if (_asks.Collect(pipe, AskBound, DateTime.UtcNow) is { } press)
+			{
+				_logger.LogInformation("Collected press {Sequence} of the panel's Ask button: {Readable}", press.Sequence, press.Readable);
+			}
 		}
 		finally
 		{

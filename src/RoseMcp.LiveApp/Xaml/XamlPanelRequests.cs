@@ -47,4 +47,44 @@ public static class XamlPanelRequests
 			_ => null,
 		};
 	}
+
+	/// <summary>
+	/// Switches the change marks and answers with the panel as it reads afterwards, the switch taken from the
+	/// provider's own answer to the switching rather than from the read that follows it.
+	/// <para>
+	/// The read is the caller's, because reading what is picked needs the tree it resolves the pick against. A read
+	/// that did not answer carries no switch and a detail saying why, and both stay true of the answer: the switch is
+	/// where the provider said it was, and what is picked is not known.
+	/// </para>
+	/// </summary>
+	/// <param name="pipe">The provider's pipe, which the caller holds the request lock over.</param>
+	/// <param name="shown">Whether the marks are wanted on.</param>
+	/// <param name="bound">How long to wait for each reply.</param>
+	/// <param name="readAfter">Reads the panel afterwards; its <see cref="LiveXamlSelection.ChangeMarks"/> is null when it did not answer.</param>
+	public static LiveXamlSelection SwitchChangeMarks(XamlProviderPipe pipe, bool shown, TimeSpan bound, Func<LiveXamlSelection> readAfter)
+	{
+		ArgumentNullException.ThrowIfNull(pipe);
+		ArgumentNullException.ThrowIfNull(readAfter);
+
+		if (ChangeMarks(pipe, shown, bound) is not { } switched)
+		{
+			return new LiveXamlSelection
+			{
+				Detail = XamlChannelBounds.Unanswered(shown ? "changes on" : "changes off", "the app's change marks to be switched", bound),
+			};
+		}
+
+		var said = switched
+			? "The app marks the elements live edits changed, each tagged with its change, until the tags fade."
+			: "The app does not mark what live edits changed; the XAML view still does.";
+
+		var after = readAfter();
+		var read = after.ChangeMarks is not null;
+
+		return after with
+		{
+			ChangeMarks = switched,
+			Detail = read ? said : $"{said} What is picked could not be read afterwards: {after.Detail}",
+		};
+	}
 }

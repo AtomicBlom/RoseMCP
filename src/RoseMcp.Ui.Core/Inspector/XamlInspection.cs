@@ -356,7 +356,8 @@ public sealed class XamlInspection : Observable
 	public void Absorb(LiveXamlSelection selection)
 	{
 		Armed = selection.Armed;
-		ChangeMarks = selection.ChangeMarks;
+		// A read that did not reach the app says nothing about the switch, so the toggle stays where it was.
+		if (selection.ChangeMarks is { } marks) ChangeMarks = marks;
 
 		// Just my XAML narrows the tree as well as the pick, so the two cannot disagree about which elements are the
 		// app's: the tree is narrowed again when the app's own toggle moves.

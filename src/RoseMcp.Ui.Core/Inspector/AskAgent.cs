@@ -118,16 +118,16 @@ public static class AskAgent
 	public static readonly TimeSpan PanelAskFreshFor = TimeSpan.FromSeconds(60);
 
 	/// <summary>
-	/// The press of the in-app panel's Ask button a window should open its note about, or null: one newer than the
-	/// press it last handled, and recent enough that somebody is waiting on it.
+	/// The press of the in-app panel's Ask button a window should open its note about, or null: one other than the
+	/// press it last handled, and pressed recently enough that somebody is waiting on it.
 	/// </summary>
 	/// <param name="summary">The session as the window just read it.</param>
-	/// <param name="handled">The sequence of the press the window last opened a note about; zero for none.</param>
-	public static LiveXamlAsk? PanelAskToOpen(LiveAppSessionSummary summary, long handled)
+	/// <param name="handled">The press the window last opened a note about; null for none.</param>
+	public static LiveXamlAsk? PanelAskToOpen(LiveAppSessionSummary summary, LiveXamlAsk? handled)
 	{
 		ArgumentNullException.ThrowIfNull(summary);
 
-		if (summary.XamlAsk is not { } ask || ask.Sequence == handled) return null;
+		if (summary.XamlAsk is not { } ask || ask.IsSamePress(handled)) return null;
 
 		return summary.XamlAskAge is { } age && age <= PanelAskFreshFor ? ask : null;
 	}

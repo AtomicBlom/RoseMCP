@@ -381,7 +381,7 @@ public sealed partial class InspectorWindow : Window
 			_ended = false;
 			_regarded.Forget();
 			_solutionOf = null;
-			_panelAskHandled = 0;
+			_panelAskHandled = null;
 
 			// One keeper per session, because a hold is about a target: carrying one across would let the bar give back
 			// a hold on a process this window is no longer about.
@@ -730,7 +730,7 @@ public sealed partial class InspectorWindow : Window
 	}
 
 	/// <summary>The press of the in-app panel's Ask button this window last opened a note about, in its session.</summary>
-	private long _panelAskHandled;
+	private LiveXamlAsk? _panelAskHandled;
 
 	/// <summary>
 	/// Opens the note about a press of the in-app panel's Ask button: the XAML view, with the element the press was
@@ -739,7 +739,7 @@ public sealed partial class InspectorWindow : Window
 	/// </summary>
 	private void OpenPanelAsk(string sessionId, LiveXamlAsk ask)
 	{
-		_panelAskHandled = ask.Sequence;
+		_panelAskHandled = ask;
 
 		if (XamlView.Visibility == Visibility.Visible)
 		{

@@ -37,7 +37,7 @@ public static class XamlWire
 	/// over by hand in a rebuild loop -- and that is exactly when a mismatch should be refused by name
 	/// rather than read as data.
 	/// </summary>
-	public const int ProtocolVersion = 3;
+	public const int ProtocolVersion = 4;
 
 	/// <summary>How every greeting starts, so one that does not can be told from one with the wrong version.</summary>
 	public const string GreetingPrefix = "RoseTap/";
@@ -220,15 +220,17 @@ public static class XamlWire
 
 	/// <summary>
 	/// The press the toolbar's Ask button recorded, from the provider's reply to <c>ask</c>, or null when there is
-	/// none -- the reply is <c>none</c>, or not a row this format writes. The sequence counts presses within one
-	/// provider session, so a host tells a new press from the one it already holds by it.
+	/// none -- the reply is <c>none</c>, or not a row this format writes. The sequence counts presses in the app's
+	/// process, so a host tells a new press from the one it already holds by it; the last field is the press's age in
+	/// milliseconds, and a row without one is not read, since a press of unknown age could be hours old.
 	/// </summary>
 	public static XamlAskRow? ReadAsk(string reply)
 	{
 		var line = reply.Split('\n')[0].TrimEnd('\r');
 		var fields = Fields(line);
-		if (fields.Length < 7 || fields[0] != "ask") return null;
+		if (fields.Length < 8 || fields[0] != "ask") return null;
 		if (!long.TryParse(fields[1], NumberStyles.None, CultureInfo.InvariantCulture, out var sequence) || sequence <= 0) return null;
+		if (!long.TryParse(fields[7], NumberStyles.None, CultureInfo.InvariantCulture, out var ageMilliseconds)) return null;
 
 		return new XamlAskRow(
 			sequence,
@@ -236,7 +238,8 @@ public static class XamlWire
 			fields[3],
 			HandleOrNull(fields[4]),
 			HandleOrNull(fields[5]),
-			fields[6].Length > 0 ? fields[6] : null);
+			fields[6].Length > 0 ? fields[6] : null,
+			TimeSpan.FromMilliseconds(ageMilliseconds));
 	}
 
 	/// <summary>A handle field, where zero and anything unreadable both mean the press named no element.</summary>

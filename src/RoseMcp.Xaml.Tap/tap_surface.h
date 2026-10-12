@@ -66,6 +66,12 @@ struct TapChange
 /// Only the toolbar writes it, and only on a person's click. What it holds is a description of what
 /// was on screen -- a handle, a measurement in words, a colour -- and all it can make happen is a
 /// window opening with a note the person still has to write and send.
+///
+/// The reply carries how long ago the press was made, because the toolbar outlives every session: a
+/// press made while no host was connected is collected by the next one, and judged by when it was
+/// collected it would open a window, hours later, about a question nobody is waiting on. And the
+/// sequence keeps counting across a forgotten press, so a host that collected press 3 before the pipe
+/// went is never handed a different press 3 afterwards.
 class RoseTapAsk
 {
 public:
@@ -74,12 +80,13 @@ public:
 	{
 		std::lock_guard<std::mutex> guard(m_mutex);
 		m_sequence++;
+		m_pressed = true;
+		m_raisedTick = ::GetTickCount64();
 		m_kind = std::move(kind);
 		m_readable = std::move(readable);
 		m_element = element;
 		m_other = other;
 		m_colour = std::move(colour);
-		m_collected = 0;
 	}
 
 	/// The latest press as a reply row, or "none". <paramref name="seen"/> is the sequence the host
@@ -90,7 +97,7 @@ public:
 		std::lock_guard<std::mutex> guard(m_mutex);
 
 		arrived = false;
-		if (m_sequence == 0) return "none\n";
+		if (!m_pressed) return "none\n";
 
 		if (seen >= m_sequence && m_collected < m_sequence)
 		{
@@ -98,9 +105,11 @@ public:
 			arrived = true;
 		}
 
+		// The age last, so the seven fields before it mean what they always meant.
+		const ULONGLONG age = ::GetTickCount64() - m_raisedTick;
 		const std::wstring row = L"ask\t" + std::to_wstring(m_sequence) + L'\t' + Escape(m_kind.c_str()) + L'\t'
 			+ Escape(m_readable.c_str()) + L'\t' + std::to_wstring(m_element) + L'\t' + std::to_wstring(m_other) + L'\t'
-			+ Escape(m_colour.c_str());
+			+ Escape(m_colour.c_str()) + L'\t' + std::to_wstring(age);
 
 		return Utf8(row) + "\n";
 	}
@@ -109,16 +118,18 @@ public:
 	bool Waiting()
 	{
 		std::lock_guard<std::mutex> guard(m_mutex);
-		return m_sequence > 0 && m_collected < m_sequence;
+		return m_pressed && m_collected < m_sequence;
 	}
 
 	/// Forgets the press, because the session it was for has ended. A later host starts from nothing,
-	/// or the next session to connect would open a window about a question nobody asked it.
+	/// or the next session to connect would open a window about a question nobody asked it. The count
+	/// is kept, so the next press is numbered after every one before it.
 	void Forget()
 	{
 		std::lock_guard<std::mutex> guard(m_mutex);
-		m_sequence = 0;
-		m_collected = 0;
+		m_pressed = false;
+		m_collected = m_sequence;
+		m_raisedTick = 0;
 		m_kind.clear();
 		m_readable.clear();
 		m_element = 0;
@@ -130,6 +141,8 @@ private:
 	std::mutex m_mutex;
 	unsigned long m_sequence = 0;
 	unsigned long m_collected = 0;
+	bool m_pressed = false;
+	ULONGLONG m_raisedTick = 0;
 	std::wstring m_kind;
 	std::wstring m_readable;
 	InstanceHandle m_element = 0;

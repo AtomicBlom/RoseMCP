@@ -261,7 +261,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 			// A press in an app that has gone is not a question anybody can be shown the subject of.
 			XamlAsk = state == LiveAppSessionState.Ended ? null : info?.XamlAsk,
-			XamlAskAge = state == LiveAppSessionState.Ended || info?.XamlAsk is not { } ask ? null : now - ask.CollectedUtc,
+			XamlAskAge = state == LiveAppSessionState.Ended || info?.XamlAsk is not { } ask ? null : now - ask.PressedUtc,
 			InfoAge = _infoUtc is { } read ? now - read : null,
 		};
 	}
@@ -274,8 +274,8 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// </summary>
 	public static readonly TimeSpan AskFreshFor = TimeSpan.FromSeconds(30);
 
-	/// <summary>The sequence of the last press this session opened the Inspector for.</summary>
-	private long _askOpened;
+	/// <summary>The last press this session opened the Inspector for.</summary>
+	private LiveXamlAsk? _askOpened;
 
 	/// <summary>
 	/// The press of the panel's Ask button that should open the Inspector now, or null: one this session has not
@@ -288,18 +288,18 @@ public sealed class LiveAppSession : IAsyncDisposable
 		var ask = _info?.XamlAsk;
 		if (!ShouldOpen(ask, _askOpened, nowUtc)) return null;
 
-		_askOpened = ask!.Sequence;
+		_askOpened = ask;
 		return ask;
 	}
 
 	/// <summary>
-	/// Whether a press opens the Inspector: there is one, it is not the press a window was last opened for, and it is
-	/// fresh. A press whose sequence went backwards is a new one, from a provider that started counting again.
+	/// Whether a press opens the Inspector: there is one, it is not the press a window was last opened for, and it was
+	/// made recently -- by when it was pressed, not when it was collected, since the panel outlives every session.
 	/// </summary>
-	public static bool ShouldOpen(LiveXamlAsk? ask, long opened, DateTime nowUtc) =>
+	public static bool ShouldOpen(LiveXamlAsk? ask, LiveXamlAsk? opened, DateTime nowUtc) =>
 		ask is not null
-		&& ask.Sequence != opened
-		&& nowUtc - ask.CollectedUtc <= AskFreshFor;
+		&& !ask.IsSamePress(opened)
+		&& nowUtc - ask.PressedUtc <= AskFreshFor;
 
 	/// <summary>
 	/// Records something the broker has to say about this session that the host did not. It rides

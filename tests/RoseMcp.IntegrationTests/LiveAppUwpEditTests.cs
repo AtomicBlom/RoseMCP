@@ -543,15 +543,15 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 		try
 		{
 			var off = await session.SetXamlChangeMarksAsync(shown: false, cancellationToken);
-			off.ChangeMarks.ShouldBeFalse($"expected the marks off; got detail: {off.Detail}");
+			off.ChangeMarks.ShouldBe(false, $"expected the marks off; got detail: {off.Detail}");
 
 			var read = await session.ReadXamlSelectionAsync(cancellationToken);
-			read.ChangeMarks.ShouldBeFalse("a later read of the panel says what the switch was left at");
+			read.ChangeMarks.ShouldBe(false, "a later read of the panel says what the switch was left at");
 		}
 		finally
 		{
 			var on = await session.SetXamlChangeMarksAsync(shown: true, CancellationToken.None);
-			on.ChangeMarks.ShouldBeTrue($"expected the marks back on; got detail: {on.Detail}");
+			on.ChangeMarks.ShouldBe(true, $"expected the marks back on; got detail: {on.Detail}");
 		}
 	}
 

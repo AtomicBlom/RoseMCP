@@ -249,11 +249,11 @@ public sealed class XamlProviderPipeTests
 
 			var (second, fresh) = await ReadRequestAsync(provider);
 			asked.Add(fresh);
-			await SendFrameAsync(provider, XamlWire.Frame(second, "ask\t1\telement\tthe element Button · Ok picked in the app\t42\t0\t\n"));
+			await SendFrameAsync(provider, XamlWire.Frame(second, "ask\t1\telement\tthe element Button · Ok picked in the app\t42\t0\t\t500\n"));
 
 			var (third, held) = await ReadRequestAsync(provider);
 			asked.Add(held);
-			await SendFrameAsync(provider, XamlWire.Frame(third, "ask\t1\telement\tthe element Button · Ok picked in the app\t42\t0\t\n"));
+			await SendFrameAsync(provider, XamlWire.Frame(third, "ask\t1\telement\tthe element Button · Ok picked in the app\t42\t0\t\t500\n"));
 		});
 
 		XamlPanelRequests.Ask(pipe, 0, Patience).ShouldBe((true, null));
@@ -288,6 +288,118 @@ public sealed class XamlProviderPipeTests
 
 		XamlPanelRequests.Ask(pipe, 0, TimeSpan.FromMilliseconds(300)).Answered.ShouldBeFalse();
 		(await reading).Request.ShouldBe("ask 0");
+	}
+
+	/// <summary>
+	/// A press made long before it is collected -- the panel outlives every session, so one pressed while no host was
+	/// connected reaches the next -- is acknowledged, so the chip goes back to rest, and not kept to open a window
+	/// about: nobody is waiting on it.
+	/// </summary>
+	[Test]
+	public async Task A_press_made_long_before_it_was_collected_is_acknowledged_and_not_kept()
+	{
+		using var pipe = new XamlProviderPipe(NullLogger.Instance);
+		pipe.Listen().ShouldBeNull();
+
+		using var provider = await GreetAsync(pipe);
+		var asked = new List<string>();
+		var twoHours = (long)TimeSpan.FromHours(2).TotalMilliseconds;
+
+		var serving = Task.Run(async () =>
+		{
+			for (var turn = 0; turn < 2; turn++)
+			{
+				var (id, request) = await ReadRequestAsync(provider);
+				asked.Add(request);
+				await SendFrameAsync(provider, XamlWire.Frame(id, $"ask\t1\telement\tthe element Button · Ok\t42\t0\t\t{twoHours}\n"));
+			}
+		});
+
+		var collector = new XamlAskCollector();
+
+		collector.Collect(pipe, Patience, DateTime.UtcNow).ShouldBeNull();
+		collector.Latest.ShouldBeNull("a press two hours old opens nothing");
+
+		collector.Collect(pipe, Patience, DateTime.UtcNow).ShouldBeNull();
+
+		await serving;
+		asked.ShouldBe(["ask 0", "ask 1"], "the old press is still acknowledged, so the panel's chip goes back to rest");
+	}
+
+	/// <summary>
+	/// A provider that reconnects is asked again from nothing, and a press it answers with is taken whatever its
+	/// number: a host that kept comparing against the press the last connection gave it would miss a new press that
+	/// happened to carry the same one.
+	/// </summary>
+	[Test]
+	public async Task A_press_after_the_provider_reconnects_is_taken_whatever_its_number()
+	{
+		using var pipe = new XamlProviderPipe(NullLogger.Instance);
+		pipe.Listen().ShouldBeNull();
+
+		var collector = new XamlAskCollector();
+
+		using (var first = await GreetAsync(pipe))
+		{
+			var answering = Task.Run(async () =>
+			{
+				var (id, request) = await ReadRequestAsync(first);
+				request.ShouldBe("ask 0");
+				await SendFrameAsync(first, XamlWire.Frame(id, "ask\t1\telement\tthe element Button · Ok\t42\t0\t\t100\n"));
+			});
+
+			collector.Collect(pipe, Patience, DateTime.UtcNow).ShouldNotBeNull().Readable.ShouldBe("the element Button · Ok");
+			await answering;
+		}
+
+		using var second = await GreetAsync(pipe);
+
+		var reanswering = Task.Run(async () =>
+		{
+			var (id, request) = await ReadRequestAsync(second);
+			request.ShouldBe("ask 0", "a reconnected provider is asked from nothing");
+			await SendFrameAsync(second, XamlWire.Frame(id, "ask\t1\tcolour\tthe colour #C2185B\t0\t0\t#C2185B\t100\n"));
+		});
+
+		collector.Collect(pipe, Patience, DateTime.UtcNow).ShouldNotBeNull();
+		collector.Latest.ShouldNotBeNull().Kind.ShouldBe("colour");
+		await reanswering;
+	}
+
+	/// <summary>
+	/// Switching the change marks answers with where the provider said the switch went, and when the read of the panel
+	/// that follows does not answer, says so rather than reporting the switch's default as though it had been read.
+	/// </summary>
+	[Test]
+	public async Task A_switch_of_the_change_marks_keeps_the_providers_answer_when_the_read_after_times_out()
+	{
+		using var pipe = new XamlProviderPipe(NullLogger.Instance);
+		pipe.Listen().ShouldBeNull();
+
+		using var provider = await GreetAsync(pipe);
+
+		var serving = Task.Run(async () =>
+		{
+			var (id, request) = await ReadRequestAsync(provider);
+			request.ShouldBe("changes off");
+			await SendFrameAsync(provider, XamlWire.Frame(id, "off\n"));
+
+			// The selection read is never answered.
+			(await ReadRequestAsync(provider)).Request.ShouldBe("selection");
+		});
+
+		var switched = XamlPanelRequests.SwitchChangeMarks(
+			pipe,
+			shown: false,
+			Patience,
+			() => pipe.Request("selection", TimeSpan.FromMilliseconds(300)) is null
+				? new LiveXamlSelection { Detail = "The XAML provider did not answer within 0.3s, asked for what is selected." }
+				: new LiveXamlSelection { ChangeMarks = true });
+
+		await serving;
+
+		switched.ChangeMarks.ShouldBe(false, "the provider said where the switch went");
+		switched.Detail.ShouldNotBeNull().ShouldContain("did not answer within 0.3s");
 	}
 
 	/// <summary>

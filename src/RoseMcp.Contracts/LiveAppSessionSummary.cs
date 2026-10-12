@@ -123,8 +123,8 @@ public sealed record LiveAppSessionSummary
 	public LiveXamlAsk? XamlAsk { get; init; }
 
 	/// <summary>
-	/// How long ago the host collected <see cref="XamlAsk"/>, so a window opened by the press can tell it from one
-	/// pressed long before the window was: an age rather than the moment, like <see cref="LastEventAge"/>.
+	/// How long ago <see cref="XamlAsk"/> was pressed, so a window opened by the press can tell it from one pressed
+	/// long before the window was: an age rather than the moment, like <see cref="LastEventAge"/>.
 	/// </summary>
 	public TimeSpan? XamlAskAge { get; init; }
 }

@@ -40,8 +40,10 @@ public sealed record LiveXamlSelection : LiveResult
 	/// <summary>
 	/// Whether the app marks the elements live edits changed, read from the toolbar like <see cref="Armed"/>: its
 	/// Changes button and a window's toggle are one switch, and either can move it without the other being told.
+	/// Null when the provider was not read -- it did not answer, or there is no provider -- since a switch nobody read
+	/// is not on.
 	/// </summary>
-	public bool ChangeMarks { get; init; } = true;
+	public bool? ChangeMarks { get; init; }
 
 	public ulong Handle { get; init; }
 

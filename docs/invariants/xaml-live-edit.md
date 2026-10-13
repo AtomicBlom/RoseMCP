@@ -128,3 +128,20 @@ Read before changing `rose_xaml_*`, `src/RoseMcp.XamlDiff/`, or the apply path i
   works. Failures are reported and belong to the caller. Whether the file has changed since the app
   started is evidence about the file and nothing more, so it is three-valued -- a process that will not
   give its start time makes that unknown, not "changed".
+- **An edit's old value is read in the walk that finds the property, and nowhere else.** Every
+  `SetProperty` and `ClearProperty` already walks the element's property chain to find the
+  property's index and declared type, so the effective value before the edit comes out of that same
+  walk -- rendered by the one renderer `rose_xaml_properties` uses, so a "was" and a property row
+  say a colour the same way. A second read for it would be a call into the framework that changes
+  nothing the first had not, and reading it from the markup instead would report what the file said
+  rather than what was on screen, which is the wrong half of an edit somebody is checking. It is the
+  entry that is not overridden, not the first entry of that name: a property set in markup and by a
+  style appears once per source. A property set on an element the same batch built is not a change
+  to anybody's screen and is not reported as one; the element is the change.
+- **Who changed what is recorded where the caller is known, and kept no longer than the session.**
+  The host never learns who asked for an apply, so `LiveAppSession` records each edit that took --
+  when, the calling agent session, the element's handle, the property, before and after -- in its
+  `XamlChangeLog`, which windows read at `/operator/sessions/{id}/xaml/changes` and wait on. It is a
+  list under a lock, bounded with the count let go beside it, because applies arrive side by side
+  and a window reads every second; and it is in memory only, because a handle means nothing to
+  another run of the app. An edit that did not take is not a change and is not recorded.

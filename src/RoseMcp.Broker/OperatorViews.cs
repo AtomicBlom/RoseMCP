@@ -77,10 +77,20 @@ public sealed class OperatorViews(
 	public OperatorWorkspace Workspace(WorkspaceWorker worker) =>
 		Row(worker, _options.TimeProvider.GetUtcNow().UtcDateTime, sampleMemory: true);
 
-	/// <summary>Every debug session, whoever started it, as <see cref="LiveAppSessionManager.Describe"/> lists them.</summary>
+	/// <summary>
+	/// Pulsed as calls start and end and as a session is started, ended or shared, so a wait on <see cref="Sessions"/>
+	/// answers at once whether an agent or a person changed it.
+	/// </summary>
+	public ChangeSignal SessionsChanged { get; } = ChangeSignal.Either(activity.Changed, sessions.Changed);
+
+	/// <summary>
+	/// Every debug session, whoever started it, as <see cref="LiveAppSessionManager.Describe"/> lists them, each one a
+	/// person shared naming the client it is shared with by that client's row now, and saying whether it is connected.
+	/// </summary>
 	public OperatorSessionList Sessions()
 	{
-		var rows = sessions.Describe();
+		var present = clients.ByKey();
+		var rows = sessions.Sessions.Select(session => WithParties(session, present)).ToList();
 
 		var stable = rows.Select(row => row with
 		{
@@ -92,6 +102,108 @@ public sealed class OperatorViews(
 
 		return new OperatorSessionList { Sessions = rows, Version = ViewVersion.Of(stable) };
 	}
+
+	/// <summary>One session's row, as <see cref="Sessions"/> lists it.</summary>
+	public LiveAppSessionSummary Session(LiveAppSession session) => WithParties(session, clients.ByKey());
+
+	/// <summary>A session's row, its parties named as <see cref="Named"/> names them.</summary>
+	private static LiveAppSessionSummary WithParties(LiveAppSession session, IReadOnlyDictionary<string, ClientSummary> present)
+	{
+		var summary = session.Describe();
+
+		return Named(summary, session.Owners, session.SetterOf(summary.Stop?.BreakpointId), present);
+	}
+
+	/// <summary>
+	/// <paramref name="summary"/> naming each agent session in it by the row the client table files that session under
+	/// now -- a row goes and is made again with a new id while the session is the same one: the one it is shared with,
+	/// saying whether there is one; the one that started it, where the table still lists it; and who set the breakpoint
+	/// the target is stopped at, which is <paramref name="setter"/>.
+	/// </summary>
+	public static LiveAppSessionSummary Named(
+		LiveAppSessionSummary summary,
+		LiveAppOwners owners,
+		LiveAppActor? setter,
+		IReadOnlyDictionary<string, ClientSummary> present)
+	{
+		ArgumentNullException.ThrowIfNull(summary);
+		ArgumentNullException.ThrowIfNull(owners);
+		ArgumentNullException.ThrowIfNull(present);
+
+		if (owners.Shared is { } shared && summary.SharedWith is { } share)
+		{
+			var row = present.GetValueOrDefault(shared.Key);
+
+			summary = summary with
+			{
+				SharedWith = share with
+				{
+					ClientId = row?.Id ?? share.ClientId,
+					Name = row is null ? share.Name : ClientName(row) ?? share.Name,
+					Connected = row is not null,
+				},
+			};
+		}
+
+		var stoppedAtBreakpoint = summary.Stop?.BreakpointId is { Length: > 0 };
+
+		return summary with
+		{
+			StartedByAgent = owners.IsPersons ? null : AgentOf(owners.StarterKey, present),
+			StopSetBy = setter is null || !stoppedAtBreakpoint
+				? null
+				: new LiveBreakpointSetter { Person = setter.IsPerson, Agent = AgentOf(setter.ClientKey, present) },
+		};
+	}
+
+	/// <summary>The live edits made to <paramref name="session"/>'s app, each agent session named by its row in the client table now.</summary>
+	public LiveXamlChangeList XamlChanges(LiveAppSession session) =>
+		Changes(session.SessionId, session.XamlChanges, clients.ByKey());
+
+	/// <summary>
+	/// The changes <paramref name="log"/> holds, oldest first, each one an agent session made naming that session by
+	/// the row the client table files it under now, as <see cref="Named"/> names a session's parties.
+	/// </summary>
+	public static LiveXamlChangeList Changes(
+		string sessionId,
+		XamlChangeLog log,
+		IReadOnlyDictionary<string, ClientSummary> present)
+	{
+		ArgumentNullException.ThrowIfNull(log);
+		ArgumentNullException.ThrowIfNull(present);
+
+		var (recorded, dropped) = log.Snapshot();
+		var rows = recorded
+			.Select(entry => entry.Change with { Agent = entry.By.IsPerson ? null : AgentOf(entry.By.ClientKey, present) })
+			.ToList();
+
+		return new LiveXamlChangeList
+		{
+			SessionId = sessionId,
+			Changes = rows,
+			Dropped = dropped,
+			Version = ViewVersion.Of(new { Changes = rows, Dropped = dropped }),
+		};
+	}
+
+	/// <summary>
+	/// The agent session the client table files under <paramref name="clientKey"/>, by its row now; null where the table
+	/// lists none, since a row that has gone is no longer one a window can name or send a note to.
+	/// </summary>
+	private static LiveAppAgent? AgentOf(string? clientKey, IReadOnlyDictionary<string, ClientSummary> present) =>
+		clientKey is not null && present.GetValueOrDefault(clientKey) is { } row
+			? new LiveAppAgent { ClientId = row.Id, Name = ClientName(row), Connected = true }
+			: null;
+
+	/// <summary>
+	/// What a window calls a client: what its relay labelled it, else the folder it runs in, else the program; null
+	/// where it said none of them.
+	/// </summary>
+	public static string? ClientName(ClientSummary client) =>
+		client.Label
+			?? (client.WorkingDirectory is { Length: > 0 } folder ? folder : null)
+			?? client.Roots.FirstOrDefault()
+			?? client.ClientName;
 
 	/// <summary>
 	/// The page of the activity record <paramref name="query"/> asks for. Its version is worked out without the

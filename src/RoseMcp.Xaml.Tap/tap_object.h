@@ -348,11 +348,45 @@ public:
 				// cannot click as idle.
 				reply = Utf8(Overlay().ModeName())
 					+ "\t" + (Overlay().JustMyXaml() ? "1" : "0")
-					+ "\t" + Utf8(Escape(Overlay().GoneReason().c_str())) + "\n"
+					+ "\t" + Utf8(Escape(Overlay().GoneReason().c_str()))
+					+ "\t" + (Overlay().ChangesShown() ? "1" : "0") + "\n"
 					+ Overlay().SelectionRows();
 			})) return std::string();
 
 			return reply;
+		}
+
+		if (request == L"ask" || request.rfind(L"ask ", 0) == 0)
+		{
+			// Answered here on the reader thread, without the UI thread: the latch has a lock of its own
+			// and holds no XAML, which is what makes it cheap enough for the host to ask on every refresh.
+			// The argument is the press the host already holds, so a press it has collected stops
+			// lighting the chip -- the one part of this that does need the UI thread, and only on the
+			// read that changes it.
+			const unsigned long seen = request.size() > 4 ? std::wcstoul(request.c_str() + 4, nullptr, 10) : 0;
+
+			bool arrived = false;
+			const std::string reply = g_ask.Reply(seen, arrived);
+			if (arrived) RoseTapRunOnUiThread([] { Overlay().Relight(); });
+
+			return reply;
+		}
+
+		if (request.rfind(L"changes ", 0) == 0)
+		{
+			// The same switch as the toolbar's Changes button, reached from a window. Answered with where
+			// the switch is afterwards, because that is what a window's toggle should show. Anything but
+			// "on" turns it off, which is the direction that leaves less drawn over somebody's app.
+			const bool wanted = request == L"changes on";
+
+			bool shown = false;
+			if (!RoseTapRunOnUiThread([&]
+			{
+				Overlay().ShowChanges(wanted);
+				shown = Overlay().ChangesShown();
+			})) return std::string();
+
+			return shown ? std::string("on\n") : std::string("off\n");
 		}
 
 		if (request == L"apply" || request.rfind(L"apply\n", 0) == 0)
@@ -371,8 +405,14 @@ public:
 
 			const std::vector<Command> commands = ParseCommands(lines);
 
+			// What the batch changed goes to the overlay inside the same dispatch, so a mark is drawn
+			// against the tree the edits just made rather than one a later mutation has moved on from.
 			std::string rows;
-			if (!RoseTapRunOnUiThread([&] { rows = m_edits.Apply(commands); })) return std::string();
+			if (!RoseTapRunOnUiThread([&]
+			{
+				rows = m_edits.Apply(commands);
+				Overlay().Changed(m_edits.Changes());
+			})) return std::string();
 
 			Log(L"pipe: applied " + std::to_wstring(commands.size()) + L" command(s)");
 
@@ -410,8 +450,17 @@ public:
 	/// </remarks>
 	bool EndSession()
 	{
+		// The press and the change marks belong to the session that is ending. Left behind, the next
+		// host to connect would collect a press nobody made of it, and the app would go on wearing the
+		// marks of edits nobody is in a position to read about.
+		g_ask.Forget();
+
 		bool released = false;
-		if (!RoseTapRunOnUiThread([&] { released = Unadvise(); }))
+		if (!RoseTapRunOnUiThread([&]
+		{
+			Overlay().ForgetChanges();
+			released = Unadvise();
+		}))
 		{
 			Log(L"detach: could not reach the UI thread, so the two interfaces stay held");
 			return false;

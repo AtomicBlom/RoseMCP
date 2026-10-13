@@ -320,6 +320,13 @@ public sealed class AgentNotes
 				$"frame {subject.FrameIndex}",
 			],
 			NoteSubjectKind.Element => [$"debug session {subject.Session}", $"element {subject.Element}"],
+			NoteSubjectKind.AppWindow =>
+			[
+				$"debug session {subject.Session}",
+				.. subject.Element is { } element ? [$"element {element}"] : Array.Empty<string>(),
+			],
+			NoteSubjectKind.DebugEvent => [$"debug session {subject.Session}", $"event sequence {subject.EventSequence}"],
+			NoteSubjectKind.Breakpoint => [$"debug session {subject.Session}", $"breakpoint {subject.Breakpoint}"],
 			NoteSubjectKind.WorkspaceReason =>
 			[
 				$"workspace {subject.Workspace}",
@@ -385,6 +392,27 @@ public sealed class AgentNotes
 				Session = SessionId(subject.Session),
 				Element = ElementHandle(subject.Element),
 			},
+			NoteSubjectKind.AppWindow => new NoteSubject
+			{
+				Kind = subject.Kind,
+				Readable = readable,
+				Session = SessionId(subject.Session),
+				Element = subject.Element is null ? null : ElementHandle(subject.Element),
+			},
+			NoteSubjectKind.DebugEvent => new NoteSubject
+			{
+				Kind = subject.Kind,
+				Readable = readable,
+				Session = SessionId(subject.Session),
+				EventSequence = EventSequenceOf(subject.EventSequence),
+			},
+			NoteSubjectKind.Breakpoint => new NoteSubject
+			{
+				Kind = subject.Kind,
+				Readable = readable,
+				Session = SessionId(subject.Session),
+				Breakpoint = BreakpointId(subject.Breakpoint),
+			},
 			NoteSubjectKind.WorkspaceReason => new NoteSubject
 			{
 				Kind = subject.Kind,
@@ -442,6 +470,20 @@ public sealed class AgentNotes
 		return handle is { Length: > 0 } && ulong.TryParse(handle, NumberStyles.None, CultureInfo.InvariantCulture, out _)
 			? handle
 			: throw new ArgumentException("A note about an element gives its handle in the live visual tree: a whole number, as the tree lists it.");
+	}
+
+	private static long EventSequenceOf(long? sequence) => sequence is > 0
+		? sequence.Value
+		: throw new ArgumentException("A note about an event gives its sequence in the session's tail, as rose_debug_events lists it: a whole number from one.");
+
+	private static string BreakpointId(string? breakpoint)
+	{
+		var id = breakpoint?.Trim();
+		var wellFormed = id is { Length: > 0 and <= 32 } && id.All(character => char.IsAsciiLetterOrDigit(character) || character == '-');
+
+		return wellFormed
+			? id!
+			: throw new ArgumentException("A note about a breakpoint gives its id, as rose_debug_list_breakpoints lists it: bp-3, or tp-2 for a tracepoint.");
 	}
 
 	private static string WorkspacePath(string? workspace)

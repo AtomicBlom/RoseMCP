@@ -43,34 +43,56 @@ public:
 		// handed to its parent -- and a slot surviving into the next apply would let one batch's
 		// half-built element be reached by another's command.
 		m_tree.ClearSlots();
+		m_changes.clear();
 
 		std::string rows;
 		for (const auto& command : commands)
 		{
+			// The element the command landed on and what the property said before it, for the record of
+			// what an apply changed. Zero and empty where the command reached no element or set nothing.
+			InstanceHandle handle = 0;
+			std::wstring old;
+
 			std::wstring status;
-			if (command.op == L"SetProperty") status = ApplySetProperty(command);
-			else if (command.op == L"ClearProperty") status = ApplyClearProperty(command);
-			else if (command.op == L"RemoveChild") status = ApplyRemoveChild(command);
-			else if (command.op == L"CreateInstance") status = ApplyCreate(command);
-			else if (command.op == L"AddChild") status = ApplyAddChild(command);
-			else if (command.op == L"ReplaceResource") status = ApplyReplaceResource(command);
+			if (command.op == L"SetProperty") status = ApplySetProperty(command, handle, old);
+			else if (command.op == L"ClearProperty") status = ApplyClearProperty(command, handle, old);
+			else if (command.op == L"RemoveChild") status = ApplyRemoveChild(command, handle);
+			else if (command.op == L"CreateInstance") status = ApplyCreate(command, handle);
+			else if (command.op == L"AddChild") status = ApplyAddChild(command, handle);
+			else if (command.op == L"ReplaceResource") status = ApplyReplaceResource(command, handle);
 			else status = L"unsupported op";
 
-			// The arg goes on the end, after the status. It is there because the host keys these results
-			// by what it sent, and op-target-property alone stops being unique the moment one slot gets
-			// two children: both rows would be "AddChild <slot> <blank>", and the second child's outcome
-			// would overwrite the first's.
+			// A property that changed on an element already in the app is what the person is shown. One
+			// set on an element this batch built is not: the element is the change, and its properties are
+			// how it was built rather than something that was different a moment ago.
+			const bool onLiveElement = handle != 0 && !m_tree.IsSlot(command.target);
+			const bool propertyChanged = command.op == L"SetProperty" || command.op == L"ClearProperty";
+			if (status == L"applied" && propertyChanged && onLiveElement)
+			{
+				m_changes.push_back({ handle, command.property, old, command.op == L"SetProperty" ? command.value : std::wstring() });
+			}
+
+			// The arg goes after the status. It is there because the host keys these results by what it
+			// sent, and op-target-property alone stops being unique the moment one slot gets two
+			// children: both rows would be "AddChild <slot> <blank>", and the second child's outcome
+			// would overwrite the first's. The handle and the old value come last, so a row is still
+			// found again by the five fields it always had.
 			//
 			// Every field escaped, the status included: it is prose, and it names what the caller sent,
 			// so it can carry anything the caller's markup did.
 			const std::wstring row = Escape(command.op.c_str()) + L'\t' + Escape(command.target.c_str()) + L'\t'
-				+ Escape(command.property.c_str()) + L'\t' + Escape(status.c_str()) + L'\t' + Escape(command.arg.c_str());
+				+ Escape(command.property.c_str()) + L'\t' + Escape(status.c_str()) + L'\t' + Escape(command.arg.c_str())
+				+ L'\t' + std::to_wstring(handle) + L'\t' + Escape(old.c_str());
 			rows += Utf8(row);
 			rows += '\n';
 		}
 
 		return rows;
 	}
+
+	/// The property changes the last batch made on elements already in the app, in the order they
+	/// were made. What the overlay marks.
+	const std::vector<TapChange>& Changes() const { return m_changes; }
 
 private:
 
@@ -81,15 +103,17 @@ private:
 	// E_FAIL. So the hint is tried first, because it carries intent the runtime does not have (a colour
 	// string is meant as a SolidColorBrush even where the live value is some other Brush), and the
 	// property's own declared type is the fallback, because it is a fact rather than a guess.
-	std::wstring ApplySetProperty(const Command& command)
+	std::wstring ApplySetProperty(const Command& command, InstanceHandle& handle, std::wstring& old)
 	{
 		InstanceHandle target = 0;
 		const std::wstring unresolved = m_tree.Resolve(command.target, target);
 		if (!unresolved.empty()) return unresolved;
 
+		handle = target;
+
 		unsigned int index = 0;
 		std::wstring declaredType;
-		if (!m_properties.IndexOf(target, command.property, index, declaredType)) return L"property not found";
+		if (!m_properties.IndexOf(target, command.property, index, declaredType, old)) return L"property not found";
 
 		std::wstring attempted;
 		std::wstring failure;
@@ -133,11 +157,13 @@ private:
 	// off the live tree here rather than carried in the command -- which is the better source in any
 	// case, since a markup index and a visual index are not always the same number and it is the
 	// visual one that is about to be indexed.
-	std::wstring ApplyRemoveChild(const Command& command)
+	std::wstring ApplyRemoveChild(const Command& command, InstanceHandle& handle)
 	{
 		InstanceHandle child = 0;
 		const std::wstring unresolved = m_tree.Resolve(command.target, child);
 		if (!unresolved.empty()) return unresolved;
+
+		handle = child;
 
 		InstanceHandle parent = 0;
 		if (!m_tree.ParentOf(child, parent)) return L"target not found: it is not in the tree snapshot";
@@ -165,7 +191,7 @@ private:
 	}
 
 	// Builds an instance and keeps it in a slot for the rest of this batch, unattached to anything.
-	std::wstring ApplyCreate(const Command& command)
+	std::wstring ApplyCreate(const Command& command, InstanceHandle& built)
 	{
 		std::wstring resolved;
 		std::wstring failure;
@@ -173,6 +199,7 @@ private:
 		if (handle == 0) return failure;
 
 		m_tree.Bind(command.target, handle);
+		built = handle;
 		Log(L"  built " + resolved + L" into " + command.target);
 		return L"applied";
 	}
@@ -248,11 +275,13 @@ private:
 	//
 	// ReplaceResource is on IVisualTreeService2, which is asked for here rather than at startup: a
 	// framework without it should cost this one command and not the whole XAML surface.
-	std::wstring ApplyReplaceResource(const Command& command)
+	std::wstring ApplyReplaceResource(const Command& command, InstanceHandle& handle)
 	{
 		InstanceHandle owner = 0;
 		const std::wstring unresolvedOwner = m_tree.Resolve(command.target, owner);
 		if (!unresolvedOwner.empty()) return unresolvedOwner;
+
+		handle = owner;
 
 		InstanceHandle value = 0;
 		const std::wstring unresolvedValue = m_tree.Resolve(command.arg, value);
@@ -285,11 +314,13 @@ private:
 	}
 
 	// Puts a built instance into its new parent's children.
-	std::wstring ApplyAddChild(const Command& command)
+	std::wstring ApplyAddChild(const Command& command, InstanceHandle& handle)
 	{
 		InstanceHandle parent = 0;
 		const std::wstring unresolvedParent = m_tree.Resolve(command.target, parent);
 		if (!unresolvedParent.empty()) return unresolvedParent;
+
+		handle = parent;
 
 		InstanceHandle child = 0;
 		const std::wstring unresolvedChild = m_tree.Resolve(command.arg, child);
@@ -444,14 +475,17 @@ private:
 		return found;
 	}
 
-	std::wstring ApplyClearProperty(const Command& command)
+	std::wstring ApplyClearProperty(const Command& command, InstanceHandle& handle, std::wstring& old)
 	{
 		InstanceHandle target = 0;
 		const std::wstring unresolved = m_tree.Resolve(command.target, target);
 		if (!unresolved.empty()) return unresolved;
 
+		handle = target;
+
 		unsigned int index = 0;
-		if (!m_properties.IndexOf(target, command.property, index)) return L"property not found";
+		std::wstring declaredType;
+		if (!m_properties.IndexOf(target, command.property, index, declaredType, old)) return L"property not found";
 
 		const HRESULT hr = m_service->ClearProperty(target, index);
 		if (hr != S_OK) return L"ClearProperty failed 0x" + Hex(hr);
@@ -464,4 +498,7 @@ private:
 	IVisualTreeService*& m_service;
 	TapTree& m_tree;
 	TapProperties& m_properties;
+
+	// The last batch's property changes. Replaced by each batch, read once by the dispatcher after it.
+	std::vector<TapChange> m_changes;
 };

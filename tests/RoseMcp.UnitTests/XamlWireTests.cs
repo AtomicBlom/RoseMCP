@@ -171,6 +171,102 @@ public sealed class XamlWireTests
 	}
 
 	/// <summary>
+	/// An apply's row carries the element the command landed on and what the property said before it, after the
+	/// five fields a result is found again by -- so those five read the same whether or not the last two are there,
+	/// and an old value holding the wire's own delimiters comes back as it was.
+	/// </summary>
+	[Test]
+	public void An_apply_row_carries_the_element_and_the_old_value_after_the_fields_it_is_keyed_by()
+	{
+		var row = XamlWire.ReadApplyRow(XamlWire.Row("SetProperty", "#Ink", "Margin", "applied", string.Empty, "4242", "12,0\t12,0"));
+
+		row.ShouldNotBeNull();
+		row.Op.ShouldBe("SetProperty");
+		row.Target.ShouldBe("#Ink");
+		row.Property.ShouldBe("Margin");
+		row.Status.ShouldBe("applied");
+		row.Arg.ShouldBe(string.Empty);
+		row.Handle.ShouldBe(4242UL);
+		row.Old.ShouldBe("12,0\t12,0");
+	}
+
+	/// <summary>
+	/// A handle of zero is the provider saying the command reached no element, which is not an element numbered
+	/// zero; and the empty string is an old value a text property really had, which is not the same as none.
+	/// </summary>
+	[Test]
+	public void A_row_that_reached_no_element_has_no_handle_and_an_empty_old_value_is_kept()
+	{
+		var row = XamlWire.ReadApplyRow(XamlWire.Row("SetProperty", "#Gone", "Text", "target not found", string.Empty, "0", string.Empty));
+
+		row.ShouldNotBeNull();
+		row.Handle.ShouldBeNull();
+		row.Old.ShouldBe(string.Empty);
+	}
+
+	/// <summary>
+	/// A row with only the five fields reads as a row with no element and no old value, rather than not at all:
+	/// the status is what a caller acts on, and it is there.
+	/// </summary>
+	[Test]
+	public void A_row_of_five_fields_still_reads()
+	{
+		var row = XamlWire.ReadApplyRow(XamlWire.Row("AddChild", "#Slot7", string.Empty, "applied", "$1"));
+
+		row.ShouldNotBeNull();
+		row.Status.ShouldBe("applied");
+		row.Arg.ShouldBe("$1");
+		row.Handle.ShouldBeNull();
+		row.Old.ShouldBeNull();
+
+		XamlWire.ReadApplyRow("SetProperty\t#Ink").ShouldBeNull();
+		XamlWire.ReadApplyRow(string.Empty).ShouldBeNull();
+	}
+
+	/// <summary>
+	/// The toolbar's Ask, as the provider answers <c>ask</c>: its sequence, what kind of thing was asked about, the
+	/// words for it and what it names. A colour's text holds a space, and a measurement's an arrow, so both are read
+	/// as escaped fields rather than split.
+	/// </summary>
+	[Test]
+	public void A_press_of_ask_is_read_with_what_it_names()
+	{
+		var measured = XamlWire.ReadAsk(XamlWire.Row("ask", "3", "measurement", "Button #Eraser ↔ Slider #Width: 14 apart", "11", "12", string.Empty, "1500") + "\n");
+
+		measured.ShouldNotBeNull();
+		measured.Sequence.ShouldBe(3);
+		measured.Kind.ShouldBe("measurement");
+		measured.Readable.ShouldBe("Button #Eraser ↔ Slider #Width: 14 apart");
+		measured.Element.ShouldBe(11UL);
+		measured.OtherElement.ShouldBe(12UL);
+		measured.Colour.ShouldBeNull();
+		measured.Age.ShouldBe(TimeSpan.FromMilliseconds(1500), "how long ago it was pressed, by the app's clock");
+
+		var colour = XamlWire.ReadAsk(XamlWire.Row("ask", "4", "colour", "#C2185B at 10, 20", "0", "0", "#C2185B", "0"));
+
+		colour.ShouldNotBeNull();
+		colour.Element.ShouldBeNull();
+		colour.Colour.ShouldBe("#C2185B");
+	}
+
+	/// <summary>
+	/// No press is no press, and so is a reply this format does not write -- including a press without its age, which
+	/// could have been made hours before it was collected.
+	/// </summary>
+	[Test]
+	[Arguments("none\n")]
+	[Arguments("")]
+	[Arguments("ask\t0\telement\tButton\t1\t0\t\t5\n")]
+	[Arguments("ask\tthree\telement\tButton\t1\t0\t\t5\n")]
+	[Arguments("ask\t3\telement\n")]
+	[Arguments("ask\t3\telement\tButton\t1\t0\t\n")]
+	[Arguments("ask\t3\telement\tButton\t1\t0\t\tsoon\n")]
+	public void No_press_reads_as_none(string reply)
+	{
+		XamlWire.ReadAsk(reply).ShouldBeNull();
+	}
+
+	/// <summary>
 	/// The provider greets with the protocol version it declares in <c>tap_channel.h</c>, and the host
 	/// refuses any version but its own -- so the two constants have to move together, and this is what
 	/// notices one of them moving alone.

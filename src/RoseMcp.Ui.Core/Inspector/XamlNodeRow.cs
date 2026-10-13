@@ -21,6 +21,9 @@ public sealed class XamlNodeRow : Observable
 	private bool _hasWhere;
 	private bool _isExpanded;
 	private bool _isOrphan;
+	private bool _isShown = true;
+	private bool _isChanged;
+	private string _changeNote = string.Empty;
 
 	public XamlNodeRow(LiveXamlNode node)
 	{
@@ -96,12 +99,43 @@ public sealed class XamlNodeRow : Observable
 		internal set => Set(ref _isOrphan, value);
 	}
 
+	/// <summary>
+	/// Whether the filters above the tree leave this row on screen: it matches them, or something under it does, so
+	/// the way down to a match stays. True whenever no filter is on.
+	/// </summary>
+	public bool IsShown
+	{
+		get => _isShown;
+		internal set => Set(ref _isShown, value);
+	}
+
+	/// <summary>Whether a live edit this session changed the element, which the row is marked for.</summary>
+	public bool IsChanged
+	{
+		get => _isChanged;
+		internal set => Set(ref _isChanged, value);
+	}
+
+	/// <summary>What the edits changed on it, one property a line, as its mark's tooltip says it; empty when nothing did.</summary>
+	public string ChangeNote
+	{
+		get => _changeNote;
+		internal set => Set(ref _changeNote, value);
+	}
+
+	/// <summary>
+	/// The markup file the element was declared in, as the app's source info names it -- an <c>ms-appx:</c> or
+	/// <c>ms-resource:</c> URI -- or null when it carries none. What Just my XAML decides on.
+	/// </summary>
+	public string? File { get; private set; }
+
 	/// <summary>Brings the row in line with a fresh read of the same element.</summary>
 	public void Update(LiveXamlNode node)
 	{
 		TypeName = node.TypeName;
 		Name = node.Name;
 		Address = node.Address;
+		File = node.File;
 		Label = Describe(ShortNameOf(node.TypeName), node.Name);
 
 		Where = Format.FileLine(node.File, node.Line);

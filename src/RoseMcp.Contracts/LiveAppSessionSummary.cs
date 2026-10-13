@@ -12,6 +12,27 @@ public sealed record LiveAppSessionSummary
 
 	public required string TargetDescription { get; init; }
 
+	/// <summary>
+	/// Who started the session. An agent's belongs to the agent session that started it; a person's belongs to them
+	/// alone until they share it with one agent session, named by <see cref="SharedWith"/>.
+	/// </summary>
+	public LiveAppStarter StartedBy { get; init; }
+
+	/// <summary>The agent session a person has shared this session with, or null where it is shared with none.</summary>
+	public LiveAppAgent? SharedWith { get; init; }
+
+	/// <summary>
+	/// The agent session that started it, where an agent did and the client table still lists that session; null for a
+	/// session a person started, and on an agent's own list, where the agent is the reader.
+	/// </summary>
+	public LiveAppAgent? StartedByAgent { get; init; }
+
+	/// <summary>
+	/// Who set the breakpoint the target is stopped at, as the broker saw it set; null while it runs, for a stop no
+	/// breakpoint made, and on an agent's own list.
+	/// </summary>
+	public LiveBreakpointSetter? StopSetBy { get; init; }
+
 	public required TargetArchitecture Architecture { get; init; }
 
 	public required LiveAppSessionState State { get; init; }
@@ -94,4 +115,16 @@ public sealed record LiveAppSessionSummary
 	/// </para>
 	/// </summary>
 	public TimeSpan? InfoAge { get; init; }
+
+	/// <summary>
+	/// The latest press of the in-app panel's Ask button, as the host collected it; null before there has been one,
+	/// and for a session that has ended.
+	/// </summary>
+	public LiveXamlAsk? XamlAsk { get; init; }
+
+	/// <summary>
+	/// How long ago <see cref="XamlAsk"/> was pressed, so a window opened by the press can tell it from one pressed
+	/// long before the window was: an age rather than the moment, like <see cref="LastEventAge"/>.
+	/// </summary>
+	public TimeSpan? XamlAskAge { get; init; }
 }

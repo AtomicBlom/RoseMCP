@@ -164,7 +164,7 @@
 						<ItemsRepeater.ItemTemplate>
 							<DataTemplate x:DataType="inspector:BreakpointRow">
 								<Border Style="{StaticResource CardStyle}" Padding="10,8">
-									<Grid ColumnSpacing="10" ColumnDefinitions="*,Auto,Auto,Auto">
+									<Grid ColumnSpacing="10" ColumnDefinitions="*,Auto,Auto,Auto,Auto">
 										<StackPanel Grid.Column="0" Spacing="2">
 											<TextBlock Text="{x:Bind Location}" TextTrimming="CharacterEllipsis"
 												Style="{StaticResource MonoTextBlockStyle}" />
@@ -186,6 +186,11 @@
 											Style="{StaticResource CaptionTextBlockStyle}"
 											Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 										<Button Grid.Column="3" Style="{StaticResource IconButtonStyle}" VerticalAlignment="Center"
+											Tag="{x:Bind Id}" Click="OnAskBreakpoint"
+											ToolTipService.ToolTip="Ask an agent about this breakpoint">
+											<FontIcon Glyph="&#xE8BD;" FontSize="12" />
+										</Button>
+										<Button Grid.Column="4" Style="{StaticResource IconButtonStyle}" VerticalAlignment="Center"
 											Tag="{x:Bind Id}" Click="OnRemoveBreakpoint"
 											ToolTipService.ToolTip="Remove">
 											<FontIcon Glyph="&#xE711;" FontSize="12" />
@@ -211,7 +216,7 @@
 						<ItemsRepeater.ItemTemplate>
 							<DataTemplate x:DataType="inspector:TracepointRow">
 								<Border Style="{StaticResource CardStyle}" Padding="10,8">
-									<Grid ColumnSpacing="10" ColumnDefinitions="*,Auto,Auto,Auto">
+									<Grid ColumnSpacing="10" ColumnDefinitions="*,Auto,Auto,Auto,Auto">
 										<StackPanel Grid.Column="0" Spacing="2">
 											<TextBlock Text="{x:Bind Location}" TextTrimming="CharacterEllipsis"
 												Style="{StaticResource MonoTextBlockStyle}" />
@@ -233,6 +238,11 @@
 											Style="{StaticResource CaptionTextBlockStyle}"
 											Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 										<Button Grid.Column="3" Style="{StaticResource IconButtonStyle}" VerticalAlignment="Center"
+											Tag="{x:Bind Id}" Click="OnAskTracepoint"
+											ToolTipService.ToolTip="Ask an agent about this tracepoint">
+											<FontIcon Glyph="&#xE8BD;" FontSize="12" />
+										</Button>
+										<Button Grid.Column="4" Style="{StaticResource IconButtonStyle}" VerticalAlignment="Center"
 											Tag="{x:Bind Id}" Click="OnRemoveTracepoint"
 											ToolTipService.ToolTip="Remove">
 											<FontIcon Glyph="&#xE711;" FontSize="12" />

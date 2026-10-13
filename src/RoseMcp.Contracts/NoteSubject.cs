@@ -19,7 +19,7 @@ public sealed record NoteSubject
 	/// <summary>The thing in words, one line: what the person saw, as they would say it.</summary>
 	public required string Readable { get; init; }
 
-	/// <summary>The debug session it is in, for a value, a thread, a frame or an element.</summary>
+	/// <summary>The debug session it is in, for a value, a thread, a frame, an element, an event or a breakpoint.</summary>
 	public string? Session { get; init; }
 
 	/// <summary>The thread, for a thread, and for a value or a frame where it was read on a thread other than the stopped one.</summary>
@@ -33,6 +33,12 @@ public sealed record NoteSubject
 
 	/// <summary>The element's handle in the live visual tree, as <c>rose_xaml_properties</c> takes one.</summary>
 	public string? Element { get; init; }
+
+	/// <summary>The event's sequence in the session's tail, as <c>rose_debug_events</c> takes it to read one event whole.</summary>
+	public long? EventSequence { get; init; }
+
+	/// <summary>The breakpoint's or tracepoint's id, as <c>rose_debug_list_breakpoints</c> and <c>rose_debug_list_tracepoints</c> list it.</summary>
+	public string? Breakpoint { get; init; }
 
 	/// <summary>The solution whose health the reason is in.</summary>
 	public string? Workspace { get; init; }

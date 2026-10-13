@@ -12,7 +12,10 @@ drops every loaded solution and detaches every debug session, so iterating on a 
 costs a full reload each time. A tree over several thousand nodes with a property grid is also a much
 larger crash surface than a status panel, and an unhandled binding exception there would take the
 workers with it. What the inspector may never be is a debugger of its own: a process has one
-debugger, so the inspector is always a client of a session some agent started.
+debugger, so the inspector is always a client of a session the broker holds -- one an agent started,
+or one the person started from the Inspector's start page, which asks the broker to attach or launch
+rather than attaching anything itself (see
+[the decision](the-inspector-is-a-client-of-the-broker.md)).
 
 **Why it requires the tray.** A stdio broker has no listener to connect to, and its session lives and
 dies with one client. The inspector says so plainly when no tray answers rather than starting
@@ -34,6 +37,16 @@ characters and the ownership check exists precisely because guessing one reaches
 debugger. An endpoint that bypasses that check reintroduces the hole for any process running as this
 user, so it gets a secret that agents never see. Minted per run rather than persisted: an inspector
 holding yesterday's token should be told to relaunch from the tray, not silently authorised.
+
+**The token is also all that stands between a request and starting a debugger.** `/operator/debug`
+attaches to any of this user's processes and launches any program a request names, as this user, so
+it sits behind the same token, keeps every rule the agent's attach keeps -- being the same attach --
+and refuses the broker's own process and its hosts. A program is named by its full path, an `.exe`
+that exists, since a window has no folder to measure a relative path from. None of it is offered on
+the MCP surface: a session these start is the person's, and an agent able to start one would be making
+sessions in the person's name that no tool call could then end. The running
+apps and installed packages it lists are read broker-side behind an interface (`IRunningApps`,
+`IInstalledApps`), so the routes run in the unit suite against a desktop a test describes.
 
 ## Execution state is orthogonal to session lifecycle
 
@@ -100,11 +113,11 @@ because every style in it is `BasedOn` a stock WinUI one and that resolves at pa
 chain. Getting the order wrong fails to parse, and the only symptom is the process disappearing
 during the `App` constructor -- which is why the crash handler landed in the same change.
 
-## Only UWP and WinUI targets get a XAML tab
+## Only UWP and WinUI targets get a XAML view
 
 **Decision.** The host probes the target's loaded modules for its `XamlStack` when it establishes the
 session, re-probing while the answer is `Unknown`, and reports the stack with the sentence that
-decided it. The inspector shows a XAML tab only for `Uwp` and `WinUi`, and otherwise puts one line in
+decided it. The inspector offers a XAML view only for `Uwp` and `WinUi`, and otherwise puts one line in
 the header naming what the target is and why it cannot be inspected.
 
 **Why probe at establish rather than at the first XAML call.** The probe is a module-list read
@@ -293,29 +306,30 @@ most of what a target loads rather than a fault, and hiding those methods from t
 the one thing a name-addressed breakpoint has always been able to do -- stop at a method's entry --
 stopped being offered for them.
 
-## One hold, shared by the panes that read a stop
+## One hold, shared by what asks for it, and taken only when a person asks
 
-**Decision.** The hold on a stopped target belongs to a `HoldKeeper` on the window, not to a pane.
-Panes say whether they want the target kept where it is, and the keeper reconciles: it takes one
-hold while anybody wants one and gives it back when nobody does.
+**Decision.** The hold on a stopped target belongs to a `HoldKeeper` on the window. What wants the
+target kept where it is says so, and the keeper reconciles: it takes one hold while anybody wants one
+and gives it back when nobody does. Only a person asks: Hold, beside the countdown it cancels, and
+Pause, since somebody who pressed Pause is by definition present. Being on screen is not asking.
 
-**Why.** The host has one hold, and the last request about it wins. Two panes each taking and
-releasing their own is not two holds, it is a race -- the stack pane released on being hidden gave
-away the hold the threads pane had just taken, and the target resumed under a reader who had done
-nothing but change tab. Wanting rather than doing is also what makes it safe to call from a poll: a
-pane says the same thing every second and only a change asks the host anything, and a pane that
+**Why a view on screen does not hold.** The code view is always on screen in the one-view layout, so
+a hold taken for it would keep every agent's stop for as long as the window stayed open -- the safety
+timer a stopping breakpoint carries exists so that an unattended stop cannot wedge somebody's
+application, and a window left open is the commonest unattended thing there is. Reading a stop takes
+well under a second, and a stack the timer runs off is kept under a banner saying so.
+
+**Why one keeper.** The host has one hold, and the last request about it wins. Two holders each
+taking and releasing their own is not two holds, it is a race -- one letting go gives away the hold
+the other has just taken. Wanting rather than doing is also what makes it safe to call from a poll: a
+holder says the same thing every second and only a change asks the host anything, and one that
 forgets to let go is corrected by its own next poll rather than leaving somebody's application
 stopped.
 
-**Why the reconcile is deferred by a yield.** Changing tab tells the arriving pane and the leaving
-one in a single pass. Acting on the first of those releases the hold and takes it again, and the
-target is free in between -- which was measured against the probe as a release and a re-take per
-switch in the host's own event log. Deferring to the end of the caller's block collapses the pass
-into one decision whatever order the panes are told in, so no call site has to remember an ordering.
-
-**Why a pane claims on becoming visible rather than on its next poll.** Claiming from the poll is a
-second of nothing wanted, and the leaving pane's release goes out inside it. Both halves have to
-happen in the same block or the deferral has nothing to collapse.
+**Why the reconcile is deferred by a yield.** Two holders told in one pass -- a pause landing while
+Hold is released -- would otherwise release the hold and take it again, and the target is free in
+between. Deferring to the end of the caller's block collapses the pass into one decision whatever
+order the holders speak in, so no call site has to remember an ordering.
 
 ## A hold outlives the window unless the close waits for it
 
@@ -330,8 +344,11 @@ few minutes: a tray that has stopped answering must not take the inspector with 
 
 ## Threads are re-read when the stop moves, not on a timer
 
-**Decision.** The threads pane reads when the stop's sequence changes while it is visible, rather
-than polling every two seconds.
+**Decision.** The code view reads the threads, the stopped thread's stack and the top frame's values
+when the stop's sequence changes, and another thread's stack, or another frame's values, when the
+person chooses it -- never on a timer. Any thread's stack can be read, not only the stopped one's: a
+deadlock is a shape across threads, and the thread holding the lock is rarely the one a breakpoint
+caught. An answer for a stop that has moved on, or for a thread no longer chosen, is dropped.
 
 **Why.** A stopped target's threads cannot go anywhere -- that is the same fact that makes the list
 answerable at all, since enumerating threads needs the runtime synchronized. A poll would spend a
@@ -422,7 +439,7 @@ about it. It is on the safety timer for the same reason a breakpoint is: a pause
 to must not leave somebody's application frozen.
 
 **Why the window holds it anyway.** Somebody who presses Pause is by definition present, so the
-window takes the hold the moment the pause lands -- otherwise pausing from the events tab is a target
+window takes the hold the moment the pause lands -- otherwise pausing while reading the stream is a target
 that starts again half a minute later, which reads as the button not having worked. The hold is told
 which stop it is for before it is asked for: the keeper drops what it believes it holds when the stop
 moves, so taking one for a stop it has not heard of yet is a hold taken and then immediately taken
@@ -433,16 +450,86 @@ the stop taking effect, and it owns the stop it made. Ours is then a second stop
 which one continue would not undo -- so it is given back and the caller is told about the stop that is
 really there. Same for a target with no managed thread to report the pause on.
 
-## What moves the target lives above the tabs
+## What moves the target lives in the header
 
-**Decision.** Pause, Continue and the three steps are a bar over the whole window, not a toolbar
-inside the stack pane.
+**Decision.** Continue, Pause, the three steps and Detach sit in the header's stop line, beside why
+the app stopped, in the standard debugger glyphs with each name and its usual shortcut in a tooltip:
+Continue F5, Pause Ctrl+Alt+Break, Step into F11, Step over F10, Step out Shift+F11. Detach is the
+unplug. Hold stays a word, next to the countdown it cancels.
 
-**Why.** Moving a target is something you do to the session, not to a stack. Buried in one pane they
-were only reachable from the tab that is least useful while the target is running -- so wanting to
-pause while watching the event tail, or to continue after reading the visual tree, meant changing tab
-to press a button and changing back. The stack pane keeps only what describes a stop.
+**Why.** Moving a target is something you do to the session, not to a stack, and wanting to continue
+while reading the stream or the visual tree is the ordinary case. The glyphs and shortcuts are the
+ones every debugger uses, so a person's hands already know them. No standard glyph means "keep it
+stopped until I continue", and an icon would be read as Pause.
 
 **Why exactly one half is ever live.** Pause is for a running target and the rest are for a stopped
 one, and everything goes dead while a request is in flight: a second press is a step issued into a
 target that is already being moved.
+
+## The app, the agent and you in one view
+
+**Decision.** The Inspector has no tabs of panes. A header says which app, its process, its framework
+and the solution its agent works in; who is in the session; whether the host is answering ("Live", or
+how long ago it last did once it has gone quiet five seconds); and why the app stopped, who stopped it
+and when it lets go, with what moves it. Below it the code view -- threads and any thread's stack on
+the left, the chosen frame's source, locals and watches in the middle -- or the XAML or Breakpoints
+view, and beside whichever is shown a single stream: the app's events, the agents' calls into this
+session from the activity record, and the person's notes with the answers to them, interleaved by time
+and filtered to All, Agent, Stops, Exceptions, Log or Notes.
+
+**Why one stream.** The question a person brings is what the agent did to the app and what the app did
+about it -- the breakpoint an agent set, the stop it caused, the value it read. Three lists answer it
+only for somebody who lines the timestamps up by hand. The filter is applied to what was collected
+rather than by the host as events arrive, so changing it shows the past too.
+
+**Why the solution is said as where the agent works.** Nothing in a debug session names a solution:
+the source shown comes from the app's own symbols. The solution the agent session in the session last
+called Rose about is the honest version of the mock-up's "code from", and the header's tooltip says so;
+a session nobody's agent is in names none.
+
+**When the app exits.** The window stays on it: the header says it exited, when (from the event the
+host recorded, the tail read once more as the session ends, since the poll can see the end before the
+event arrives), and names the session's log, and every read stops -- a session that has ended has
+nothing more to say. The person goes to the start page from there, or attaches to the app again and the
+same window takes the new session. A session the person detached in this window goes straight to the
+start page, which is what detaching asked for.
+
+## Who stopped it is recorded as a breakpoint is set
+
+**Decision.** The broker records who set each breakpoint -- the person, through the operator API, or
+the agent session by the key the client table files it under -- against the id the host gave it, and
+the operator's view of a session names the setter of the breakpoint it is stopped at
+(`LiveAppSessionSummary.StopSetBy`), and the agent session that started it (`StartedByAgent`). A
+pause is the person's, since only a window can pause. A step names nobody.
+
+**Why at set time, in the broker.** The host never learns who asked for a breakpoint, and the broker
+is the one place every set passes through with the caller known: `rose_debug_set_breakpoint` names the
+call's session, the operator route is the person. Host ids are not reused within a session, so the
+record stays true for its life. A step is not recorded because who stepped is already in the stream as
+the call before the stop; guessing it for the header would be a confident answer from inference.
+
+## A watch is the window's, and blank between stops
+
+**Decision.** Watches are value paths in the grammar a local's own path is written in, kept per window
+and nowhere else, read at whichever thread and frame the person is looking at, at every stop. Every
+value goes blank the moment the target moves, and a read answered after the person moved to another
+frame, thread or stop is dropped.
+
+**Why.** A value read at one stop is a fact about that stop; shown after it, it is a confident answer
+about somewhere the target no longer is. A list kept between apps would be paths that name nothing in
+the next one. A path that is not a value path is refused as it is added, since the host would refuse
+it at every stop.
+
+## Anything a person can select can be asked about
+
+**Decision.** A thread, a frame, a local or argument, a watch, an event or exception, a call, a
+breakpoint and a tracepoint each make a `NoteSubject` an agent can look up -- the session with the
+thread, frame and value path, the event's sequence (`DebugEvent`), or the breakpoint's id
+(`Breakpoint`) -- with a line saying it in words. The window's one composer offers the agent sessions
+in the debug session: the one that started it, or the one a person shared theirs with. A row's own
+menu asks about it, and Ctrl+Shift+A asks about the row selected last. A row from a stop that is over
+cannot be asked about, because what it names is gone.
+
+**Why it says the note arrives with the agent's next call.** That is how a note travels (see
+[the decision](a-note-to-an-agent-rides-on-its-sessions-next-answer.md)); nothing pushes one sooner,
+so the composer does not promise "now".

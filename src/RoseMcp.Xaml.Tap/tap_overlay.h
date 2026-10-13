@@ -245,9 +245,9 @@ public:
 		return Point(Pointing::Rulers);
 	}
 
-	// Leaves whichever mode is on, which is the toolbar's Idle button. The pick is not a mode and
-	// stays: clearing it is Deselect's job, and folding the two together would remove "keep this one
-	// and stop capturing my clicks".
+	// Leaves whichever mode is on: a second press of the mode's own button, the host's idle request,
+	// and the end of a pick. The pick is not a mode and stays: clearing it is Deselect's job, and folding
+	// the two together would remove "keep this one and stop capturing my clicks".
 	void GoIdle() override
 	{
 		HideCapture();
@@ -270,6 +270,22 @@ public:
 	/// folder writes, so one parser on the host serves whichever channel carried them.
 	const std::string& SelectionRows() const override { return m_pick.Rows(); }
 	const std::wstring& GoneReason() const override { return m_pick.GoneReason(); }
+
+	/// What an apply changed, marked over the app. Why only property changes, and how long a mark
+	/// stays, is on RoseChangesTool.
+	void Changed(const std::vector<TapChange>& changes) override { m_changesTool.Record(changes); }
+
+	bool ChangesShown() const override { return m_changesTool.Shown(); }
+
+	void ShowChanges(bool shown) override
+	{
+		m_changesTool.Show(shown);
+		Chrome();
+	}
+
+	void ForgetChanges() override { m_changesTool.Forget(); }
+
+	void Relight() override { Chrome(); }
 	bool Selecting() const { return m_pointing == Pointing::Select; }
 	bool JustMyXaml() const override { return m_justMyXaml; }
 
@@ -667,17 +683,18 @@ private:
 		m_bar.Children().Append(DragHandle());
 		m_bar.Children().Append(BuildMark());
 
-		// The three pointer modes first and together, because they are one choice: whatever the pointer
-		// is doing, it is doing one of these, and the accent moves between them. What follows them is a
-		// toggle and an action, which are different kinds of thing and do not belong in that run.
-		m_idleButton = Chip(Glyph(IconIdle, 12.0), L"Idle", [this] { GoIdle(); });
-		m_selectButton = Chip(SelectIcon(), L"Select element", [this] { BeginSelect(false); });
+		// The two pointer modes first and together, because they are one choice: whatever the pointer is
+		// doing, it is doing one of these or nothing, and the accent moves between them. There is no
+		// button for nothing: pressing the mode that is on turns it off, which is where the hand already
+		// is. What follows them is a toggle and actions, which are different kinds of thing and do not
+		// belong in that run.
+		m_selectButton = Chip(SelectIcon(), L"Select element -- click again to stop", [this] { ToggleMode(Pointing::Select); });
 		m_rulersButton = Chip(
 			Glyph(IconRulers, 12.0),
-			L"Rulers -- show the picked element's margin and padding, and measure from it to whatever "
-				L"the pointer is over. Click to anchor somewhere else",
-			[this] { BeginRulers(); });
-		m_bar.Children().Append(m_idleButton);
+			L"Rulers -- show the picked element's margin and padding, and measure from it to whatever the "
+				L"pointer is over. Click an element to pin the measurement to it, click it again to anchor "
+				L"there instead. Click Rulers again to stop",
+			[this] { ToggleMode(Pointing::Rulers); });
 		m_bar.Children().Append(m_selectButton);
 		m_bar.Children().Append(m_rulersButton);
 
@@ -697,6 +714,23 @@ private:
 		m_bar.Children().Append(m_deselectButton);
 
 		m_bar.Children().Append(m_zoomTool.Button());
+
+		// The same switch as the XAML view's "Mark changes in the app", so either moves both.
+		m_changesButton = Chip(
+			ChangesIcon(),
+			L"Changes -- outline what agents' live edits changed, each tagged with its change. The tags fade after 10 minutes",
+			[this] { ShowChanges(!m_changesTool.Shown()); });
+		m_bar.Children().Append(m_changesButton);
+
+		// Ask sends what is on screen and takes no words: the panel takes no text, so the note is written
+		// in the Inspector, which this opens with the subject already filled in. It is lit from the press
+		// until the host has collected it, which is what says the press arrived.
+		m_askButton = Chip(
+			AskIcon(),
+			L"Ask an agent about this -- the pinned measurement, the lens colour, or the picked element, "
+				L"in the Inspector's note",
+			[this] { Ask(); });
+		m_bar.Children().Append(m_askButton);
 
 		// Hide sits at the right edge rather than packed against its neighbours, so the slack that
 		// appears when the zoom row makes the panel wider falls between the two groups instead of
@@ -998,6 +1032,70 @@ private:
 		Log(std::wstring(L"overlay: just-my-XAML ") + (m_justMyXaml ? L"on" : L"off"));
 	}
 
+	// A mode's button: on when it is off or another mode is on, and off when it is the one that is on.
+	// A press that only ever armed left a separate Idle button as the one way out, a hand's width away
+	// from the button that armed.
+	void ToggleMode(Pointing mode)
+	{
+		if (m_pointing == mode)
+		{
+			GoIdle();
+			return;
+		}
+
+		if (mode == Pointing::Select) BeginSelect(false);
+		else BeginRulers(false);
+	}
+
+	// What Ask would send now, in the order a person is most likely to mean it: a pinned measurement is
+	// something they did on purpose and held still to send; the lens's colour is what they are looking at
+	// while it is on; the pick is what they selected. Empty kind where there is nothing to send.
+	struct AskSubject
+	{
+		std::wstring Kind;
+		std::wstring Readable;
+		InstanceHandle Element = 0;
+		InstanceHandle Other = 0;
+		std::wstring Colour;
+	};
+
+	AskSubject AskAbout() const
+	{
+		if (m_pointing == Pointing::Rulers && m_rulersTool.Pinned())
+		{
+			return { L"measurement", m_rulersTool.PinnedWords(), m_pick.Handle(), m_rulersTool.PinnedHandle(), std::wstring() };
+		}
+
+		std::wstring hex;
+		winrt::Windows::Foundation::Point at{};
+		if (m_zoomTool.Colour(hex, at))
+		{
+			const std::wstring readable = L"the colour " + hex + L" under the pixel lens, at "
+				+ std::to_wstring(static_cast<int>(at.X)) + L"," + std::to_wstring(static_cast<int>(at.Y)) + L" in the app's window";
+			return { L"colour", readable, 0, 0, hex };
+		}
+
+		if (m_pick.Has() && m_pick.Element())
+		{
+			return { L"element", L"the element " + RosePick::Describe(m_pick.Element()) + L" picked in the app", m_pick.Handle(), 0, std::wstring() };
+		}
+
+		return {};
+	}
+
+	// Leaves the question for the host to collect. The app never speaks first on the pipe, so this is a
+	// latch the host reads on its own refresh, and a later press replaces one not yet collected: the
+	// latest press is the question. Only a click reaches here -- nothing the app does can raise it.
+	void Ask()
+	{
+		const auto subject = AskAbout();
+		if (subject.Kind.empty()) return;
+
+		g_ask.Raise(subject.Kind, subject.Readable, subject.Element, subject.Other, subject.Colour);
+		Log(L"overlay: asked about " + subject.Readable);
+		Chrome();
+	}
+
 	// The app's own content, which is deliberately not the root. The overlay sits on the diagnostics
 	// UI layer -- a panel the framework hands out through GetUiLayer, beside the app's content rather
 	// than inside it -- so rendering the content element captures the app and not this toolbar.
@@ -1022,16 +1120,23 @@ private:
 	// whenever it is on regardless of whether a pick is in progress.
 	void Chrome() override
 	{
-		if (!m_idleButton || !m_selectButton) return;
+		if (!m_selectButton) return;
 
-		Paint(m_idleButton, m_pointing == Pointing::None ? Accent() : Idle());
 		Paint(m_selectButton, m_pointing == Pointing::Select ? Accent() : Idle());
 		Paint(m_rulersButton, m_pointing == Pointing::Rulers ? Accent() : Idle());
 		Paint(m_myXamlButton, m_justMyXaml ? Accent() : Idle());
+		Paint(m_changesButton, m_changesTool.Shown() ? Accent() : Idle());
 
 		// Deselect is an action rather than a mode, so it never wears the accent -- only whether
 		// there is anything for it to do.
 		Enable(m_deselectButton, m_pick.Has());
+
+		// Ask is an action too, and wears the accent only between a press and the host collecting it,
+		// which is the one way the panel can say a press arrived. Disabled with nothing to ask about.
+		Paint(m_askButton, g_ask.Waiting() ? Accent() : Idle());
+		// The lens counts before it has read a colour, because nothing re-lights the toolbar when its first
+		// capture lands; a press before then sends the next thing on the list, or nothing.
+		Enable(m_askButton, m_zoomTool.LensOn() || !AskAbout().Kind.empty());
 
 		// Its own buttons are its own business: which of them wears the accent depends on state
 		// this no longer holds.
@@ -1130,6 +1235,33 @@ private:
 	void Mark(xaml::UIElement const& element) override
 	{
 		if (m_marks && element) m_marks.Children().Append(element);
+	}
+
+	void Unmark(xaml::UIElement const& element) override
+	{
+		if (!m_marks || !element) return;
+
+		try
+		{
+			uint32_t index = 0;
+			if (m_marks.Children().IndexOf(element, index)) m_marks.Children().RemoveAt(index);
+		}
+		catch (winrt::hresult_error const&)
+		{
+			// Best-effort teardown, like the capture layer's: a mark that is already gone is gone.
+		}
+	}
+
+	xaml::UIElement ElementOf(InstanceHandle handle) const override
+	{
+		if (!m_diagnostics || handle == 0) return nullptr;
+
+		::IInspectable* raw = nullptr;
+		if (FAILED(m_diagnostics->GetIInspectableFromHandle(handle, &raw)) || !raw) return nullptr;
+
+		winrt::Windows::Foundation::IInspectable instance{ nullptr };
+		winrt::attach_abi(instance, raw); // adopt the ref
+		return instance.try_as<xaml::UIElement>();
 	}
 
 	// What depends on a pick: a measurement taken from an element that is no longer selected would
@@ -1244,16 +1376,18 @@ private:
 	void Proximity(winrt::Windows::Foundation::Point const& point)
 	{
 		m_pointer = point;
+		const bool overPanel = Contains(PanelRect(), point);
 
-		// Told rather than asked: what a pointer move means to the magnifier is its own business,
-		// and m_pointer is already set above for it to read.
-		m_zoomTool.PointerMoved();
+		// Told rather than asked: what a pointer move means to the magnifier is its own business, and
+		// m_pointer is already set above for it to read. Not while the pointer is on the toolbar: the
+		// lens holds the colour it was reading, so reaching for Ask sends that colour rather than the
+		// app's pixel under the button.
+		if (!overPanel) m_zoomTool.PointerMoved();
 
 		// Told rather than asked, for the same reason: how loud the pick's mark should be is the
 		// pick's own business.
 		m_pick.PointerMoved(point);
 
-		const bool overPanel = Contains(PanelRect(), point);
 		if (overPanel != m_overPanel)
 		{
 			m_overPanel = overPanel;
@@ -1370,7 +1504,11 @@ private:
 			// pointer arriving and pressing in one gesture, produces no PointerMoved at all.
 			m_pointer = point;
 			winrt::Windows::Foundation::Rect rect{};
-			if (const auto element = Beneath(point, rect))
+			const auto element = Beneath(point, rect);
+
+			if (m_pointing == Pointing::Rulers && m_pick.Has() && PinOrUnpin(element, rect)) return;
+
+			if (element)
 			{
 				// The picked element keeps its outline after select mode ends: that persistent mark is
 				// the evidence of what "the selected element" now means, for the person and the agent.
@@ -1388,6 +1526,47 @@ private:
 		// arm, click, arm again for every element somebody wants to measure from.
 		if (m_pointing == Pointing::Select) GoIdle();
 		else m_rulersTool.ClearMeasurement(); // The pointer is over the new anchor, so there is nothing to measure to.
+	}
+
+	/// What a click does in rulers mode with an anchor, where it is not a pick: true when it was
+	/// handled, false when it moves the anchor as a pick would.
+	///
+	/// A click on another element pins the measurement to it, so it stays still long enough to be read
+	/// out or sent; a second click on the pinned element anchors there instead, which keeps the sweep
+	/// from one element to the next a gesture rather than a round of arming; a click on the anchor lets
+	/// the pin go. Pinning takes the first click because it is the act that needed one -- the pointer
+	/// has to leave a measurement to send it, and a measurement that follows the pointer is gone by the
+	/// time it reaches the toolbar.
+	bool PinOrUnpin(xaml::UIElement const& element, winrt::Windows::Foundation::Rect const& rect)
+	{
+		if (!element) return true;
+
+		const auto anchor = m_pick.Element() ? m_pick.Element().try_as<xaml::UIElement>() : nullptr;
+		if (anchor && element == anchor)
+		{
+			m_rulersTool.Unpin();
+			return true;
+		}
+
+		if (m_rulersTool.IsPinnedTo(element))
+		{
+			m_rulersTool.Unpin();
+			return false;
+		}
+
+		m_rulersTool.Pin(element, HandleOf(element), rect);
+		return true;
+	}
+
+	InstanceHandle HandleOf(xaml::UIElement const& element) const
+	{
+		InstanceHandle handle = 0;
+		if (m_diagnostics && element)
+		{
+			m_diagnostics->GetHandleFromIInspectable(reinterpret_cast<::IInspectable*>(winrt::get_abi(element)), &handle);
+		}
+
+		return handle;
 	}
 
 	/// Writes the selection for an element that arrived from the tree rather than from a click.
@@ -1571,10 +1750,11 @@ private:
 	xcontrols::StackPanel m_bar{ nullptr };
 	xcontrols::Border m_thumb{ nullptr };
 	xshapes::Path m_mark{ nullptr };
-	xcontrols::Button m_idleButton{ nullptr };
 	xcontrols::Button m_selectButton{ nullptr };
 	xcontrols::Button m_myXamlButton{ nullptr };
 	xcontrols::Button m_deselectButton{ nullptr };
+	xcontrols::Button m_changesButton{ nullptr };
+	xcontrols::Button m_askButton{ nullptr };
 	Fader m_panelFade;
 
 	// The extent the capture layer was arranged at, and the signal that says it is known. Arming and
@@ -1629,6 +1809,10 @@ private:
 	// nothing more, so handing it over from an initialiser is safe.
 	RoseZoomTool m_zoomTool{ *this };
 	RoseRulersTool m_rulersTool{ *this, m_pick };
+
+	// What live edits changed, marked over the app. Its switch is the toolbar's Changes button and the
+	// host's `changes on|off`, which are one switch.
+	RoseChangesTool m_changesTool{ *this };
 };
 
 // Leaked deliberately: see the note on RoseOverlay. Only ever touched on the app's UI thread.

@@ -11,7 +11,8 @@ public sealed class DroppedSessionsTests
 {
 	private static readonly DateTime Gone = new(2026, 10, 9, 12, 0, 0, DateTimeKind.Utc);
 
-	private static DroppedSession Dropped(string id, string? owner = "mcp-one") => new(id, owner, "probe target", Gone);
+	private static DroppedSession Dropped(string id, LiveAppOwners? owners = null) =>
+		new(id, owners ?? LiveAppOwners.Agent("mcp-one"), "probe target", Gone);
 
 	/// <summary>The caller that started the session is told it was dropped, and why.</summary>
 	[Test]
@@ -20,7 +21,7 @@ public sealed class DroppedSessionsTests
 		var dropped = new DroppedSessions();
 		dropped.Record(Dropped("session-a"));
 
-		dropped.Find("session-a", "mcp-one").ShouldNotBeNull().Target.ShouldBe("probe target");
+		dropped.Find("session-a", "mcp-one", clientKey: null).ShouldNotBeNull().Target.ShouldBe("probe target");
 	}
 
 	/// <summary>
@@ -33,8 +34,26 @@ public sealed class DroppedSessionsTests
 		var dropped = new DroppedSessions();
 		dropped.Record(Dropped("session-a"));
 
-		dropped.Find("session-a", "mcp-two").ShouldBeNull();
-		dropped.Find("session-a", owner: null).ShouldBeNull();
+		dropped.Find("session-a", "mcp-two", clientKey: null).ShouldBeNull();
+		dropped.Find("session-a", transportSession: null, clientKey: null).ShouldBeNull();
+	}
+
+	/// <summary>
+	/// A session the person started and shared is told as dropped to the agent session it was shared with, which was
+	/// one of its owners; a session that was the person's alone is told to no MCP caller at all, not even the one with
+	/// no session of its own, which an agent's session on such a transport admits.
+	/// </summary>
+	[Test]
+	public void Every_owner_of_a_shared_session_finds_it_dropped_and_nobody_else_does()
+	{
+		var shared = LiveAppOwners.Person.SharedWith(new LiveAppSharedClient("relay:relayed-one", "client-1", "one"));
+		var dropped = new DroppedSessions();
+		dropped.Record(Dropped("session-shared", shared));
+		dropped.Record(Dropped("session-mine", LiveAppOwners.Person));
+
+		dropped.Find("session-shared", transportSession: null, clientKey: "relay:relayed-one").ShouldNotBeNull();
+		dropped.Find("session-shared", transportSession: null, clientKey: "relay:relayed-two").ShouldBeNull();
+		dropped.Find("session-mine", transportSession: null, clientKey: "unnamed").ShouldBeNull();
 	}
 
 	/// <summary>The person running the broker sees every dropped session, as they see every open one.</summary>

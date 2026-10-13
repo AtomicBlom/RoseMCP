@@ -39,6 +39,20 @@ public:
 	// created quite happily and only fails at SetProperty, with an E_FAIL that names nothing.
 	bool IndexOf(InstanceHandle handle, const std::wstring& name, unsigned int& index, std::wstring& valueType)
 	{
+		std::wstring ignored;
+		return IndexOf(handle, name, index, valueType, ignored);
+	}
+
+	// And the value the property has now, rendered as a property read renders it, or empty where it
+	// has none. Taken from the same walk that finds the index, which is what makes it affordable to
+	// ask on every edit: the apply has to walk the chain anyway, and walking it is the act that
+	// brings a TextBlock's untouched collection properties into existence, so a second walk for the
+	// old value would cost a call into the framework and change nothing a first one had not.
+	//
+	// The effective entry, not the first: a property set in markup and again by a style appears in
+	// the chain once per source, and only the one not overridden is the value on screen.
+	bool IndexOf(InstanceHandle handle, const std::wstring& name, unsigned int& index, std::wstring& valueType, std::wstring& current)
+	{
 		unsigned int sourceCount = 0;
 		unsigned int propertyCount = 0;
 		PropertyChainSource* sources = nullptr;
@@ -47,13 +61,23 @@ public:
 		if (FAILED(hr)) return false;
 
 		bool found = false;
+		bool rendered = false;
 		for (unsigned int i = 0; i < propertyCount; i++)
 		{
-			if (!found && values[i].PropertyName && name == values[i].PropertyName)
+			if (!values[i].PropertyName || name != values[i].PropertyName) continue;
+
+			if (!found)
 			{
 				index = values[i].Index;
 				valueType = values[i].Type ? values[i].Type : L"";
 				found = true;
+			}
+
+			if (!rendered && !values[i].Overridden)
+			{
+				bool unrenderable = false;
+				current = Render(values[i], handle, unrenderable);
+				rendered = true;
 			}
 		}
 
@@ -148,35 +172,11 @@ public:
 				}
 
 				const bool isNull = (value.MetadataBits & IsValueNull) != 0;
-				const wchar_t* valueText = isNull ? L"" : (value.Value ? value.Value : L"");
+				const wchar_t* declaredType = DeclaredType(value);
 
-				// A brush arrives as an object handle, which is the one thing a caller cannot use:
-				// setting Background="Blue" and reading back "2447634627144" makes hot reload
-				// unverifiable, and confirming the edit landed is the first thing anyone does after
-				// applying one. So a SolidColorBrush is resolved and rendered as its colour.
-				std::wstring rendered;
-				if (!isNull && (value.MetadataBits & IsValueHandle) != 0 && RoseTapRenderBrush(m_diagnostics, valueText, rendered))
-				{
-					valueText = rendered.c_str();
-				}
-
-				// A CornerRadius arrives as an empty string, which is the framework declining to
-				// stringify it rather than anything we did. Read off the element instead (#21).
-				const wchar_t* declaredType = value.ValueType && value.ValueType[0]
-					? value.ValueType
-					: (value.Type ? value.Type : L"");
-
-				const bool emptyButNotNull = !isNull && !valueText[0];
-				if (emptyButNotNull && std::wcscmp(declaredType, RoseTapXamlRoot L"CornerRadius") == 0
-					&& RoseTapRenderCornerRadius(m_diagnostics, handle, rendered))
-				{
-					valueText = rendered.c_str();
-				}
-
-				// Whatever is still empty and is not a string is a gap, said so rather than left to
-				// look like an unset property. That indistinguishability is the whole of why the
-				// CornerRadius case went unnoticed, and the next one should not need a sweep to find.
-				const bool unrenderable = !isNull && !valueText[0] && !IsStringType(declaredType);
+				bool unrenderable = false;
+				const std::wstring rendered = Render(value, handle, unrenderable);
+				const wchar_t* valueText = rendered.c_str();
 
 				std::wstring row = L"P\t" + Escape(value.PropertyName ? value.PropertyName : L"") + L'\t'
 					+ Escape(valueText) + L'\t' + Escape(declaredType) + L'\t' + Escape(value.DeclaringType ? value.DeclaringType : L"")
@@ -205,6 +205,50 @@ public:
 	}
 
 private:
+	// The type a value is said to be: its own where the framework names one, the property's otherwise.
+	static const wchar_t* DeclaredType(const PropertyChainValue& value)
+	{
+		return value.ValueType && value.ValueType[0]
+			? value.ValueType
+			: (value.Type ? value.Type : L"");
+	}
+
+	// One value as a property read shows it. One renderer for the property list and for the old value
+	// an edit records, because the two are compared by the person reading both: an edit whose "was"
+	// says a handle where the list said a colour reads as two different properties.
+	std::wstring Render(const PropertyChainValue& value, InstanceHandle handle, bool& unrenderable)
+	{
+		const bool isNull = (value.MetadataBits & IsValueNull) != 0;
+		std::wstring text = isNull ? L"" : (value.Value ? value.Value : L"");
+
+		// A brush arrives as an object handle, which is the one thing a caller cannot use:
+		// setting Background="Blue" and reading back "2447634627144" makes hot reload
+		// unverifiable, and confirming the edit landed is the first thing anyone does after
+		// applying one. So a SolidColorBrush is resolved and rendered as its colour.
+		std::wstring rendered;
+		if (!isNull && (value.MetadataBits & IsValueHandle) != 0 && RoseTapRenderBrush(m_diagnostics, text.c_str(), rendered))
+		{
+			text = rendered;
+		}
+
+		// A CornerRadius arrives as an empty string, which is the framework declining to
+		// stringify it rather than anything we did. Read off the element instead (#21).
+		const wchar_t* declaredType = DeclaredType(value);
+
+		const bool emptyButNotNull = !isNull && text.empty();
+		if (emptyButNotNull && std::wcscmp(declaredType, RoseTapXamlRoot L"CornerRadius") == 0
+			&& RoseTapRenderCornerRadius(m_diagnostics, handle, rendered))
+		{
+			text = rendered;
+		}
+
+		// Whatever is still empty and is not a string is a gap, said so rather than left to
+		// look like an unset property. That indistinguishability is the whole of why the
+		// CornerRadius case went unnoticed, and the next one should not need a sweep to find.
+		unrenderable = !isNull && text.empty() && !IsStringType(declaredType);
+		return text;
+	}
+
 	/// Whether an empty value is a value or a gap.
 	///
 	/// An unset string property really is the empty string -- AutomationProperties.Name and

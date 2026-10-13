@@ -177,6 +177,13 @@ public static class ToolNames
 	/// <summary>Live-app-host-only. The broker forwards this to select an element by its handle.</summary>
 	public const string LiveAppXamlSelectElement = "rose_live_app_xaml_select_element";
 
+	/// <summary>
+	/// Live-app-host-only, inspector-facing. Turns the app's marks of what live edits changed on or off, which is the
+	/// in-app toolbar's Changes button reached from a window. No agent tool forwards to it: the marks are for the
+	/// person looking at the app.
+	/// </summary>
+	public const string LiveAppXamlChangeMarks = "rose_live_app_xaml_change_marks";
+
 	/// <summary>Attach a debugger to a running process and start a live-app session over it.</summary>
 	public const string DebugAttach = "rose_debug_attach";
 

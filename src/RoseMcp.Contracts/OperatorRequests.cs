@@ -95,6 +95,13 @@ public sealed record XamlSelectModeRequest
 	public bool JustMyXaml { get; init; } = true;
 }
 
+/// <summary>Whether the app marks the elements live edits changed: the in-app toolbar's Changes button, from a window.</summary>
+public sealed record XamlChangeMarksRequest
+{
+	/// <summary>True to mark the changed elements in the app, false to take the marks down.</summary>
+	public bool Shown { get; init; } = true;
+}
+
 /// <summary>Which element to select without a click.</summary>
 public sealed record XamlSelectElementRequest
 {
@@ -167,4 +174,37 @@ public sealed record NoteRequest
 
 	/// <summary>What the person has to say.</summary>
 	public required string Text { get; init; }
+}
+
+/// <summary>A person attaching the debugger to a running process.</summary>
+public sealed record AttachRequest
+{
+	/// <summary>The process, by the id <c>/operator/debug/apps</c> lists it under.</summary>
+	public required int ProcessId { get; init; }
+}
+
+/// <summary>
+/// A person launching something under the debugger: a program, by its full path, with its arguments; or a packaged
+/// app, by its application user-model id. Exactly one of the two.
+/// </summary>
+public sealed record LaunchRequest
+{
+	/// <summary>The program to launch, as a full path: there is no calling session's folder to measure a relative one from.</summary>
+	public string? ExecutablePath { get; init; }
+
+	/// <summary>The program's command-line arguments, as one string.</summary>
+	public string? Arguments { get; init; }
+
+	/// <summary>The packaged app to launch, as <c>PackageFamilyName!AppId</c>.</summary>
+	public string? AppUserModelId { get; init; }
+
+	/// <summary>What the packaged app is called, as <c>/operator/debug/packages</c> named it, for the session and the recent list.</summary>
+	public string? DisplayName { get; init; }
+}
+
+/// <summary>A person sharing their debug session with one agent session.</summary>
+public sealed record ShareRequest
+{
+	/// <summary>The client to share with, by the id <c>/operator/clients</c> lists it under.</summary>
+	public required string Client { get; init; }
 }

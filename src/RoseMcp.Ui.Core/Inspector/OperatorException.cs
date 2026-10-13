@@ -45,4 +45,13 @@ public sealed class OperatorException(OperatorFailure failure, string message, H
 
 	/// <summary>The status the tray answered with, or null when nothing answered at all.</summary>
 	public HttpStatusCode? Status { get; } = status;
+
+	/// <summary>
+	/// Whether <paramref name="exception"/> says the broker itself is not answering -- nothing listening, or the token
+	/// refused -- which a window says once and takes down when the broker next answers. A read that timed out is not:
+	/// a read of the event tail goes through to the live-app host, and a busy host times out while the broker answers
+	/// everything else, so calling that the broker gone would hide the real failure behind the wrong one.
+	/// </summary>
+	public static bool IsBrokerGone(Exception exception) =>
+		exception is OperatorException { Failure: OperatorFailure.Unreachable or OperatorFailure.Unauthorized };
 }

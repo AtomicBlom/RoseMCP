@@ -3,6 +3,11 @@
 // The magnifier: scaling the app with a render transform, or magnifying a capture of it pixel by
 // pixel and reading the colour under the pointer.
 //
+// Windows has a magnifier of its own, and it cannot do this one's job: it filters bilinearly and
+// cannot be told not to, so it can neither read an exact colour nor show a one-pixel gap at a
+// corner radius. A feature that looks like a copy of the platform's is the first thing a reader
+// would cut, which is why the reason is written here, beside it.
+//
 // Included after the provider's aliases, like the overlay it lives on, because it builds XAML.
 //
 // A tool rather than more of the overlay. It owns its buttons, its row of the toolbar and its
@@ -14,8 +19,8 @@
 //
 // Narrow on purpose. Every addition here is a thing every future tool may reach for, so it holds
 // what a tool genuinely cannot answer for itself: where the app's content is, how big the window
-// is, where the pointer was last seen, an element's rectangle, the two layers it can put things on,
-	// and the three things it says back when its own state changes.
+// is, where the pointer was last seen, an element's rectangle or the element a handle names, the two
+// layers it can put things on, and the three things it says back when its own state changes.
 struct IRoseOverlaySurface
 {
 	virtual ~IRoseOverlaySurface() = default;
@@ -41,6 +46,15 @@ struct IRoseOverlaySurface
 
 	// Puts an element on the marks layer instead, so it scales with the app.
 	virtual void Mark(xaml::UIElement const& element) = 0;
+
+	// Takes an element back off the marks layer, for a mark whose subject has gone for good rather than
+	// for a moment.
+	virtual void Unmark(xaml::UIElement const& element) = 0;
+
+	// The live element a handle names, or null when it names none or names something that is not a
+	// UIElement. Resolved per question rather than held, so a mark never keeps an element alive that
+	// the app has let go.
+	virtual xaml::UIElement ElementOf(InstanceHandle handle) const = 0;
 
 	// An element's rectangle in the overlay's coordinates, false when it has none to give or belongs
 	// to a different XamlRoot. The overlay answers it because it is the thing that knows which root
@@ -89,11 +103,30 @@ public:
 	// which of them are on screen.
 	void PointerMoved()
 	{
+		// Where the lens reads, taken from the pointer only here: the overlay does not pass on a move over
+		// the toolbar, so the lens -- and its colour -- stay where they were while a button is reached for,
+		// even as each new capture redraws it.
+		m_lensAt = m_surface.Pointer();
+
 		if (m_zoom == Zoom::Lens) UpdateLens();
 
 		// The scaled app follows the pointer too, by moving the point it grows about rather than by
 		// redrawing anything.
 		if (m_zoom == Zoom::Transform) UpdateTransformOrigin();
+	}
+
+	// The colour the lens is reading, as #RRGGBB, and where in the app it read it, in the overlay's own
+	// coordinates. False with the lens off, and before it has read anything: what the toolbar's Ask sends
+	// as "the lens colour" has to be a colour somebody could see in the readout, never a guess at one.
+	bool LensOn() const { return m_zoom == Zoom::Lens; }
+
+	bool Colour(std::wstring& hex, winrt::Windows::Foundation::Point& at) const
+	{
+		if (m_zoom != Zoom::Lens || m_colourHex.empty()) return false;
+
+		hex = m_colourHex;
+		at = m_colourAt;
+		return true;
 	}
 
 	// Lights its own buttons. The ends of the factor range are said by disabling rather than by
@@ -129,7 +162,7 @@ public:
 			[this] { SetZoomMode(Zoom::Transform); });
 		m_pixelButton = Chip(
 			Glyph(IconPixels, 12.0),
-			L"Pixel lens -- a nearest-neighbour magnifier that follows the pointer, leaving the app untouched",
+			L"Pixel lens -- exact pixels and exact colours, which the Windows magnifier smooths; the app is left alone",
 			[this] { SetZoomMode(Zoom::Lens); });
 		m_zoomOutButton = Chip(Glyph(IconZoomOut, 12.0), L"Zoom out", [this] { ZoomBy(-1); });
 		m_zoomInButton = Chip(Glyph(IconZoomIn, 12.0), L"Zoom in", [this] { ZoomBy(1); });
@@ -412,6 +445,7 @@ private:
 		if (m_lens) m_lens.Visibility(xaml::Visibility::Collapsed);
 		if (m_hexLabel) m_hexLabel.Text(L"--");
 		if (m_swatch) m_swatch.Fill(Brush(0x00, 0x00, 0x00, 0x00));
+		m_colourHex.clear();
 	}
 
 	void BuildLens()
@@ -548,8 +582,8 @@ private:
 		if (m_zoom != Zoom::Lens || !m_lens || m_pixels.empty() || m_pixelsWidth <= 0) return;
 
 		const auto bounds = m_surface.Extent();
-		const bool inside = m_surface.Pointer().X >= 0.0f && m_surface.Pointer().Y >= 0.0f
-			&& m_surface.Pointer().X < bounds.Width && m_surface.Pointer().Y < bounds.Height;
+		const bool inside = m_lensAt.X >= 0.0f && m_lensAt.Y >= 0.0f
+			&& m_lensAt.X < bounds.Width && m_lensAt.Y < bounds.Height;
 		if (!inside)
 		{
 			m_lens.Visibility(xaml::Visibility::Collapsed);
@@ -563,8 +597,8 @@ private:
 		const double perDipX = bounds.Width > 0 ? m_pixelsWidth / bounds.Width : 1.0;
 		const double perDipY = bounds.Height > 0 ? m_pixelsHeight / bounds.Height : 1.0;
 
-		const int centreX = static_cast<int>(m_surface.Pointer().X * perDipX);
-		const int centreY = static_cast<int>(m_surface.Pointer().Y * perDipY);
+		const int centreX = static_cast<int>(m_lensAt.X * perDipX);
+		const int centreY = static_cast<int>(m_lensAt.Y * perDipY);
 
 		// How many source pixels the lens covers, and the block each becomes.
 		const int span = LensDevicePixels / m_zoomFactor;
@@ -640,11 +674,11 @@ private:
 		const auto bounds = m_surface.Extent();
 		const double gap = 18.0;
 
-		double left = m_surface.Pointer().X + gap;
-		if (left + size > bounds.Width) left = m_surface.Pointer().X - gap - size;
+		double left = m_lensAt.X + gap;
+		if (left + size > bounds.Width) left = m_lensAt.X - gap - size;
 
-		double top = m_surface.Pointer().Y + gap;
-		if (top + size > bounds.Height) top = m_surface.Pointer().Y - gap - size;
+		double top = m_lensAt.Y + gap;
+		if (top + size > bounds.Height) top = m_lensAt.Y - gap - size;
 
 		xcontrols::Canvas::SetLeft(m_lens, Clamp(left, 0.0, (std::max)(0.0, bounds.Width - size)));
 		xcontrols::Canvas::SetTop(m_lens, Clamp(top, 0.0, (std::max)(0.0, bounds.Height - size)));
@@ -661,6 +695,7 @@ private:
 		if (x < 0 || y < 0 || x >= m_pixelsWidth || y >= m_pixelsHeight)
 		{
 			m_hexLabel.Text(L"--");
+			m_colourHex.clear();
 			return;
 		}
 
@@ -676,6 +711,10 @@ private:
 		swprintf_s(hex, L"#%02X%02X%02X", red, green, blue);
 		m_hexLabel.Text(hex);
 		m_swatch.Fill(Brush(0xFF, red, green, blue));
+
+		// Kept beside the readout, from the same pixel, so what Ask sends is the colour on screen.
+		m_colourHex = hex;
+		m_colourAt = m_lensAt;
 
 		// Said only when it is not the obvious answer: almost every pixel of a drawn window is
 		// opaque, so a permanent alpha column would be noise, and a transparent one is worth knowing.
@@ -719,6 +758,13 @@ private:
 	// completes on a pool thread and hands its bytes over through RoseTapRunOnUiThread rather than
 	// storing them there, so nothing here needs a lock.
 	std::vector<uint8_t> m_pixels;
+
+	// Where the lens reads, in the overlay's coordinates: the pointer, as of its last move off the toolbar.
+	winrt::Windows::Foundation::Point m_lensAt{ -1.0f, -1.0f };
+
+	// The colour the readout shows and where it was read, empty while it shows none.
+	std::wstring m_colourHex;
+	winrt::Windows::Foundation::Point m_colourAt{ -1.0f, -1.0f };
 	int m_pixelsWidth = 0;
 	int m_pixelsHeight = 0;
 	bool m_capturingFrame = false;

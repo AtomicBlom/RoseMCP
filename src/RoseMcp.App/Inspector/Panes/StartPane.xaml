@@ -1,0 +1,111 @@
+<UserControl
+	x:Class="RoseMcp.App.Inspector.Panes.StartPane"
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	xmlns:inspector="using:RoseMcp.Ui.Core.Inspector">
+
+	<!-- What an Inspector window opened on its own shows: the running apps to attach to, a launch form and the
+	     targets debugged lately. A session started here is the person's, which the callout at the end says. -->
+	<Grid RowDefinitions="Auto,Auto,*">
+		<Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+			<TextBlock Grid.Column="0" Text="Debug an app" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
+			<TextBox x:Name="Search" Grid.Column="1" Width="260" PlaceholderText="Find a running app"
+				TextChanged="OnSearchChanged" />
+		</Grid>
+
+		<!-- A start in flight: what is being started, and the way to give up on it, which ends a session it started. -->
+		<Border x:Name="StartingBar" Grid.Row="1" Style="{StaticResource CardStyle}" Padding="12,8" Margin="0,0,0,10"
+			Visibility="Collapsed">
+			<Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+				<ProgressRing Grid.Column="0" Width="16" Height="16" IsActive="True" Foreground="{ThemeResource RoseAccentBrush}" />
+				<TextBlock x:Name="StartingText" Grid.Column="1" VerticalAlignment="Center" TextWrapping="Wrap"
+					Style="{StaticResource BodyTextBlockStyle}" />
+				<Button Grid.Column="2" Content="Cancel" Click="OnCancelStart" Style="{StaticResource ChipButtonStyle}" />
+			</Grid>
+		</Border>
+
+		<ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+			<StackPanel Spacing="18" Padding="0,0,8,12">
+
+				<StackPanel Spacing="6">
+					<TextBlock x:Name="AppsHeader" Text="Running apps with a window" Style="{StaticResource BodyStrongTextBlockStyle}" />
+					<ItemsRepeater x:Name="Apps">
+						<ItemsRepeater.Layout>
+							<StackLayout Spacing="4" />
+						</ItemsRepeater.Layout>
+						<ItemsRepeater.ItemTemplate>
+							<DataTemplate x:DataType="inspector:RunningAppRow">
+								<Border Style="{StaticResource CardStyle}" Padding="12,8">
+									<Grid ColumnDefinitions="*,70,220,Auto" ColumnSpacing="10">
+										<StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+											<TextBlock Text="{x:Bind DisplayName, Mode=OneWay}" Style="{StaticResource BodyStrongTextBlockStyle}"
+												TextTrimming="CharacterEllipsis" />
+											<TextBlock Text="{x:Bind Kind, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+												Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+										</StackPanel>
+										<TextBlock Grid.Column="1" Text="{x:Bind Pid}" Style="{StaticResource MonoCaptionTextBlockStyle}"
+											Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+										<TextBlock Grid.Column="2" Text="{x:Bind Status, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center"
+											TextTrimming="CharacterEllipsis" />
+										<Button Grid.Column="3" Content="{x:Bind Action, Mode=OneWay}" Tag="{x:Bind}" Click="OnAppAction"
+											MinWidth="72" />
+									</Grid>
+								</Border>
+							</DataTemplate>
+						</ItemsRepeater.ItemTemplate>
+					</ItemsRepeater>
+					<TextBlock x:Name="AppsEmpty" Visibility="Collapsed" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+						Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+					<StackPanel Orientation="Horizontal" Spacing="8">
+						<TextBlock x:Name="AppsCaption" VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
+							Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+						<HyperlinkButton x:Name="EveryToggle" Content="Show every .NET process" Click="OnToggleEvery" Padding="4,0" />
+					</StackPanel>
+				</StackPanel>
+
+				<StackPanel Spacing="8">
+					<TextBlock Text="Launch" Style="{StaticResource BodyStrongTextBlockStyle}" />
+					<Grid ColumnDefinitions="110,*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="8">
+						<TextBlock Grid.Row="0" Grid.Column="0" Text="Installed app" VerticalAlignment="Center"
+							Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+						<AutoSuggestBox x:Name="Package" Grid.Row="0" Grid.Column="1" PlaceholderText="Find an installed app"
+							TextChanged="OnPackageTextChanged" SuggestionChosen="OnPackageChosen" />
+						<Button x:Name="LaunchPackageButton" Grid.Row="0" Grid.Column="2" Content="Launch" Click="OnLaunchPackage"
+							IsEnabled="False" MinWidth="72" />
+
+						<TextBlock Grid.Row="1" Grid.Column="0" Text="Program" VerticalAlignment="Center"
+							Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+						<TextBox x:Name="ProgramPath" Grid.Row="1" Grid.Column="1" PlaceholderText="D:\Tools\bin\Debug\App.exe"
+							FontFamily="Cascadia Mono, Consolas" />
+						<Button Grid.Row="1" Grid.Column="2" Content="Launch" Click="OnLaunchProgram" MinWidth="72" />
+
+						<TextBlock Grid.Row="2" Grid.Column="0" Text="Arguments" VerticalAlignment="Center"
+							Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+						<TextBox x:Name="ProgramArguments" Grid.Row="2" Grid.Column="1" PlaceholderText="--sample strokes.json"
+							FontFamily="Cascadia Mono, Consolas" />
+					</Grid>
+				</StackPanel>
+
+				<StackPanel x:Name="RecentSection" Spacing="6" Visibility="Collapsed">
+					<TextBlock Text="Recent" Style="{StaticResource BodyStrongTextBlockStyle}" />
+					<ItemsRepeater x:Name="Recent">
+						<ItemsRepeater.Layout>
+							<StackLayout Orientation="Horizontal" Spacing="6" />
+						</ItemsRepeater.Layout>
+						<ItemsRepeater.ItemTemplate>
+							<DataTemplate x:DataType="inspector:RecentTargetChip">
+								<Button Style="{StaticResource ChipButtonStyle}" Content="{x:Bind Label}" Tag="{x:Bind}" Click="OnRecent" />
+							</DataTemplate>
+						</ItemsRepeater.ItemTemplate>
+					</ItemsRepeater>
+				</StackPanel>
+
+				<Border Style="{StaticResource CardStyle}" Padding="12,10">
+					<TextBlock x:Name="SharingCallout" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+						Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+				</Border>
+			</StackPanel>
+		</ScrollViewer>
+	</Grid>
+</UserControl>

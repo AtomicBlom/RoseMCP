@@ -1,3 +1,5 @@
+using RoseMcp.Contracts;
+
 namespace RoseMcp.Broker;
 
 /// <summary>Where to find the worker executable, and how workers are configured.</summary>
@@ -169,6 +171,20 @@ public sealed class BrokerOptions
 	/// ended and why, rather than finding it simply gone.
 	/// </summary>
 	public TimeSpan EndedSessionGrace { get; set; } = TimeSpan.FromSeconds(30);
+
+	/// <summary>
+	/// Which packaged app a running process is, by its id: what lets the session manager see that an app attached to
+	/// by its process is the one a package launch names, since a process has one debugger. Read from the process's
+	/// package identity everywhere but a test, which says what its pretend processes run as.
+	/// </summary>
+	public Func<int, string?> AppUserModelIdOf { get; set; } = PackagedProcess.AppUserModelIdOf;
+
+	/// <summary>
+	/// Starts the transport to the live-app host a session talks to, in place of the host process for the target's
+	/// architecture; null starts that process. Set only by a test that stands a host of its own in for the real one,
+	/// so the session manager's rules can be driven where no debugger can run.
+	/// </summary>
+	public Func<LiveAppTarget, ModelContextProtocol.Client.IClientTransport>? LiveAppHost { get; set; }
 
 	/// <summary>
 	/// The clock idle eviction reads: when a worker started, was last used and stopped, when the sweep

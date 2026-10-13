@@ -190,6 +190,11 @@ public sealed class OperatorApiTests
 			var row = listed!.Sessions.ShouldHaveSingleItem();
 			row.SessionId.ShouldBe(sessionId);
 
+			// Named for a window by the row the client table lists the session that started it under.
+			var clientRows = (await broker.GetAsync<ClientList>("/operator/clients", cancellationToken)).Clients;
+			var starter = row.StartedByAgent.ShouldNotBeNull("an agent started it, and the table lists that agent");
+			clientRows.ShouldContain(client => client.Id == starter.ClientId);
+
 			// What the session holds is read apart from Rose's own: its host is Rose's cost, the app it debugs is
 			// not. The app is read only while the host says it is serving, so wait for the host to say so.
 			var memory = await SessionMemoryAsync(broker, sessionId!, cancellationToken);
@@ -442,6 +447,240 @@ public sealed class OperatorApiTests
 		entry.Response.ShouldNotBeNull().ShouldContain(note.Id, customMessage: "the record holds the answer the agent was given, the note in it");
 	}
 
+	/// <summary>
+	/// A session a person starts is theirs until they share it, end to end over a real broker, a real host and a real
+	/// target: attached at <c>/operator/debug/attach</c>, it is reached by no agent session -- not listed, not read, and
+	/// its process not attached to again; shared with one relayed session, that session lists it, reads it and is
+	/// handed it by its own attach, while another does not; the agent's detach ends the share and leaves the person's
+	/// debugger attached; unshared, it is the person's alone again; and a second attach from a window opens it rather
+	/// than starting another debugger.
+	/// </summary>
+	[Test]
+	public async Task A_session_a_person_starts_is_theirs_until_they_share_it_with_one_agent_session()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
+		await using var agent = await AgentAsync(broker, cancellationToken);
+
+		var mine = new RequestOptions { Meta = new JsonObject { [CallSession.MetaKey] = CallSession.Mint() } };
+		var theirs = new RequestOptions { Meta = new JsonObject { [CallSession.MetaKey] = CallSession.Mint() } };
+
+		using var target = StartProbeTarget();
+		try
+		{
+			(await ListAsync(agent, mine, cancellationToken)).ShouldBeEmpty();
+			(await ListAsync(agent, theirs, cancellationToken)).ShouldBeEmpty();
+			var clients = (await broker.GetAsync<ClientList>("/operator/clients", cancellationToken)).Clients.Where(client => client.Named).ToList();
+			clients.Count.ShouldBe(2);
+
+			var started = await PostAsync<DebugStart>(broker, "/operator/debug/attach", new AttachRequest { ProcessId = target.Id }, cancellationToken);
+			started.Existing.ShouldBeFalse();
+			started.Session.StartedBy.ShouldBe(LiveAppStarter.Person);
+			started.Session.TargetProcessId.ShouldBe(target.Id);
+			var sessionId = started.Session.SessionId;
+
+			(await ListAsync(agent, mine, cancellationToken)).ShouldBeEmpty("a person's session is theirs alone");
+			var unreached = await agent.CallToolAsync(
+				ToolNames.DebugEvents, new Dictionary<string, object?> { ["sessionId"] = sessionId }, options: mine, cancellationToken: cancellationToken);
+			unreached.IsError.ShouldBe(true);
+
+			var refused = await agent.CallToolAsync(
+				ToolNames.DebugAttach, new Dictionary<string, object?> { ["processId"] = target.Id }, options: mine, cancellationToken: cancellationToken);
+			refused.IsError.ShouldBe(true);
+			Text(refused).ShouldContain("already being debugged");
+
+			// Shared with the session that listed first, by the row the client table gives it.
+			var myRow = await RowOfAsync(broker, agent, mine, clients, cancellationToken);
+			var shared = await PostAsync<LiveAppSessionSummary>(broker, $"/operator/sessions/{sessionId}/share", new ShareRequest { Client = myRow }, cancellationToken);
+			shared.SharedWith.ShouldNotBeNull().ClientId.ShouldBe(myRow);
+			shared.SharedWith.Connected.ShouldBe(true);
+
+			var listed = (await ListAsync(agent, mine, cancellationToken)).ShouldHaveSingleItem();
+			listed.SessionId.ShouldBe(sessionId);
+			listed.StartedBy.ShouldBe(LiveAppStarter.Person);
+			(await ListAsync(agent, theirs, cancellationToken)).ShouldBeEmpty("shared with one session, not every one");
+
+			var read = await agent.CallToolAsync(
+				ToolNames.DebugEvents, new Dictionary<string, object?> { ["sessionId"] = sessionId }, options: mine, cancellationToken: cancellationToken);
+			read.IsError.ShouldNotBe(true, Text(read));
+			shared.StartedByAgent.ShouldBeNull("a person started it");
+
+			// A breakpoint the shared agent sets is named as that agent's when the target stops at it.
+			var set = await agent.CallToolAsync(
+				ToolNames.DebugSetBreakpoint,
+				new Dictionary<string, object?>
+				{
+					["sessionId"] = sessionId,
+					["breakpoints"] = new[] { new Dictionary<string, object?> { ["location"] = "DebugProbeTarget.Program.Beat", ["autoContinueSeconds"] = 30 } },
+				},
+				options: mine,
+				cancellationToken: cancellationToken);
+			set.IsError.ShouldNotBe(true, Text(set));
+
+			var stopped = await StoppedAsync(broker, sessionId, cancellationToken);
+			var setter = stopped.StopSetBy.ShouldNotBeNull("the broker saw the breakpoint set");
+			setter.Person.ShouldBeFalse();
+			setter.Agent.ShouldNotBeNull().ClientId.ShouldBe(myRow);
+
+			// Taken out before the target goes on, or the next beat stops it again under the rest of the test.
+			var breakpointId = stopped.Stop.ShouldNotBeNull().BreakpointId.ShouldNotBeNull();
+			using (var removed = await broker.Client.DeleteAsync(broker.Url($"/operator/sessions/{sessionId}/breakpoints/{breakpointId}"), cancellationToken))
+			{
+				removed.StatusCode.ShouldBe(HttpStatusCode.OK);
+			}
+
+			await PostAsync<LiveContinueResult>(broker, $"/operator/sessions/{sessionId}/continue", new { }, cancellationToken);
+
+			var handed = await agent.CallToolAsync(
+				ToolNames.DebugAttach, new Dictionary<string, object?> { ["processId"] = target.Id }, options: mine, cancellationToken: cancellationToken);
+			handed.IsError.ShouldNotBe(true, Text(handed));
+			Summary(handed).SessionId.ShouldBe(sessionId, "a process has one debugger, so its attach is handed the session");
+
+			var left = await agent.CallToolAsync(
+				ToolNames.DebugDetach, new Dictionary<string, object?> { ["sessionId"] = sessionId }, options: mine, cancellationToken: cancellationToken);
+			left.IsError.ShouldNotBe(true, Text(left));
+			left.StructuredContent?.Deserialize<LiveSessionDetached>(ContractJson.Options).ShouldNotBeNull().Detached.ShouldBeFalse();
+			(await ListAsync(agent, mine, cancellationToken)).ShouldBeEmpty("leaving ends the share");
+			var still = await broker.GetAsync<LiveAppSessionSummary>($"/operator/sessions/{sessionId}", cancellationToken);
+			still.SharedWith.ShouldBeNull();
+			still.State.ShouldBe(LiveAppSessionState.Ready, "the person's debugger stays attached");
+
+			await PostAsync<LiveAppSessionSummary>(broker, $"/operator/sessions/{sessionId}/share", new ShareRequest { Client = myRow }, cancellationToken);
+			(await ListAsync(agent, mine, cancellationToken)).ShouldHaveSingleItem();
+			using (var unshared = await broker.Client.DeleteAsync(broker.Url($"/operator/sessions/{sessionId}/share"), cancellationToken))
+			{
+				unshared.StatusCode.ShouldBe(HttpStatusCode.OK);
+			}
+
+			(await ListAsync(agent, mine, cancellationToken)).ShouldBeEmpty();
+
+			var again = await PostAsync<DebugStart>(broker, "/operator/debug/attach", new AttachRequest { ProcessId = target.Id }, cancellationToken);
+			again.Existing.ShouldBeTrue();
+			again.Session.SessionId.ShouldBe(sessionId);
+
+			var apps = await broker.GetAsync<RunningAppList>("/operator/debug/apps?every=true", cancellationToken);
+			apps.Apps.ShouldContain(app => app.ProcessId == target.Id && app.SessionId == sessionId && app.SessionStartedBy == LiveAppStarter.Person);
+
+			var remembered = (await broker.GetAsync<RecentTargetList>("/operator/debug/recent", cancellationToken)).Targets.First();
+			remembered.Kind.ShouldBe(LiveAppTargetKind.AttachProcess);
+			remembered.ExecutablePath.ShouldBe(target.MainModule!.FileName, StringCompareShould.IgnoreCase);
+			File.Exists(Settings.RecentTargetsFile.PathFor(broker.Home)).ShouldBeTrue("the server keeps its records in the folder the suite gave it");
+
+			using var detached = await broker.Client.PostAsync(broker.Url($"/operator/sessions/{sessionId}/detach"), content: null, cancellationToken);
+			(await detached.Content.ReadFromJsonAsync<LiveSessionClosed>(ContractJson.Options, cancellationToken)).ShouldNotBeNull().Closed.ShouldBeTrue();
+			target.HasExited.ShouldBeFalse("a detach leaves the target running");
+		}
+		finally
+		{
+			if (!target.HasExited) target.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A person launches a program by its full path with its arguments, and the session is theirs; a program named
+	/// by a relative path is refused before any host starts, since a window has no folder to measure one from.
+	/// </summary>
+	[Test]
+	public async Task A_person_launches_a_program_by_its_full_path()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		await using var broker = await OperatorBroker.StartAsync(cancellationToken);
+
+		using (var relative = await broker.Client.PostAsJsonAsync(
+			broker.Url("/operator/debug/launch"), new LaunchRequest { ExecutablePath = "DebugProbeTarget.exe" }, ContractJson.Options, cancellationToken))
+		{
+			relative.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+		}
+
+		var started = await PostAsync<DebugStart>(
+			broker, "/operator/debug/launch", new LaunchRequest { ExecutablePath = ProbeTargetPath(), Arguments = "--from-a-window" }, cancellationToken);
+
+		var launched = started.Session.TargetProcessId;
+		try
+		{
+			started.Session.StartedBy.ShouldBe(LiveAppStarter.Person);
+			started.Session.State.ShouldBe(LiveAppSessionState.Ready, started.Session.Detail);
+			launched.ShouldNotBeNull();
+
+			var remembered = (await broker.GetAsync<RecentTargetList>("/operator/debug/recent", cancellationToken)).Targets.First();
+			remembered.Kind.ShouldBe(LiveAppTargetKind.LaunchExecutable);
+			remembered.Arguments.ShouldBe("--from-a-window");
+
+			using var detached = await broker.Client.PostAsync(
+				broker.Url($"/operator/sessions/{started.Session.SessionId}/detach"), content: null, cancellationToken);
+			detached.StatusCode.ShouldBe(HttpStatusCode.OK);
+		}
+		finally
+		{
+			if (launched is { } pid)
+			{
+				try
+				{
+					using var process = System.Diagnostics.Process.GetProcessById(pid);
+					process.Kill(entireProcessTree: true);
+				}
+				catch (ArgumentException)
+				{
+					// Already gone.
+				}
+			}
+		}
+	}
+
+	/// <summary>An MCP client of the broker with no relay in front of it, naming its session in each call as a relay would.</summary>
+	private static async Task<McpClient> AgentAsync(OperatorBroker broker, CancellationToken cancellationToken) =>
+		await McpClient.CreateAsync(
+			new HttpClientTransport(new HttpClientTransportOptions
+			{
+				Endpoint = new Uri(broker.Url("/")),
+				AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {Token}" },
+			}),
+			new McpClientOptions { DiscoverProbeTimeout = Timeout.InfiniteTimeSpan },
+			cancellationToken: cancellationToken);
+
+	/// <summary>What <c>rose_debug_list</c> answers the session <paramref name="session"/> names.</summary>
+	private static async Task<IReadOnlyList<LiveAppSessionSummary>> ListAsync(McpClient agent, RequestOptions session, CancellationToken cancellationToken)
+	{
+		var listed = await agent.CallToolAsync(ToolNames.DebugList, options: session, cancellationToken: cancellationToken);
+		listed.IsError.ShouldNotBe(true, Text(listed));
+
+		return listed.StructuredContent?.Deserialize<LiveAppSessionList>(ContractJson.Options)?.Sessions ?? [];
+	}
+
+	/// <summary>
+	/// The client table's row for <paramref name="session"/>: the one that is new after it calls once more, among the
+	/// rows <paramref name="before"/> lists -- the table names a row by an id of its own, not by the session's.
+	/// </summary>
+	private static async Task<string> RowOfAsync(
+		OperatorBroker broker,
+		McpClient agent,
+		RequestOptions session,
+		IReadOnlyList<ClientSummary> before,
+		CancellationToken cancellationToken)
+	{
+		var calls = before.ToDictionary(client => client.Id, client => client.Calls);
+		await ListAsync(agent, session, cancellationToken);
+
+		var after = (await broker.GetAsync<ClientList>("/operator/clients", cancellationToken)).Clients;
+
+		return after.Single(client => client.Named && calls.TryGetValue(client.Id, out var was) && client.Calls > was).Id;
+	}
+
+	private static async Task<T> PostAsync<T>(OperatorBroker broker, string path, object body, CancellationToken cancellationToken)
+		where T : class
+	{
+		using var response = await broker.Client.PostAsJsonAsync(broker.Url(path), body, ContractJson.Options, cancellationToken);
+		response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(cancellationToken));
+
+		return (await response.Content.ReadFromJsonAsync<T>(ContractJson.Options, cancellationToken)).ShouldNotBeNull();
+	}
+
+	private static LiveAppSessionSummary Summary(ModelContextProtocol.Protocol.CallToolResult result) =>
+		result.StructuredContent?.Deserialize<LiveAppSessionSummary>(ContractJson.Options) ?? throw new ShouldAssertException(Text(result));
+
+	private static string Text(ModelContextProtocol.Protocol.CallToolResult result) =>
+		string.Join("\n", result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Select(block => block.Text));
+
 	/// <summary>The notices an answer's structured content carries.</summary>
 	private static IReadOnlyList<string> Notices(ModelContextProtocol.Protocol.CallToolResult result) =>
 		result.StructuredContent is { } content && content.TryGetProperty("notices", out var notices)
@@ -529,6 +768,25 @@ public sealed class OperatorApiTests
 		}
 	}
 
+	/// <summary>The session as the operator reads it once its target is stopped, waiting for the stop within the suite's ceiling.</summary>
+	private static async Task<LiveAppSessionSummary> StoppedAsync(OperatorBroker broker, string sessionId, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + Ceiling;
+
+		while (true)
+		{
+			var session = await broker.GetAsync<LiveAppSessionSummary>($"/operator/sessions/{sessionId}", cancellationToken);
+			if (session.Stop is not null) return session;
+
+			if (DateTime.UtcNow > deadline)
+			{
+				throw new ShouldAssertException($"The target never stopped: {JsonSerializer.Serialize(session, ContractJson.Options)}");
+			}
+
+			await Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken);
+		}
+	}
+
 	/// <summary>Reads a log another process still holds open for writing.</summary>
 	private static IEnumerable<string> Lines(string path)
 	{
@@ -558,6 +816,9 @@ public sealed class OperatorApiTests
 		}
 
 		public int Port { get; }
+
+		/// <summary>The local application data this server was given by the suite, which no other server shares.</summary>
+		public string Home => _process.LocalAppData;
 
 		/// <summary>Carries the token, so every request is one an operator's tools would make.</summary>
 		public HttpClient Client { get; }

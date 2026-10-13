@@ -12,7 +12,7 @@
 					Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 			</StackPanel>
 			<Button Grid.Column="1" Content="Debug an app…" Click="OnDebugAnApp" VerticalAlignment="Center"
-				ToolTipService.ToolTip="Open an Inspector window on the app being debugged" />
+				ToolTipService.ToolTip="Open an Inspector window to attach to a running app or launch one" />
 		</Grid>
 
 		<ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
@@ -34,6 +34,8 @@
 									</Border>
 								</StackPanel>
 								<TextBlock Text="{x:Bind Facts, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+									Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+								<TextBlock Text="{x:Bind Owners, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
 									Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 								<TextBlock Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}">
 									<Run Text="attached " /><Run Text="{x:Bind Attached, Mode=OneWay}" />

@@ -1,3 +1,4 @@
+using System.Globalization;
 using RoseMcp.Contracts;
 
 namespace RoseMcp.Ui.Core.Inspector;
@@ -49,24 +50,18 @@ public static class InspectorText
 		"This inspector was started without a token, so the tray will not answer it. Open RoseMCP from the "
 			+ "tray's icon, which starts it with this run's token.";
 
-	/// <summary>The tray is answering and has no debug sessions.</summary>
-	public const string NoSessions =
-		"No debug sessions. An agent starts one with rose_debug_attach or rose_debug_launch, and it "
-			+ "appears here within a second.";
-
 	/// <summary>The session this window was opened on is not in the list any more.</summary>
-	public static string SessionGone(string sessionId) =>
-		$"Session {sessionId} is not there any more -- it was detached, or its host ended. Pick another "
-			+ "from the list.";
+	public static string SessionGone(string sessionId) => $"Session {sessionId} is not there any more -- it was detached, or its host ended. Attach to the app again, "
+		+ "or pick another, from the list below.";
 
 	/// <summary>Waiting for a session the tray has not listed yet, which a fresh attach produces.</summary>
 	public static string WaitingForSession(string sessionId) =>
 		$"Waiting for session {sessionId} to appear.";
 
-	/// <summary>Why the stack and thread panes are empty while the target runs.</summary>
+	/// <summary>Why the threads and the stack are empty while the target runs.</summary>
 	public const string NotStopped =
 		"The target is running. Frames, variables and threads can only be read while it is held at a "
-			+ "breakpoint or a step -- set one on the Breakpoints tab.";
+			+ "breakpoint or a step -- set one in the Breakpoints view.";
 
 	/// <summary>
 	/// Shown over frames from a stop that has ended, rather than clearing them. A reader mid-scroll
@@ -76,8 +71,24 @@ public static class InspectorText
 		"The target continued -- an agent, a step, or the safety timer. These frames are from the "
 			+ "previous stop.";
 
-	/// <summary>The event tail has nothing yet, which is ordinary for a session that just started.</summary>
-	public const string NoEvents = "No events yet. The tail fills in as the target throws, hits or logs.";
+	/// <summary>Shown over the last stop's rows once the session has ended, which is why nothing on them can be read further.</summary>
+	public const string SessionEnded =
+		"The session has ended. These are from the last place the app stopped, kept so they can still be read.";
+
+	/// <summary>
+	/// What the header says once a session has ended: that the app exited, at the time its session recorded it, where it
+	/// recorded one; otherwise that the session ended, at <paramref name="noticedUtc"/> -- a host that died or a
+	/// debugger detached elsewhere leaves the app running, and saying it exited would be a confident wrong answer.
+	/// </summary>
+	public static string Ended(DateTimeOffset? exitedUtc, DateTimeOffset noticedUtc) => exitedUtc is { } exited
+		? $"The app exited at {exited.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture)}"
+		: $"The session ended at {noticedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture)}";
+
+	/// <summary>Where an ended session's log is, named so it can be found without the window.</summary>
+	public static string EndedLog(string? hostLogPath) => hostLogPath is { Length: > 0 } log
+		? $"Its log: {log}"
+		: "Its host named no log. The live-app logs are in the folder Open its log shows.";
+
 
 	/// <summary>How many events the host dropped, which it does rather than growing without bound.</summary>
 	public static string DroppedEvents(long dropped) =>
@@ -128,13 +139,52 @@ public static class InspectorText
 		"Reading the visual tree. A busy or wedged app can take up to 30 seconds to answer.";
 
 	/// <summary>
-	/// Why the XAML tab does nothing while the debugger has the target stopped. Worth saying in full
-	/// rather than greying the buttons out: "it is stopped" explains it, and the fix is two clicks
-	/// away on another tab.
+	/// Why the XAML view does nothing while the debugger has the target stopped. Worth saying in full
+	/// rather than greying the buttons out: "it is stopped" explains it, and the fix is one press of
+	/// Continue in the header.
 	/// </summary>
 	public const string XamlNeedsARunningTarget =
 		"The target is stopped, so it cannot answer about its visual tree: the XAML provider runs on the "
-			+ "app's own UI thread and the debugger is holding it. Continue it from the Stack tab first.";
+			+ "app's own UI thread and the debugger is holding it. Continue it from the header first (F5).";
+
+	/// <summary>
+	/// What the tree on screen is while the target is stopped: the last one read, as of when. The tree can be browsed
+	/// and searched, and the record of live edits read, but nothing on it can be asked of the app until it runs.
+	/// </summary>
+	public static string TreeAsOf(DateTime readUtc) =>
+		$"The target is stopped, so this is the tree as it was last read, at "
+			+ $"{readUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture)}. Browse and search it, and see what live "
+			+ "edits changed; reading an element's properties, picking and the app's marks wait until it runs (F5).";
+
+	/// <summary>Why a stopped target's element shows only what live edits changed on it.</summary>
+	public const string PropertiesNeedARunningTarget =
+		"The target is stopped, so this element's properties cannot be read. What live edits changed on it is listed, "
+			+ "from the record the broker keeps; the rest arrives when it runs again.";
+
+	/// <summary>
+	/// What the filters above the tree left of it, where that is not the whole tree; empty where it is. Just my XAML
+	/// that could not narrow anything says so, because a filter silently doing nothing reads as an app made entirely
+	/// of its own markup.
+	/// </summary>
+	public static string Filtered(XamlTreeQuery query, XamlTreeFiltered filtered, int total)
+	{
+		ArgumentNullException.ThrowIfNull(query);
+		ArgumentNullException.ThrowIfNull(filtered);
+
+		var noSource = filtered.JustMyXamlApplied
+			? string.Empty
+			: "This app's tree carries no source info, so Just my XAML cannot tell its markup from a template's and leaves everything in.";
+
+		if (!query.Seeks) return noSource;
+
+		var matched = filtered.Matched == 0
+			? query.ChangedOnly && query.Text.Trim().Length == 0
+				? "No element in this tree has been changed by a live edit this session."
+				: "Nothing in the tree matches."
+			: $"{Format.Count(filtered.Matched, "element")} of {total} match.";
+
+		return noSource.Length == 0 ? matched : $"{matched} {noSource}";
+	}
 
 	/// <summary>Nothing is selected, which is the state the pane opens in.</summary>
 	public const string NoElementSelected =

@@ -11,13 +11,29 @@ namespace RoseMcp.Broker;
 /// </summary>
 public sealed class ChangeSignal
 {
+	private readonly ChangeSignal[] _sources = [];
 	private TaskCompletionSource _next = New();
 
+	/// <summary>A signal its own owner pulses.</summary>
+	public ChangeSignal()
+	{
+	}
+
+	private ChangeSignal(ChangeSignal[] sources) => _sources = sources;
+
 	/// <summary>
-	/// A task that completes at the next <see cref="Pulse"/>. Take it before reading the view, so a change between
-	/// the read and the wait is not missed.
+	/// A signal that completes at the next pulse of any of <paramref name="sources"/>, for a view made of several
+	/// owners' state: the debug sessions, which a call changes and a person's start changes without a call.
 	/// </summary>
-	public Task Next => Volatile.Read(ref _next).Task;
+	public static ChangeSignal Either(params ChangeSignal[] sources) => new([.. sources]);
+
+	/// <summary>
+	/// A task that completes at the next <see cref="Pulse"/>, or the next of any source's. Take it before reading the
+	/// view, so a change between the read and the wait is not missed.
+	/// </summary>
+	public Task Next => _sources.Length == 0
+		? Volatile.Read(ref _next).Task
+		: Task.WhenAny(_sources.Select(source => source.Next));
 
 	/// <summary>Completes the task every current waiter holds, and starts a new one for the next. Never throws and never blocks.</summary>
 	public void Pulse() => Interlocked.Exchange(ref _next, New()).TrySetResult();

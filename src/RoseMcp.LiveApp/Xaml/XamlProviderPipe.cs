@@ -108,6 +108,14 @@ public sealed class XamlProviderPipe : IDisposable
 	/// </summary>
 	public bool Connected => _connected;
 
+	private int _connections;
+
+	/// <summary>
+	/// How many providers have greeted on this pipe and been accepted. A caller holding something a provider said --
+	/// the press of Ask it last collected -- compares this to tell the provider it asked from the one answering now.
+	/// </summary>
+	public int Connections => Volatile.Read(ref _connections);
+
 	/// <summary>
 	/// Creates the pipe and starts listening. Separate from construction because a failure here is a
 	/// fact about this machine that the caller reports rather than an exception it cannot act on.
@@ -359,6 +367,7 @@ public sealed class XamlProviderPipe : IDisposable
 
 				// Before the source is completed, so a caller released by the greeting cannot look at
 				// Connected and be told the provider that just greeted it is not there.
+				Interlocked.Increment(ref _connections);
 				_connected = true;
 				_greeting.TrySetResult(frame);
 

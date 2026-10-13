@@ -154,6 +154,8 @@ public sealed class NoteRow : Observable
 		if (subject.FrameIndex is { } frame) parts.Add($"frame {frame}");
 		if (subject.Path is { Length: > 0 } path) parts.Add(path);
 		if (subject.Element is { Length: > 0 } element) parts.Add($"element {element}");
+		if (subject.EventSequence is { } sequence) parts.Add($"event {sequence}");
+		if (subject.Breakpoint is { Length: > 0 } breakpoint) parts.Add($"breakpoint {breakpoint}");
 		if (subject.Workspace is { Length: > 0 } workspace) parts.Add(Format.FileLine(workspace, line: null));
 		if (subject.Reason is { Length: > 0 } reason) parts.Add(reason);
 		else if (subject.ReasonKind is { Length: > 0 } kind) parts.Add(kind);

@@ -859,8 +859,8 @@ internal sealed class TrayIconHost : IDisposable
 
 	/// <summary>
 	/// Starts the RoseMCP app against this broker: the RoseMCP window, or with <paramref name="inspect"/> an
-	/// Inspector window, which with no session named adopts the one debug session there is, or says there are
-	/// none or several. An app already open against this broker is handed the launch instead, and takes this
+	/// Inspector window, which with no session named opens on its start page, where a person attaches to a running
+	/// app or launches one. An app already open against this broker is handed the launch instead, and takes this
 	/// run's token with it, which is how a window left open across a restart reconnects.
 	/// <para>
 	/// A launch that fails is a failure like any other, said with the log, rather than a tray that dies over an

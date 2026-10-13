@@ -46,4 +46,7 @@ public sealed class ThreadRow
 	public string State { get; }
 
 	public bool HasState { get; }
+
+	/// <summary>The row as a screen reader names it, since a list item takes its name from its item.</summary>
+	public override string ToString() => IsStopped ? $"thread {Id}, stopped, in {TopFrame}" : $"thread {Id}, in {TopFrame}";
 }

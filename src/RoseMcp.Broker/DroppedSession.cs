@@ -2,10 +2,10 @@ namespace RoseMcp.Broker;
 
 /// <summary>A live-app session the manager dropped because its host stopped answering.</summary>
 /// <param name="SessionId">The id the session had.</param>
-/// <param name="Owner">The MCP session that started it, or null where the transport has none.</param>
+/// <param name="Owners">Who it belonged to when it was dropped: each of them is told why it went.</param>
 /// <param name="Target">What it was debugging, in the words its target was described with.</param>
 /// <param name="HostGoneUtc">When the manager found its host gone.</param>
-public sealed record DroppedSession(string SessionId, string? Owner, string Target, DateTime HostGoneUtc)
+public sealed record DroppedSession(string SessionId, LiveAppOwners Owners, string Target, DateTime HostGoneUtc)
 {
 	/// <summary>
 	/// Why a call naming this session finds nothing, said so the caller knows the id was right and the

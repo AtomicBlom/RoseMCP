@@ -51,7 +51,7 @@ public sealed class ThreadRowTests
 		row.HasState.ShouldBeFalse();
 	}
 
-	/// <summary>The thread the stop is on is marked, because it is the one the stack pane is about.</summary>
+	/// <summary>The thread the stop is on is marked, because it is the one whose stack is shown first.</summary>
 	[Test]
 	public void The_thread_the_stop_is_on_is_marked()
 	{

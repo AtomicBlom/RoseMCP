@@ -59,26 +59,70 @@ public sealed partial class BreakpointsPane : UserControl
 		ShowState();
 	}
 
-	public void Attach(OperatorClient client, Action<Exception> report)
+	/// <param name="client">The app's client.</param>
+	/// <param name="report">Where a failed read is said.</param>
+	/// <param name="ask">Opens "Ask an agent" about a breakpoint or tracepoint, beside its button.</param>
+	public void Attach(OperatorClient client, Action<Exception> report, Action<NoteSubject, FrameworkElement> ask)
 	{
 		_client = client;
 		_report = report;
+		_ask = ask;
 		_poll = new PollLoop(ReadAsync, Interval, exception => _report?.Invoke(exception));
 	}
 
+	/// <summary>
+	/// Points the pane at a session and reads its lists once, so the view switch can count them before anybody opens
+	/// this view. The lists are read again only while the view is shown.
+	/// </summary>
 	public void Bind(InspectedSession session)
 	{
 		_session = session;
 		BreakpointRows.ItemsSource = session.Breakpoints;
 		TracepointRows.ItemsSource = session.Tracepoints;
 		ShowState();
+
+		_counting?.Cancel();
+		_counting = new CancellationTokenSource();
+		_ = CountAsync(_counting.Token);
 	}
 
-	/// <summary>A pane nobody can see stops asking. See the same note on the events pane.</summary>
+	/// <summary>A pane nobody can see stops asking: a poll per hidden pane is requests answering questions nothing renders.</summary>
 	public void Showing(bool visible)
 	{
 		if (visible && _session is not null) _poll?.Start();
 		else _poll?.Stop();
+	}
+
+	/// <summary>Stops every read this pane makes, the first one included, for a session that has ended or a window closing.</summary>
+	public void Stop()
+	{
+		_poll?.Stop();
+		_counting?.Cancel();
+	}
+
+	/// <summary>Raised with how many breakpoints and tracepoints are set, whenever the lists are read.</summary>
+	public event EventHandler<int>? Counted;
+
+	/// <summary>Opens "Ask an agent" about a row; see <see cref="Attach"/>.</summary>
+	private Action<NoteSubject, FrameworkElement>? _ask;
+
+	/// <summary>Cancels the read that counts the lists when a session is bound, when the session or the window goes.</summary>
+	private CancellationTokenSource? _counting;
+
+	private async Task CountAsync(CancellationToken cancellationToken)
+	{
+		try
+		{
+			await ReadAsync(cancellationToken);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			// The session or the window went first.
+		}
+		catch (OperatorException)
+		{
+			// Said by the session poll, which reads the same broker every second; the count waits for the view.
+		}
 	}
 
 	private async Task ReadAsync(CancellationToken cancellationToken)
@@ -105,6 +149,8 @@ public sealed partial class BreakpointsPane : UserControl
 		// and a section that disappears when it has nothing in it is one a reader stops looking for.
 		BreakpointCount.Text = breakpoints == 0 ? "Breakpoints" : $"Breakpoints ({breakpoints})";
 		TracepointCount.Text = tracepoints == 0 ? "Tracepoints" : $"Tracepoints ({tracepoints})";
+
+		Counted?.Invoke(this, breakpoints + tracepoints);
 	}
 
 	/// <summary>
@@ -312,6 +358,24 @@ public sealed partial class BreakpointsPane : UserControl
 		{
 			_report?.Invoke(exception);
 		}
+	}
+
+	/// <summary>Opens "Ask an agent" about a breakpoint, by its id and where it is.</summary>
+	private void OnAskBreakpoint(object sender, RoutedEventArgs args)
+	{
+		if (_session is not { } session || sender is not FrameworkElement { Tag: string id } anchor) return;
+		if (session.Breakpoints.FirstOrDefault(row => row.Id == id) is not { } breakpoint) return;
+
+		_ask?.Invoke(AskAgent.Breakpoint(session.SessionId, breakpoint), anchor);
+	}
+
+	/// <summary>Opens "Ask an agent" about a tracepoint, which a note names the way it names a breakpoint.</summary>
+	private void OnAskTracepoint(object sender, RoutedEventArgs args)
+	{
+		if (_session is not { } session || sender is not FrameworkElement { Tag: string id } anchor) return;
+		if (session.Tracepoints.FirstOrDefault(row => row.Id == id) is not { } tracepoint) return;
+
+		_ask?.Invoke(AskAgent.Tracepoint(session.SessionId, tracepoint), anchor);
 	}
 
 	private async void OnAddTracepoint(object sender, RoutedEventArgs args)

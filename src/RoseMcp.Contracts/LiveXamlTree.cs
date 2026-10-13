@@ -6,7 +6,8 @@ namespace RoseMcp.Contracts;
 /// the tree from each node's parent and child index). <see cref="Detail"/> is set, with
 /// <see cref="Nodes"/> empty, when the tree could not be read -- the target has no XAML UI, the
 /// provider is not built for this architecture, or injection failed -- so the caller gets a reason
-/// rather than an exception.
+/// rather than an exception. A stopped target is the one case with both: the last tree read from it,
+/// stamped <see cref="AsOfUtc"/>, and a detail saying why it is not fresh.
 /// </summary>
 public sealed record LiveXamlTree : LiveResult
 {
@@ -42,6 +43,13 @@ public sealed record LiveXamlTree : LiveResult
 	/// </para>
 	/// </summary>
 	public string? InstallLocation { get; init; }
+
+	/// <summary>
+	/// When the tree was read, where it was not read now: the target is stopped, so its UI thread cannot be asked,
+	/// and this is the last tree read from it. Null for a fresh read. Its handles name elements as they were then,
+	/// and every read or edit of one is refused until the target runs again.
+	/// </summary>
+	public DateTime? AsOfUtc { get; init; }
 
 	public string? Detail { get; init; }
 }

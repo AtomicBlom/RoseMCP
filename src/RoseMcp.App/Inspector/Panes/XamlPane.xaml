@@ -6,7 +6,7 @@
 
 	<Grid RowDefinitions="Auto,Auto,*" RowSpacing="10">
 
-		<Grid Grid.Row="0" ColumnSpacing="10" ColumnDefinitions="Auto,*,Auto">
+		<Grid Grid.Row="0" ColumnSpacing="10" ColumnDefinitions="Auto,*,Auto,Auto">
 			<StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
 				<Button x:Name="RefreshButton" Style="{StaticResource ChipButtonStyle}"
 					Content="Refresh" Click="OnRefresh"
@@ -16,14 +16,19 @@
 					ToolTipService.ToolTip="Arm the app's select mode, then click an element in the app itself." />
 
 				<ToggleButton x:Name="JustMyXamlButton" Content="Just my XAML" Click="OnToggleJustMyXaml"
-					ToolTipService.ToolTip="Prefer the element the app's own markup declares over a control template's parts." />
+					ToolTipService.ToolTip="Show only the elements the app's own markup declares, and prefer them when picking, over a control template's parts." />
 
 				<Button x:Name="DeselectButton" Style="{StaticResource ChipButtonStyle}"
 					Content="Deselect" Click="OnDeselect"
 					ToolTipService.ToolTip="Clear the app's selection and its highlight." />
 			</StackPanel>
 
-			<CheckBox Grid.Column="2" x:Name="IncludeDefaultsBox" Content="Include defaults"
+			<!-- The app's own switch for its change marks, the same one as the panel's Changes button: the tree keeps its
+			     marks for the whole session whatever this says. -->
+			<ToggleButton Grid.Column="2" x:Name="MarkInAppButton" Content="Mark changes in the app" Click="OnToggleMarkInApp"
+				ToolTipService.ToolTip="Outline the elements live edits changed in the running app, each tagged with its change. The same switch as the panel's Changes button; the tags fade after 10 minutes." />
+
+			<CheckBox Grid.Column="3" x:Name="IncludeDefaultsBox" Content="Include defaults"
 				Click="OnToggleIncludeDefaults"
 				ToolTipService.ToolTip="Also list the properties the framework chose, not only what is set." />
 		</Grid>
@@ -32,21 +37,50 @@
 
 		<Grid Grid.Row="2" ColumnSpacing="12" ColumnDefinitions="380,*">
 
-			<Grid Grid.Column="0" RowDefinitions="Auto,*" RowSpacing="6">
+			<Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,*" RowSpacing="6">
 				<TextBlock Grid.Row="0" x:Name="TreeCaption" Style="{StaticResource BodyStrongTextBlockStyle}" />
 
-				<Border Grid.Row="1" CornerRadius="4" BorderThickness="1"
+				<Grid Grid.Row="1" ColumnSpacing="6" ColumnDefinitions="*,Auto">
+					<TextBox Grid.Column="0" x:Name="FindBox" PlaceholderText="Find an element"
+						TextChanged="OnFindChanged"
+						AutomationProperties.Name="Find an element in the visual tree"
+						ToolTipService.ToolTip="Narrow the tree to elements whose type, name, address or file holds this text." />
+					<ToggleButton Grid.Column="1" x:Name="ChangedButton" Content="Changed" Click="OnToggleChanged"
+						ToolTipService.ToolTip="Show only the elements a live edit changed in this session." />
+				</Grid>
+
+				<TextBlock Grid.Row="2" x:Name="FilterNote" TextWrapping="Wrap" Visibility="Collapsed"
+					Style="{StaticResource CaptionTextBlockStyle}"
+					Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+				<Border Grid.Row="3" CornerRadius="4" BorderThickness="1"
 					BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
 					<Grid>
 						<!-- ItemsSource mode, so the tree virtualises and keyboard navigation comes
 						     free. Expansion and selection are bound two ways because the rows outlive
-						     a refresh and are what remembers both. -->
-						<TreeView x:Name="Tree" SelectionMode="Single" SelectionChanged="OnElementChosen">
+						     a refresh and are what remembers both. A filter collapses the rows it leaves
+						     out rather than taking them away, for the same reason. -->
+						<TreeView x:Name="Tree" SelectionMode="Single" SelectionChanged="OnElementChosen"
+							AutomationProperties.Name="Visual tree">
 							<TreeView.ItemTemplate>
 								<DataTemplate x:DataType="inspector:XamlNodeRow">
 									<TreeViewItem ItemsSource="{x:Bind Children}"
-										IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}">
+										IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}"
+										Visibility="{x:Bind IsShown, Mode=OneWay}">
 										<StackPanel Orientation="Horizontal" Spacing="8">
+											<StackPanel.ContextFlyout>
+												<MenuFlyout>
+													<MenuFlyoutItem Text="Ask an agent about this element…" Tag="{x:Bind}" Click="OnAskRow" />
+												</MenuFlyout>
+											</StackPanel.ContextFlyout>
+											<!-- A live edit's mark: the dot says it changed, its tooltip says what to what
+											     and who. Beside the name rather than instead of anything, so a changed
+											     element still reads like every other one. -->
+											<Ellipse Width="7" Height="7" VerticalAlignment="Center"
+												Fill="{ThemeResource RoseAccentBrush}"
+												Visibility="{x:Bind IsChanged, Mode=OneWay}"
+												ToolTipService.ToolTip="{x:Bind ChangeNote, Mode=OneWay}"
+												AutomationProperties.Name="Changed by a live edit" />
 											<!-- The short type name, with the qualified one on the tooltip:
 											     a WinUI tree is almost all Microsoft.UI.Xaml.Controls, and
 											     showing that spends the column on a prefix every row
@@ -87,7 +121,7 @@
 				</Border>
 			</Grid>
 
-			<Grid Grid.Column="1" RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="6">
+			<Grid Grid.Column="1" RowDefinitions="Auto,Auto,Auto,*,Auto,Auto" RowSpacing="6">
 				<StackPanel Grid.Row="0" Spacing="2">
 					<TextBlock x:Name="ElementCaption" Style="{StaticResource BodyStrongTextBlockStyle}"
 						TextTrimming="CharacterEllipsis" />
@@ -156,6 +190,15 @@
 										<TextBlock Text="{x:Bind Where}" Visibility="{x:Bind HasWhere}"
 											Style="{StaticResource CaptionTextBlockStyle}"
 											Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+										<!-- What a live edit took it from and to, and who, with what and when. -->
+										<StackPanel Spacing="1" Visibility="{x:Bind HasChange}">
+											<TextBlock Text="{x:Bind ChangedValues}" TextWrapping="Wrap"
+												Style="{StaticResource MonoCaptionTextBlockStyle}"
+												Foreground="{ThemeResource RoseAccentBrush}" />
+											<TextBlock Text="{x:Bind ChangedBy}" TextWrapping="Wrap"
+												Style="{StaticResource CaptionTextBlockStyle}"
+												Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+										</StackPanel>
 									</StackPanel>
 
 									<TextBlock Grid.Column="3" Text="{x:Bind Provenance}" VerticalAlignment="Top"
@@ -170,6 +213,10 @@
 				<TextBlock Grid.Row="4" x:Name="ObservedNote" TextWrapping="Wrap" Visibility="Collapsed"
 					Style="{StaticResource CaptionTextBlockStyle}"
 					Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+
+				<Button Grid.Row="5" x:Name="AskButton" Style="{StaticResource ChipButtonStyle}"
+					Content="Ask an agent about this element…" Click="OnAskElement" IsEnabled="False"
+					ToolTipService.ToolTip="Write a note about this element to the agent session in this debug session (Ctrl+Shift+A)." />
 			</Grid>
 		</Grid>
 	</Grid>

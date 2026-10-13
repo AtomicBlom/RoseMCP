@@ -129,6 +129,12 @@ internal sealed class TargetXaml(ILogger logger) : IDisposable
 	/// tree. Optionally rooted at a named element (its subtree only) and paged, since a real app's tree is
 	/// large. Returns a tree carrying only a detail (no nodes) when the target has no XAML UI or the
 	/// provider is unavailable, rather than throwing.
+	/// <para>
+	/// A target this session is holding cannot be asked, and is answered with the last tree read from it
+	/// instead, stamped with when that was and saying why it is not fresh -- so the stack and the tree can be
+	/// read together at a stop, which is when somebody wants both. Nothing in it is asked of the app: a
+	/// handle it lists is refused by every read and edit until the target runs again, for the same reason.
+	/// </para>
 	/// </summary>
 	internal LiveXamlTree ReadTree(XamlAsk ask, string? rootName, int offset, int limit)
 	{
@@ -141,33 +147,54 @@ internal sealed class TargetXaml(ILogger logger) : IDisposable
 			return new LiveXamlTree { Detail = "This session has no target process to inspect." };
 		}
 
-		if (WhyUnservable(ask.Session) is { } held) return new LiveXamlTree { Detail = held };
+		if (WhyUnservable(ask.Session) is { } held)
+		{
+			if (xaml.LastTree is not { } last) return new LiveXamlTree { Detail = held };
+
+			return Page(last.Nodes, rootName, offset, limit, installLocation, last.Channel) with
+			{
+				AsOfUtc = last.ReadUtc,
+				Detail = $"{held} This is the tree as it was last read, at {last.ReadUtc:HH:mm:ss} UTC.",
+			};
+		}
 
 		var tree = xaml.ReadTree(pid);
 		if (tree.Detail is not null) return tree with { Detail = WithHeartbeat(tree.Detail, ask.Events, logger) };
 
-		IReadOnlyList<LiveXamlNode> matched = tree.Nodes;
+		return Page(tree.Nodes, rootName, offset, limit, installLocation, tree.Channel);
+	}
+
+	/// <summary>
+	/// The page of <paramref name="nodes"/> a caller asked for: rooted at a named element where it named one, then
+	/// offset and limited. A new result rather than a narrowed one, so every field it carries is named here -- a field
+	/// the read filled and this does not mention would be dropped silently and read as not reported.
+	/// </summary>
+	private static LiveXamlTree Page(
+		IReadOnlyList<LiveXamlNode> nodes,
+		string? rootName,
+		int offset,
+		int limit,
+		string? installLocation,
+		string? channel)
+	{
+		var matched = nodes;
 		if (!string.IsNullOrWhiteSpace(rootName))
 		{
-			var root = tree.Nodes.FirstOrDefault(node => node.Name == rootName);
+			var root = nodes.FirstOrDefault(node => node.Name == rootName);
 			if (root is null) return new LiveXamlTree { Detail = $"No element named '{rootName}' is in the tree." };
-			matched = Subtree(tree.Nodes, root);
+			matched = Subtree(nodes, root);
 		}
 
 		var page = matched.Skip(Math.Max(0, offset)).Take(limit > 0 ? limit : int.MaxValue).ToList();
 
-		// Carried on every page, because this is the answer that looks right when it is not: the
-		// nodes below name source files, and a stale registration makes those files the wrong ones.
-		//
-		// The channel is carried for the same reason, and it is easy to lose here: paging builds a new
-		// result rather than narrowing the one it was given, so a field the read below filled and this
-		// line does not mention is dropped silently and reads as `not reported`.
+		// The install location is carried on every page, because this is the answer that looks right when it is
+		// not: the nodes name source files, and a stale registration makes those files the wrong ones.
 		return new LiveXamlTree
 		{
 			Nodes = page,
 			Total = matched.Count,
 			InstallLocation = installLocation,
-			Channel = tree.Channel,
+			Channel = channel,
 		};
 	}
 
@@ -304,6 +331,38 @@ internal sealed class TargetXaml(ILogger logger) : IDisposable
 	}
 
 	/// <summary>
+	/// Turns the app's marks of what live edits changed on or off. See <see cref="XamlDiagnosticsSession.SetChangeMarks"/>.
+	/// </summary>
+	internal LiveXamlSelection SetChangeMarks(XamlAsk ask, bool shown)
+	{
+		var targetProcessId = ask.ProcessId;
+		var xaml = Ensure();
+
+		if (targetProcessId is not { } pid)
+		{
+			return new LiveXamlSelection { Detail = "This session has no target process to inspect." };
+		}
+
+		if (WhyUnservable(ask.Session) is { } held) return new LiveXamlSelection { Detail = held };
+
+		return xaml.SetChangeMarks(pid, shown);
+	}
+
+	/// <summary>
+	/// Collects a press of the panel's Ask button, where there is a diagnostics session to collect it from and a
+	/// target able to answer. A stopped target is not asked: the provider answers on its own thread, but a press it
+	/// collected relights the panel on the UI thread a stop is holding, and the reader would wait there until the
+	/// target runs again. See <see cref="XamlDiagnosticsSession.CollectAsk"/>.
+	/// </summary>
+	internal void CollectAsk(XamlAsk ask)
+	{
+		if (Current is not { } xaml) return;
+		if (WhyUnservable(ask.Session) is not null) return;
+
+		xaml.CollectAsk();
+	}
+
+	/// <summary>
 	/// Live-edits the target by diffing two XAML versions and applying the edits to its visual tree.
 	/// Returns each computed edit with its outcome. Naming a file rather than passing both versions is
 	/// the continuous-apply path (#12): the XAML session remembers what it has already sent.
@@ -338,3 +397,9 @@ internal readonly record struct XamlAsk(
 	string? InstallLocation,
 	CorDebugSession? Session,
 	DebugEventBuffer Events);
+
+/// <summary>A whole tree as one read found it, and when, kept for a target that cannot be asked again yet.</summary>
+/// <param name="Nodes">Every element the read listed.</param>
+/// <param name="ReadUtc">When the read answered.</param>
+/// <param name="Channel">Which channel answered it.</param>
+internal sealed record XamlTreeRead(IReadOnlyList<LiveXamlNode> Nodes, DateTime ReadUtc, string? Channel);

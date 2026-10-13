@@ -55,9 +55,11 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   directory its client started it in as `_meta["rosemcp/originDirectory"]`, and an id it mints for its own
   life as `_meta["rosemcp/session"]`, and changes nothing else. The id is what tells relayed clients apart:
   the http transport serves each request without a session, so without it every relayed client is the same
-  caller, and one agent's acknowledgement is every agent's. It scopes acknowledgements alone: debug-session
-  ownership reads only the transport's session, and so is unscoped over stateless http even though this id
-  reaches the broker with every relayed call.
+  caller, and one agent's acknowledgement is every agent's. It scopes acknowledgements, and which session a
+  person shared their debug session with: the share is matched on the key the client table files the relay's
+  session under, so only that session's calls reach it. An agent's own debug session is owned by the
+  transport's session alone, and so is unscoped over stateless http even though this id reaches the broker
+  with every relayed call; a session a person started is reached by no call they did not share it with.
   It sends the same id with its own listings and reads, so the broker never takes them for an unnamed
   client, and marks its own reads `_meta["rosemcp/relayRead"]` so they are not counted as the session's
   calls. Once its client has made a request it also tells the broker whom it serves, at
@@ -267,7 +269,12 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   connection answers at once, and without the pause a closed port is a core spinning for as long as the
   window stays open -- and `Kick` ends the pause, which is what a new token from the tray's next launch
   does through `OperatorClient.Reauthorise`. The client is the app's, shared by every window and disposed
-  with none of them. An Inspector window still releases its hold before it closes.
+  with none of them. An Inspector window's session stream -- the event tail, the activity record narrowed to its
+  session, and the notes -- and every read of a stop or a watch stop when the window closes and when its session
+  ends, the window staying open on what was read; a hold is taken only when the person asks for one, Hold or Pause,
+  never because a view is on screen. An Inspector window still releases its hold before it closes, and its start page reads the
+  running apps only while it is shown, cancelling that read and any attach or launch in flight when it is hidden
+  or the window closes -- which the broker answers by ending a session that start made.
   See [the decision](../decisions/one-rosemcp-app-per-broker-holds-every-window.md).
 - **A live-app session whose host has died is dropped by the session manager, and only that one.**
   A poll that finds the host's transport gone marks the session ended; nothing else would ever
@@ -277,13 +284,22 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   inspector and `rose_debug_list` show why before it goes; then it is taken out through the same
   teardown and gate as a close, its client disposed, and the drop said in the broker's log, since
   the row that would carry it is gone. Under that same gate it is remembered as dropped -- the
-  latest few, scoped to the client that started each -- so the next call naming it hears that its
+  latest few, scoped to each one's owners, the agent session a person shared it with among them -- so the next call naming it hears that its
   host died rather than that no such session is open, which reads as a wrong id or someone else's. A dead host is not polled again and not asked to detach --
   the debugger went with it. A host that is alive and reports its *target* as exited is a different
   thing and is kept: its event log is still readable, and closing it is the caller's act. The drop
   runs on the poll loop itself, before the tick's polls start, so a dropped session is never polled
   again by the tick that dropped it, and disposing the manager waits for a drop in progress. This
   applies over stdio as well as http: a dead host has nothing to read in either.
+- **A debug session nobody will hold is ended where it was started, on every path.** Every start -- an agent's
+  tool or a person's `/operator/debug` request -- goes through `LiveAppSessionManager`'s attach and launch, which
+  end a host that started and was never registered, and take out through the close's own teardown a session
+  that came up faulted or whose asker gave up before it was answered, with a token of their own rather than
+  the one that was cancelled. A host left behind by any of those keeps its target under a debugger nobody can
+  reach or detach. Two starts against one target at once are one start and one refusal, a process and the
+  packaged app it runs as being one target under two names, and a target already being debugged -- by either
+  name -- answers with its session wherever the asker may reach it. No tool call ends
+  a session a person started: an agent it was shared with leaves it, and the debugger stays.
 - **The one git the broker runs is bounded, contained and off every agent's path.**
   `CheckoutDistanceReader` counts how far a local build's checkout has moved on, for
   `/operator/hello` and nothing else. `GitCommand` redirects the child's output, so a stdio broker's

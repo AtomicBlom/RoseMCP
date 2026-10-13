@@ -228,6 +228,216 @@ public sealed class XamlProviderPipeTests
 	}
 
 	/// <summary>
+	/// A press of the panel's Ask button is collected by asking, since the app never speaks first, and each ask names
+	/// the press already held -- which is how the provider knows its press arrived and lets the chip go back to rest.
+	/// A provider with no press answers <c>none</c>, which is an answer and not a silence.
+	/// </summary>
+	[Test]
+	public async Task Collects_a_press_of_ask_naming_the_press_it_already_holds()
+	{
+		using var pipe = new XamlProviderPipe(NullLogger.Instance);
+		pipe.Listen().ShouldBeNull();
+
+		using var provider = await GreetAsync(pipe);
+		var asked = new List<string>();
+
+		var serving = Task.Run(async () =>
+		{
+			var (first, none) = await ReadRequestAsync(provider);
+			asked.Add(none);
+			await SendFrameAsync(provider, XamlWire.Frame(first, "none\n"));
+
+			var (second, fresh) = await ReadRequestAsync(provider);
+			asked.Add(fresh);
+			await SendFrameAsync(provider, XamlWire.Frame(second, "ask\t1\telement\tthe element Button · Ok picked in the app\t42\t0\t\t500\n"));
+
+			var (third, held) = await ReadRequestAsync(provider);
+			asked.Add(held);
+			await SendFrameAsync(provider, XamlWire.Frame(third, "ask\t1\telement\tthe element Button · Ok picked in the app\t42\t0\t\t500\n"));
+		});
+
+		XamlPanelRequests.Ask(pipe, 0, Patience).ShouldBe((true, null));
+
+		var (answered, press) = XamlPanelRequests.Ask(pipe, 0, Patience);
+		answered.ShouldBeTrue();
+		press.ShouldNotBeNull();
+		press.Sequence.ShouldBe(1);
+		press.Kind.ShouldBe("element");
+		press.Element.ShouldBe(42UL);
+		press.OtherElement.ShouldBeNull();
+		press.Colour.ShouldBeNull();
+
+		XamlPanelRequests.Ask(pipe, press.Sequence, Patience).Press!.Sequence.ShouldBe(1);
+
+		await serving;
+		asked.ShouldBe(["ask 0", "ask 0", "ask 1"]);
+	}
+
+	/// <summary>
+	/// A provider that does not answer an ask is told apart from one with nothing pressed, so a host that gave up
+	/// waiting does not take the silence for "no press" -- it asks again on its next turn.
+	/// </summary>
+	[Test]
+	public async Task An_ask_the_provider_does_not_answer_is_not_read_as_no_press()
+	{
+		using var pipe = new XamlProviderPipe(NullLogger.Instance);
+		pipe.Listen().ShouldBeNull();
+
+		using var provider = await GreetAsync(pipe);
+		var reading = Task.Run(() => ReadRequestAsync(provider));
+
+		XamlPanelRequests.Ask(pipe, 0, TimeSpan.FromMilliseconds(300)).Answered.ShouldBeFalse();
+		(await reading).Request.ShouldBe("ask 0");
+	}
+
+	/// <summary>
+	/// A press made long before it is collected -- the panel outlives every session, so one pressed while no host was
+	/// connected reaches the next -- is acknowledged, so the chip goes back to rest, and not kept to open a window
+	/// about: nobody is waiting on it.
+	/// </summary>
+	[Test]
+	public async Task A_press_made_long_before_it_was_collected_is_acknowledged_and_not_kept()
+	{
+		using var pipe = new XamlProviderPipe(NullLogger.Instance);
+		pipe.Listen().ShouldBeNull();
+
+		using var provider = await GreetAsync(pipe);
+		var asked = new List<string>();
+		var twoHours = (long)TimeSpan.FromHours(2).TotalMilliseconds;
+
+		var serving = Task.Run(async () =>
+		{
+			for (var turn = 0; turn < 2; turn++)
+			{
+				var (id, request) = await ReadRequestAsync(provider);
+				asked.Add(request);
+				await SendFrameAsync(provider, XamlWire.Frame(id, $"ask\t1\telement\tthe element Button · Ok\t42\t0\t\t{twoHours}\n"));
+			}
+		});
+
+		var collector = new XamlAskCollector();
+
+		collector.Collect(pipe, Patience, DateTime.UtcNow).ShouldBeNull();
+		collector.Latest.ShouldBeNull("a press two hours old opens nothing");
+
+		collector.Collect(pipe, Patience, DateTime.UtcNow).ShouldBeNull();
+
+		await serving;
+		asked.ShouldBe(["ask 0", "ask 1"], "the old press is still acknowledged, so the panel's chip goes back to rest");
+	}
+
+	/// <summary>
+	/// A provider that reconnects is asked again from nothing, and a press it answers with is taken whatever its
+	/// number: a host that kept comparing against the press the last connection gave it would miss a new press that
+	/// happened to carry the same one.
+	/// </summary>
+	[Test]
+	public async Task A_press_after_the_provider_reconnects_is_taken_whatever_its_number()
+	{
+		using var pipe = new XamlProviderPipe(NullLogger.Instance);
+		pipe.Listen().ShouldBeNull();
+
+		var collector = new XamlAskCollector();
+
+		using (var first = await GreetAsync(pipe))
+		{
+			var answering = Task.Run(async () =>
+			{
+				var (id, request) = await ReadRequestAsync(first);
+				request.ShouldBe("ask 0");
+				await SendFrameAsync(first, XamlWire.Frame(id, "ask\t1\telement\tthe element Button · Ok\t42\t0\t\t100\n"));
+			});
+
+			collector.Collect(pipe, Patience, DateTime.UtcNow).ShouldNotBeNull().Readable.ShouldBe("the element Button · Ok");
+			await answering;
+		}
+
+		using var second = await GreetAsync(pipe);
+
+		var reanswering = Task.Run(async () =>
+		{
+			var (id, request) = await ReadRequestAsync(second);
+			request.ShouldBe("ask 0", "a reconnected provider is asked from nothing");
+			await SendFrameAsync(second, XamlWire.Frame(id, "ask\t1\tcolour\tthe colour #C2185B\t0\t0\t#C2185B\t100\n"));
+		});
+
+		collector.Collect(pipe, Patience, DateTime.UtcNow).ShouldNotBeNull();
+		collector.Latest.ShouldNotBeNull().Kind.ShouldBe("colour");
+		await reanswering;
+	}
+
+	/// <summary>
+	/// Switching the change marks answers with where the provider said the switch went, and when the read of the panel
+	/// that follows does not answer, says so rather than reporting the switch's default as though it had been read.
+	/// </summary>
+	[Test]
+	public async Task A_switch_of_the_change_marks_keeps_the_providers_answer_when_the_read_after_times_out()
+	{
+		using var pipe = new XamlProviderPipe(NullLogger.Instance);
+		pipe.Listen().ShouldBeNull();
+
+		using var provider = await GreetAsync(pipe);
+
+		var serving = Task.Run(async () =>
+		{
+			var (id, request) = await ReadRequestAsync(provider);
+			request.ShouldBe("changes off");
+			await SendFrameAsync(provider, XamlWire.Frame(id, "off\n"));
+
+			// The selection read is never answered.
+			(await ReadRequestAsync(provider)).Request.ShouldBe("selection");
+		});
+
+		var switched = XamlPanelRequests.SwitchChangeMarks(
+			pipe,
+			shown: false,
+			Patience,
+			() => pipe.Request("selection", TimeSpan.FromMilliseconds(300)) is null
+				? new LiveXamlSelection { Detail = "The XAML provider did not answer within 0.3s, asked for what is selected." }
+				: new LiveXamlSelection { ChangeMarks = true });
+
+		await serving;
+
+		switched.ChangeMarks.ShouldBe(false, "the provider said where the switch went");
+		switched.Detail.ShouldNotBeNull().ShouldContain("did not answer within 0.3s");
+	}
+
+	/// <summary>
+	/// The change marks are switched by name, and the answer is where the provider says the switch is afterwards --
+	/// not what was asked for, since the person can press the panel's own button at any moment.
+	/// </summary>
+	[Test]
+	public async Task Switches_the_change_marks_and_reads_where_the_provider_left_them()
+	{
+		using var pipe = new XamlProviderPipe(NullLogger.Instance);
+		pipe.Listen().ShouldBeNull();
+
+		using var provider = await GreetAsync(pipe);
+
+		var serving = Task.Run(async () =>
+		{
+			var (first, off) = await ReadRequestAsync(provider);
+			off.ShouldBe("changes off");
+			await SendFrameAsync(provider, XamlWire.Frame(first, "off\n"));
+
+			var (second, on) = await ReadRequestAsync(provider);
+			on.ShouldBe("changes on");
+
+			// Somebody pressed the panel's button between the two: the provider's answer is the truth.
+			await SendFrameAsync(provider, XamlWire.Frame(second, "off\n"));
+
+			var (third, _) = await ReadRequestAsync(provider);
+			await SendFrameAsync(provider, XamlWire.Frame(third, "something else\n"));
+		});
+
+		XamlPanelRequests.ChangeMarks(pipe, shown: false, Patience).ShouldBe(false);
+		XamlPanelRequests.ChangeMarks(pipe, shown: true, Patience).ShouldBe(false);
+		XamlPanelRequests.ChangeMarks(pipe, shown: true, Patience).ShouldBeNull();
+
+		await serving;
+	}
+
+	/// <summary>
 	/// The mismatch the protocol version exists for. The host and the provider ship together, so the
 	/// way two versions meet is a stale copy, and one that greets without a version is older than the
 	/// host. Refused before anything is asked of it, since it would read rows it was not written for

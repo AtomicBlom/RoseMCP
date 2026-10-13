@@ -44,6 +44,115 @@ static const wchar_t* const OverlayRootName = L"__RoseMcpOverlay";
 // from one that is merely the framework's default.
 static constexpr bool RoseTapShowOverlayInTree = false;
 
+/// One property an apply changed on one element, as the overlay marks it: which element, which
+/// property, and what it said before and after. Built by the apply from the property chain walk it
+/// makes anyway, so recording it asks the framework nothing more.
+struct TapChange
+{
+	InstanceHandle Handle = 0;
+	std::wstring Property;
+	std::wstring Old;
+	std::wstring New;
+};
+
+/// What the person asked about by pressing Ask on the toolbar, held until the host comes for it.
+///
+/// A latch rather than a message, because the pipe carries requests from the host and replies to
+/// them, and nothing else: the app never speaks first. The press is written here on the UI thread
+/// and read by the reader thread when the host asks, so it is the one piece of tap state with a lock
+/// of its own -- and the read touches no XAML, which is what lets the host ask on its own refresh
+/// without costing the app's UI thread anything.
+///
+/// Only the toolbar writes it, and only on a person's click. What it holds is a description of what
+/// was on screen -- a handle, a measurement in words, a colour -- and all it can make happen is a
+/// window opening with a note the person still has to write and send.
+///
+/// The reply carries how long ago the press was made, because the toolbar outlives every session: a
+/// press made while no host was connected is collected by the next one, and judged by when it was
+/// collected it would open a window, hours later, about a question nobody is waiting on. And the
+/// sequence keeps counting across a forgotten press, so a host that collected press 3 before the pipe
+/// went is never handed a different press 3 afterwards.
+class RoseTapAsk
+{
+public:
+	/// Records a press, replacing any the host has not collected: the latest press is the question.
+	void Raise(std::wstring kind, std::wstring readable, InstanceHandle element, InstanceHandle other, std::wstring colour)
+	{
+		std::lock_guard<std::mutex> guard(m_mutex);
+		m_sequence++;
+		m_pressed = true;
+		m_raisedTick = ::GetTickCount64();
+		m_kind = std::move(kind);
+		m_readable = std::move(readable);
+		m_element = element;
+		m_other = other;
+		m_colour = std::move(colour);
+	}
+
+	/// The latest press as a reply row, or "none". <paramref name="seen"/> is the sequence the host
+	/// already holds, which is how the toolbar learns its press arrived: reports whether this read is
+	/// the one that told it so, since the chip that lit on the press goes back to rest then.
+	std::string Reply(unsigned long seen, bool& arrived)
+	{
+		std::lock_guard<std::mutex> guard(m_mutex);
+
+		arrived = false;
+		if (!m_pressed) return "none\n";
+
+		if (seen >= m_sequence && m_collected < m_sequence)
+		{
+			m_collected = m_sequence;
+			arrived = true;
+		}
+
+		// The age last, so the seven fields before it mean what they always meant.
+		const ULONGLONG age = ::GetTickCount64() - m_raisedTick;
+		const std::wstring row = L"ask\t" + std::to_wstring(m_sequence) + L'\t' + Escape(m_kind.c_str()) + L'\t'
+			+ Escape(m_readable.c_str()) + L'\t' + std::to_wstring(m_element) + L'\t' + std::to_wstring(m_other) + L'\t'
+			+ Escape(m_colour.c_str()) + L'\t' + std::to_wstring(age);
+
+		return Utf8(row) + "\n";
+	}
+
+	/// Whether a press is waiting for the host, which is what keeps the chip lit.
+	bool Waiting()
+	{
+		std::lock_guard<std::mutex> guard(m_mutex);
+		return m_pressed && m_collected < m_sequence;
+	}
+
+	/// Forgets the press, because the session it was for has ended. A later host starts from nothing,
+	/// or the next session to connect would open a window about a question nobody asked it. The count
+	/// is kept, so the next press is numbered after every one before it.
+	void Forget()
+	{
+		std::lock_guard<std::mutex> guard(m_mutex);
+		m_pressed = false;
+		m_collected = m_sequence;
+		m_raisedTick = 0;
+		m_kind.clear();
+		m_readable.clear();
+		m_element = 0;
+		m_other = 0;
+		m_colour.clear();
+	}
+
+private:
+	std::mutex m_mutex;
+	unsigned long m_sequence = 0;
+	unsigned long m_collected = 0;
+	bool m_pressed = false;
+	ULONGLONG m_raisedTick = 0;
+	std::wstring m_kind;
+	std::wstring m_readable;
+	InstanceHandle m_element = 0;
+	InstanceHandle m_other = 0;
+	std::wstring m_colour;
+};
+
+/// The one latch, shared by the toolbar that writes it and the dispatcher that reads it.
+static RoseTapAsk g_ask;
+
 /// The overlay as the request dispatcher uses it: arming a pointer mode, picking, clearing, and
 /// reading back what is picked.
 ///
@@ -100,6 +209,21 @@ struct IRoseOverlay
 	/// read separately they can describe a state that never existed at any instant.
 	virtual const std::wstring& GoneReason() const = 0;
 	virtual const std::string& SelectionRows() const = 0;
+
+	/// Takes what an apply changed, to mark in the app. Called on the UI thread with the batch's
+	/// property changes, after the batch has run.
+	virtual void Changed(const std::vector<TapChange>& changes) = 0;
+
+	/// Whether the changes are marked in the app, and switching that. The same switch as the
+	/// toolbar's Changes button.
+	virtual bool ChangesShown() const = 0;
+	virtual void ShowChanges(bool shown) = 0;
+
+	/// Drops every change and its mark, because the session they were made in has ended.
+	virtual void ForgetChanges() = 0;
+
+	/// Re-lights the toolbar, for a state that changed off the UI thread: the host collecting an Ask.
+	virtual void Relight() = 0;
 };
 
 /// The one overlay, built on first use. Defined with the overlay itself, so this declaration is what

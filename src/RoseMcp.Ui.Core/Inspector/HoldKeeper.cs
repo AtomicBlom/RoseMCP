@@ -9,22 +9,22 @@ namespace RoseMcp.Ui.Core.Inspector;
 public delegate Task<LiveHoldResult> HoldCall(int? seconds, bool release, CancellationToken cancellationToken);
 
 /// <summary>
-/// The one hold on a target, shared by every pane reading the stop it is sitting at.
+/// The one hold on a target, shared by everything in a window that asks for one: Hold, and Pause.
 /// <para>
 /// A hold is per session, not per reader: the host has one, and the last request about it wins. So
-/// two panes each taking and releasing their own is not two holds, it is a race -- the stack pane
-/// released on being hidden would give away the hold the threads pane had just taken, and the
-/// target would resume under a reader who had done nothing but change tab.
+/// two holders each taking and releasing their own is not two holds, it is a race -- one letting go
+/// would give away the hold the other had just taken, and the target would resume under a person
+/// who had done nothing to release it.
 /// </para>
 /// <para>
 /// Readers say what they want rather than what to do, and the keeper reconciles. That makes
-/// <see cref="Want"/> idempotent, which matters because it is called from a poll: a pane that says
-/// the same thing every second must not produce a request every second, and a pane that forgets to
+/// <see cref="Want"/> idempotent, which matters because it is called from a poll: a holder that says
+/// the same thing every second must not produce a request every second, and a holder that forgets to
 /// let go is corrected by its own next poll rather than leaving somebody's application stopped.
 /// </para>
 /// <para>
 /// Single-threaded, on whichever thread the window runs on. Everything that drives it -- the poll,
-/// the tick, a tab changing -- is already there, and the in-flight request is what keeps two callers
+/// the tick, a button pressed -- is already there, and the in-flight request is what keeps two callers
 /// from asking at once rather than a lock.
 /// </para>
 /// </summary>
@@ -161,10 +161,10 @@ public sealed class HoldKeeper
 
 	private async Task SettleAsync()
 	{
-		// After the caller's own block, never inside it. Changing tab tells the arriving pane and the
-		// leaving one in one pass, and reconciling on the first of those would release the hold and take
-		// it again -- leaving the target free in between, long enough for its own safety timer to run the
-		// reader off the stop they were reading. A yield collapses a batch of readers into one decision
+		// After the caller's own block, never inside it. Two holders can speak in one pass, a pause landing
+		// while Hold is let go, and reconciling on the first of them would release the hold and take it
+		// again: the target free in between, long enough for its own safety timer to run the reader off
+		// the stop they were reading. A yield collapses a batch of readers into one decision
 		// whatever order they arrive in, which is a property no call site then has to remember.
 		await Task.Yield();
 

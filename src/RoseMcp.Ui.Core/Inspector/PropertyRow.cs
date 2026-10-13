@@ -35,8 +35,15 @@ public sealed class PropertyRow
 	/// <summary>What a null value is shown as, which is not the same as an unrenderable one.</summary>
 	public const string Null = "(null)";
 
-	public PropertyRow(LiveXamlProperty property)
+	/// <param name="property">The property as the read found it.</param>
+	/// <param name="change">The latest live edit of it this session, where there was one.</param>
+	public PropertyRow(LiveXamlProperty property, LiveXamlChange? change = null)
 	{
+		Change = change;
+		ChangedValues = change is null ? string.Empty : XamlChangeText.Values(change);
+		ChangedBy = change is null ? string.Empty : XamlChangeText.By(change);
+		HasChange = change is not null;
+
 		Name = property.Name;
 		Origin = OriginOf(property.Provenance);
 		Provenance = property.Provenance;
@@ -90,6 +97,36 @@ public sealed class PropertyRow
 
 	public bool IsElsewhere { get; }
 
+	/// <summary>The latest live edit of this property this session, or null where none changed it.</summary>
+	public LiveXamlChange? Change { get; }
+
+	/// <summary>What the edit took it from and to, as <c>12,0,12,0 → 8,0,8,0</c>; empty where nothing changed it.</summary>
+	public string ChangedValues { get; }
+
+	/// <summary>Who changed it, with what and when; empty where nothing changed it.</summary>
+	public string ChangedBy { get; }
+
+	public bool HasChange { get; }
+
+	/// <summary>
+	/// A row for a property a live edit changed and the read did not list: one cleared back to the framework's default,
+	/// which a read without the defaults leaves out, or any changed one while the target is stopped and cannot be read
+	/// at all. Its value is the edit's, said as such, so a changed property is never missing from the list.
+	/// </summary>
+	public static PropertyRow ForChange(LiveXamlChange change)
+	{
+		ArgumentNullException.ThrowIfNull(change);
+
+		var property = new LiveXamlProperty
+		{
+			Name = change.Property ?? change.Kind,
+			Value = change.Kind == "ClearProperty" ? XamlChangeText.Cleared : change.NewValue,
+			Provenance = "Changed",
+		};
+
+		return new PropertyRow(property, change);
+	}
+
 	/// <summary>
 	/// The order properties are shown in: what the markup set, then what a style set, then what was
 	/// inherited, then animations, then the rest, then the framework's defaults -- and alphabetical
@@ -101,12 +138,36 @@ public sealed class PropertyRow
 	/// </para>
 	/// </summary>
 	public static IReadOnlyList<PropertyRow> Sort(IEnumerable<LiveXamlProperty> properties) =>
-	[
-		.. properties
-			.Select(property => new PropertyRow(property))
-			.OrderBy(row => (int)row.Origin)
-			.ThenBy(row => row.Name, StringComparer.OrdinalIgnoreCase)
-	];
+		Sort(properties, changes: []);
+
+	/// <summary>
+	/// The properties in the order <see cref="Sort(IEnumerable{LiveXamlProperty})"/> gives, after every property a live
+	/// edit changed: those are what somebody watching an agent's edits opened this element to see. Each carries its
+	/// latest change, and a changed property the read did not list is added from the change itself.
+	/// </summary>
+	/// <param name="properties">The properties as the read found them.</param>
+	/// <param name="changes">The live edits of this element, in any order; the newest of each property's is the one shown.</param>
+	public static IReadOnlyList<PropertyRow> Sort(IEnumerable<LiveXamlProperty> properties, IEnumerable<LiveXamlChange> changes)
+	{
+		var latest = changes
+			.Where(change => change.Property is { Length: > 0 } && change.Kind is "SetProperty" or "ClearProperty")
+			.GroupBy(change => change.Property!, StringComparer.Ordinal)
+			.ToDictionary(group => group.Key, group => group.MaxBy(change => change.Sequence)!, StringComparer.Ordinal);
+
+		var read = properties.Select(property => new PropertyRow(property, latest.GetValueOrDefault(property.Name))).ToList();
+		var unlisted = latest.Values
+			.Where(change => read.All(row => row.Name != change.Property))
+			.Select(ForChange);
+
+		return
+		[
+			.. read
+				.Concat(unlisted)
+				.OrderBy(row => row.HasChange ? 0 : 1)
+				.ThenBy(row => (int)row.Origin)
+				.ThenBy(row => row.Name, StringComparer.OrdinalIgnoreCase)
+		];
+	}
 
 	/// <summary>
 	/// Which bucket a framework provenance falls in. Matched whole and case-insensitively: the

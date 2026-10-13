@@ -9,8 +9,8 @@ namespace RoseMcp.Ui.Core.Inspector;
 /// place and not knowing why.
 /// </para>
 /// <para>
-/// One place for it because two surfaces say it: the tray and the inspector's header describe a
-/// session, and the stack pane describes the stop it is reading. Two copies of the sentence would
+/// One place for it because two surfaces say it: the RoseMCP window's list of sessions and the
+/// Inspector's header each describe the stop a session is at. Two copies of the sentence would
 /// disagree the first time either was reworded.
 /// </para>
 /// </summary>

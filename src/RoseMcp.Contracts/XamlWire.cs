@@ -37,7 +37,7 @@ public static class XamlWire
 	/// over by hand in a rebuild loop -- and that is exactly when a mismatch should be refused by name
 	/// rather than read as data.
 	/// </summary>
-	public const int ProtocolVersion = 2;
+	public const int ProtocolVersion = 4;
 
 	/// <summary>How every greeting starts, so one that does not can be told from one with the wrong version.</summary>
 	public const string GreetingPrefix = "RoseTap/";
@@ -184,6 +184,67 @@ public static class XamlWire
 		body = string.Empty;
 		return false;
 	}
+
+	/// <summary>
+	/// One row of an apply's reply, or null when the line is not one: the command's op, target, property and arg,
+	/// which are what the host finds its result again by, then its status, the handle it landed on and what the
+	/// property said before it.
+	/// <para>
+	/// The handle and the old value were added after the first five fields, and are read only where they are
+	/// there, so the five a result is keyed by mean the same thing whichever provider wrote the row. A handle of
+	/// zero is the provider saying it reached no element. An old value is kept even when empty, because the empty
+	/// string is a value a text property really had; whether an edit has an old value at all is decided by its
+	/// kind, not by this.
+	/// </para>
+	/// </summary>
+	public static XamlApplyRow? ReadApplyRow(string line)
+	{
+		if (line.Length == 0) return null;
+
+		var fields = Fields(line);
+		if (fields.Length < 5) return null;
+
+		ulong? handle = fields.Length > 5 && ulong.TryParse(fields[5], NumberStyles.None, CultureInfo.InvariantCulture, out var landed) && landed != 0
+			? landed
+			: null;
+
+		return new XamlApplyRow(
+			fields[0],
+			fields[1],
+			fields[2],
+			fields[3],
+			fields[4],
+			handle,
+			fields.Length > 6 ? fields[6] : null);
+	}
+
+	/// <summary>
+	/// The press the toolbar's Ask button recorded, from the provider's reply to <c>ask</c>, or null when there is
+	/// none -- the reply is <c>none</c>, or not a row this format writes. The sequence counts presses in the app's
+	/// process, so a host tells a new press from the one it already holds by it; the last field is the press's age in
+	/// milliseconds, and a row without one is not read, since a press of unknown age could be hours old.
+	/// </summary>
+	public static XamlAskRow? ReadAsk(string reply)
+	{
+		var line = reply.Split('\n')[0].TrimEnd('\r');
+		var fields = Fields(line);
+		if (fields.Length < 8 || fields[0] != "ask") return null;
+		if (!long.TryParse(fields[1], NumberStyles.None, CultureInfo.InvariantCulture, out var sequence) || sequence <= 0) return null;
+		if (!long.TryParse(fields[7], NumberStyles.None, CultureInfo.InvariantCulture, out var ageMilliseconds)) return null;
+
+		return new XamlAskRow(
+			sequence,
+			fields[2],
+			fields[3],
+			HandleOrNull(fields[4]),
+			HandleOrNull(fields[5]),
+			fields[6].Length > 0 ? fields[6] : null,
+			TimeSpan.FromMilliseconds(ageMilliseconds));
+	}
+
+	/// <summary>A handle field, where zero and anything unreadable both mean the press named no element.</summary>
+	private static ulong? HandleOrNull(string field) =>
+		ulong.TryParse(field, NumberStyles.None, CultureInfo.InvariantCulture, out var handle) && handle != 0 ? handle : null;
 
 	/// <summary>A greeting short enough to quote, since whatever reached the pipe first can send anything.</summary>
 	private static string Shortened(string greeting) => greeting.Length <= 60 ? greeting : greeting[..60] + "...";

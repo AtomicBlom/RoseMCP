@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 using Microsoft.Extensions.Logging;
@@ -37,6 +38,14 @@ public sealed class LiveAppSession : IAsyncDisposable
 	// The broker's own aside about this session, surfaced on the next Describe.
 	private volatile string? _notice;
 
+	// Whoever this session belongs to; see Owners. An agent's with no session until the manager says otherwise,
+	// which it does before the session is registered.
+	private LiveAppOwners _owners = LiveAppOwners.Agent(null);
+
+	// Who set each breakpoint, by the id the host gave it. The host never learns who asked, and ids are not reused
+	// within a host's life, so an entry stays true for as long as the session does.
+	private readonly ConcurrentDictionary<string, LiveAppActor> _setters = new(StringComparer.Ordinal);
+
 	private LiveAppSession(
 		string sessionId,
 		LiveAppTarget target,
@@ -57,11 +66,16 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public string SessionId { get; }
 
 	/// <summary>
-	/// The MCP session that started this one, or null where the transport has no notion of one. Set by
-	/// <see cref="LiveAppSessionManager"/>, which is the only thing that starts a session, so a session
-	/// cannot exist without an owner having been decided for it.
+	/// Who this session belongs to: the agent session that started it, or the person and whichever agent session they
+	/// shared it with. Set by <see cref="LiveAppSessionManager"/>, which is the only thing that starts or shares a
+	/// session, before the session is reachable, so a session never exists without its owners decided. Replaced whole
+	/// rather than changed, so a call reading it while a share lands reads one set or the other.
 	/// </summary>
-	public string? Owner { get; internal set; }
+	public LiveAppOwners Owners
+	{
+		get => Volatile.Read(ref _owners);
+		internal set => Volatile.Write(ref _owners, value);
+	}
 
 	public LiveAppTarget Target { get; }
 
@@ -112,11 +126,12 @@ public sealed class LiveAppSession : IAsyncDisposable
 		string hostPath,
 		ActivityLog activities,
 		ILoggerFactory loggerFactory,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IClientTransport? host = null)
 	{
 		var logger = loggerFactory.CreateLogger<LiveAppSession>();
 
-		var transport = new StdioClientTransport(
+		var transport = host ?? new StdioClientTransport(
 			new StdioClientTransportOptions
 			{
 				Command = hostPath,
@@ -211,11 +226,14 @@ public sealed class LiveAppSession : IAsyncDisposable
 			: info?.State ?? LiveAppSessionState.Starting;
 
 		var now = DateTime.UtcNow;
+		var owners = Owners;
 
 		return new LiveAppSessionSummary
 		{
 			SessionId = SessionId,
 			TargetDescription = Target.Description ?? Target.Kind.ToString(),
+			StartedBy = owners.StartedBy,
+			SharedWith = owners.DescribeShare(),
 			Architecture = Architecture,
 			State = state,
 			HostProcessId = info?.HostProcessId,
@@ -240,9 +258,48 @@ public sealed class LiveAppSession : IAsyncDisposable
 			XamlProvider = info?.XamlProvider ?? LiveXamlProvider.None,
 			HostLogPath = info?.HostLogPath,
 			LastEventAge = info?.LastEvent is { } beat ? now - beat.TimestampUtc : null,
+
+			// A press in an app that has gone is not a question anybody can be shown the subject of.
+			XamlAsk = state == LiveAppSessionState.Ended ? null : info?.XamlAsk,
+			XamlAskAge = state == LiveAppSessionState.Ended || info?.XamlAsk is not { } ask ? null : now - ask.PressedUtc,
 			InfoAge = _infoUtc is { } read ? now - read : null,
 		};
 	}
+
+	/// <summary>
+	/// How old a press of the panel's Ask button can be and still open the Inspector. A press is collected within a
+	/// second of being made and the broker reads it within another, so anything older was made before the broker was
+	/// watching -- a broker that restarted, a session it picked up -- and opening a window about it now would answer a
+	/// question nobody is waiting on.
+	/// </summary>
+	public static readonly TimeSpan AskFreshFor = TimeSpan.FromSeconds(30);
+
+	/// <summary>The last press this session opened the Inspector for.</summary>
+	private LiveXamlAsk? _askOpened;
+
+	/// <summary>
+	/// The press of the panel's Ask button that should open the Inspector now, or null: one this session has not
+	/// opened a window for, made recently enough that somebody is waiting on it. Taking it marks it opened, so a press
+	/// opens one window however many polls report it. Called by the session manager's poll, one at a time.
+	/// </summary>
+	public LiveXamlAsk? TakeAskToOpen(DateTime nowUtc)
+	{
+		// Read once: the poll that replaces it may land between two reads.
+		var ask = _info?.XamlAsk;
+		if (!ShouldOpen(ask, _askOpened, nowUtc)) return null;
+
+		_askOpened = ask;
+		return ask;
+	}
+
+	/// <summary>
+	/// Whether a press opens the Inspector: there is one, it is not the press a window was last opened for, and it was
+	/// made recently -- by when it was pressed, not when it was collected, since the panel outlives every session.
+	/// </summary>
+	public static bool ShouldOpen(LiveXamlAsk? ask, LiveXamlAsk? opened, DateTime nowUtc) =>
+		ask is not null
+		&& !ask.IsSamePress(opened)
+		&& nowUtc - ask.PressedUtc <= AskFreshFor;
 
 	/// <summary>
 	/// Records something the broker has to say about this session that the host did not. It rides
@@ -358,12 +415,32 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["tracepointIds"] = ids },
 			cancellationToken);
 
-	/// <summary>Sets stopping breakpoints, each request's outcome its own entry, as <see cref="AddTracepointsAsync"/> does.</summary>
-	public Task<LiveBreakpointBatch> SetBreakpointsAsync(IReadOnlyList<SetBreakpointRequest> breakpoints, CancellationToken cancellationToken)
-		=> SendAsync<LiveBreakpointBatch>(
+	/// <summary>
+	/// Sets stopping breakpoints, each request's outcome its own entry, as <see cref="AddTracepointsAsync"/> does, and
+	/// records <paramref name="setBy"/> against each one set, which is how a window says who set the breakpoint a stop
+	/// is at.
+	/// </summary>
+	public async Task<LiveBreakpointBatch> SetBreakpointsAsync(
+		IReadOnlyList<SetBreakpointRequest> breakpoints,
+		LiveAppActor setBy,
+		CancellationToken cancellationToken)
+	{
+		var batch = await SendAsync<LiveBreakpointBatch>(
 			ToolNames.LiveAppSetBreakpoint,
 			new Dictionary<string, object?> { ["breakpoints"] = breakpoints },
 			cancellationToken);
+
+		foreach (var set in batch.Results.Select(outcome => outcome.Breakpoint).OfType<LiveBreakpoint>())
+		{
+			_setters[set.Id] = setBy;
+		}
+
+		return batch;
+	}
+
+	/// <summary>Who set the breakpoint by that id, as <see cref="SetBreakpointsAsync"/> recorded it; null for an id it did not set, and for none.</summary>
+	public LiveAppActor? SetterOf(string? breakpointId) =>
+		breakpointId is { Length: > 0 } id && _setters.TryGetValue(id, out var setter) ? setter : null;
 
 	public Task<LiveBreakpointList> ListBreakpointsAsync(CancellationToken cancellationToken)
 		=> SendAsync<LiveBreakpointList>(ToolNames.LiveAppListBreakpoints, cancellationToken);
@@ -393,12 +470,15 @@ public sealed class LiveAppSession : IAsyncDisposable
 			: throw new InvalidOperationException(outcome.Status);
 	}
 
-	/// <summary>Sets one stopping breakpoint, as <see cref="AddTracepointAsync"/> adds one tracepoint.</summary>
+	/// <summary>
+	/// Sets one stopping breakpoint, as <see cref="AddTracepointAsync"/> adds one tracepoint, for the person: one at a
+	/// time is how a window sets them, and an agent's go through <see cref="SetBreakpointsAsync"/> naming the caller.
+	/// </summary>
 	/// <exception cref="InvalidOperationException">The host refused it, or the session could not set one at all.</exception>
 	public async Task<LiveBreakpoint> SetBreakpointAsync(string location, int? autoContinueSeconds, string? condition, CancellationToken cancellationToken)
 	{
 		var request = new SetBreakpointRequest { Location = location, AutoContinueSeconds = autoContinueSeconds, Condition = condition };
-		var batch = await SetBreakpointsAsync([request], cancellationToken);
+		var batch = await SetBreakpointsAsync([request], LiveAppActor.Person, cancellationToken);
 		var outcome = Single(batch.Results, ToolNames.LiveAppSetBreakpoint);
 
 		return outcome.Breakpoint is { } set
@@ -632,6 +712,13 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["handle"] = handle },
 			cancellationToken);
 
+	/// <summary>Turns the app's marks of what live edits changed on or off, and answers with where the switch is after.</summary>
+	public Task<LiveXamlSelection> SetXamlChangeMarksAsync(bool shown, CancellationToken cancellationToken)
+		=> SendAsync<LiveXamlSelection>(
+			ToolNames.LiveAppXamlChangeMarks,
+			new Dictionary<string, object?> { ["shown"] = shown },
+			cancellationToken);
+
 	/// <summary>
 	/// The handle an element reference names: a decimal handle, an <c>x:Name</c> with or without a
 	/// leading <c>#</c>, or the address the tree and the selection report.
@@ -688,17 +775,41 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// <summary>
 	/// Applies a XAML change to the live tree and returns each edit's outcome. Naming a file is the
 	/// continuous path (#12) -- the host diffs it against what it last sent -- and two versions of the
-	/// markup is for markup with no file behind it.
+	/// markup is for markup with no file behind it. Recorded in <see cref="XamlChanges"/> as made by the
+	/// caller whose MCP call is in flight.
 	/// </summary>
 	public Task<LiveXamlApplyResult> ApplyXamlAsync(
 		string? oldXaml,
 		string? newXaml,
 		string? filePath,
 		CancellationToken cancellationToken)
-		=> SendAsync<LiveXamlApplyResult>(
+		=> ApplyXamlAsync(oldXaml, newXaml, filePath, LiveAppActor.OfCaller(), cancellationToken);
+
+	/// <summary>
+	/// Applies a XAML change and records each edit that took against <paramref name="changedBy"/>, which is how a
+	/// window says who changed an element: the host that applies it never learns who asked.
+	/// </summary>
+	public async Task<LiveXamlApplyResult> ApplyXamlAsync(
+		string? oldXaml,
+		string? newXaml,
+		string? filePath,
+		LiveAppActor changedBy,
+		CancellationToken cancellationToken)
+	{
+		var result = await SendAsync<LiveXamlApplyResult>(
 			ToolNames.LiveAppXamlApply,
 			new Dictionary<string, object?> { ["filePath"] = filePath, ["oldXaml"] = oldXaml, ["newXaml"] = newXaml },
 			cancellationToken);
+
+		XamlChanges.Record(result, changedBy, filePath, DateTime.UtcNow);
+		return result;
+	}
+
+	/// <summary>
+	/// The live edits made to this session's app that took, with who made each. Lives as long as the session, and no
+	/// longer: a handle in it names an element of this run of the app and nothing else.
+	/// </summary>
+	public XamlChangeLog XamlChanges { get; } = new();
 
 	private Task<T> SendAsync<T>(string tool, CancellationToken cancellationToken)
 		=> SendAsync<T>(tool, EmptyArguments, cancellationToken);

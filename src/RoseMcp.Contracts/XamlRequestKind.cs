@@ -28,9 +28,10 @@ public static class XamlRequestKind
 	/// The verbs that only report. <c>properties</c> is one of them despite bringing a control's
 	/// untouched collection properties into existence as it walks them: what that changes is what a
 	/// second read of the same element calls set, which the property tool states for every read, and
-	/// not anything the app shows or a later request acts on.
+	/// not anything the app shows or a later request acts on. <c>ask</c> is another: what it changes is
+	/// whether the toolbar's Ask chip is lit, which says the press arrived and moves nothing in the app.
 	/// </summary>
-	private static readonly string[] Reads = ["tree", "properties", "selection"];
+	private static readonly string[] Reads = ["tree", "properties", "selection", "ask"];
 
 	/// <summary>
 	/// The sentence a mutating request owes its caller when the wait for its reply expired. Names the

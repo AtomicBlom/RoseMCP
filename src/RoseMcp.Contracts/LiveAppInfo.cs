@@ -72,4 +72,10 @@ public sealed record LiveAppInfo : LiveResult
 	/// explains it rather than guessing which of twenty files in the folder is the one.
 	/// </summary>
 	public string? HostLogPath { get; init; }
+
+	/// <summary>
+	/// The latest press of the in-app panel's Ask button this host has collected, or null before there has been one.
+	/// The broker opens the Inspector on a new one, and the Inspector opens its note about it.
+	/// </summary>
+	public LiveXamlAsk? XamlAsk { get; init; }
 }

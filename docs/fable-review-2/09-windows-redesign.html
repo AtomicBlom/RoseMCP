@@ -960,11 +960,8 @@ flowchart LR
       <div class="fd"><h3><span class="k">U5</span><s>Notes to an agent</s></h3>
         <p><a href="https://github.com/AtomicBlom/RoseMCP/issues/464">#464</a>. A window could not tell an agent anything. A note queues per session and rides on its next Rose call, and <code>rose_reply</code> answers it into the window.</p>
         <span class="serves">Serves C8, D8, D1</span></div>
-      <div class="fd"><h3><span class="k">U6</span>Debug sessions you start</h3>
-        <ul><li>Operator routes to list running .NET apps with windows and installed packages, and to attach and launch.</li>
-        <li>The attach rules and the clean-up after a failed start move from the agent tool into the session manager, where both routes share them.</li>
-        <li>A session's owner becomes a set: you, plus any agent session you share it with. <code>rose_debug_list</code> shows a shared session to that agent.</li>
-        <li>Two decision records change: "the inspector is always a client of a session some agent started" no longer holds.</li></ul>
+      <div class="fd"><h3><span class="k">U6</span><s>Debug sessions you start</s></h3>
+        <p><a href="https://github.com/AtomicBlom/RoseMCP/issues/465">#465</a>. Only an agent could start a debug session. A person attaches or launches through the operator API under the same rules, and shares the session with one agent session.</p>
         <span class="serves">Serves E5, E6</span></div>
       <div class="fd"><h3><span class="k">U7</span>A record of live edits</h3>
         <ul><li>Each <code>rose_xaml_apply</code> change is kept for the session: when, by which client, the element's handle, the property, old and new value.</li>
@@ -1056,10 +1053,10 @@ sequenceDiagram
 
     <div class="subtier"><h3>5c · The Inspector and the panel <span>one PR</span></h3>
     <ol class="steps cards">
-      <li data-id="5.11"><div class="body"><b>Debug an app without an agent.</b><span>The start page, attach and launch routes, owners as a set, and sharing with an agent session. This revises the two decision records that say the Inspector never starts a session.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/465">#465</a> · E5, E6 · U6 · M</span></div></li>
-      <li data-id="5.12"><div class="body"><b>The Inspector's new layout.</b><span>A header showing who's in the session, why the app stopped, Hold, and the data's age. Threads with any thread's stack, locals and Watch. The session stream with the agent's calls, and the standard stepping glyphs.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/466">#466</a> · C1–C6, E1–E4 · L · supersedes #389, #392 in part</span></div></li>
-      <li data-id="5.13"><div class="body"><b>The XAML view and the panel.</b><span>The record of live edits, change marks with their switches, Ask from the panel, and pinned measurements. The panel stays icon-only.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/467">#467</a> · D1–D8 · U7 · M · takes in #226 (card 27)</span></div></li>
-      <li data-id="5.14"><div class="body"><b>Write down why the magnifier exists.</b><span>#393 as it stands. The redesign keeps the magnifier, so this card isn't superseded.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/393">#393</a> · #393 · S</span></div></li>
+      <li data-id="5.11"><div class="body"><b><s>Debug an app without an agent.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/465">#465</a>. A person could debug only a session an agent had started. The Inspector opens on a page of running apps, a launch form and recent targets, and a session a person starts is theirs until they share it with one agent session.</span></div></li>
+      <li data-id="5.12"><div class="body"><b><s>The Inspector's new layout.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/466">#466</a>. The Inspector spread one stopped app across five tabs and showed nothing of what the agent did to it. One view holds the header, any thread's stack with locals and watches, and a stream of the app's events, the agents' calls and the person's notes, each row askable.</span></div></li>
+      <li data-id="5.13"><div class="body"><b>The XAML view and the panel.</b><span>The record of live edits, change marks with their switches, Ask from the panel, and pinned measurements. The panel stays icon-only. No test opens the pixel lens, so nothing guards its capture path against touching XAML off the UI thread, the crash class <code>overlay.md</code> records.</span><span class="uses"><a href="https://github.com/AtomicBlom/RoseMCP/issues/467">#467</a> · D1–D8 · U7 · M · takes in #226 (card 27)</span></div></li>
+      <li data-id="5.14"><div class="body"><b><s>Write down why the magnifier exists.</s></b><span><a href="https://github.com/AtomicBlom/RoseMCP/issues/393">#393</a>. Nothing said why the panel had a magnifier when Windows ships one, and a review nearly cut it. The code, a decision and the lens's tooltip say why: the Windows magnifier filters, so it can read neither an exact colour nor a one-pixel gap.</span></div></li>
     </ol></div>
   </section>
 

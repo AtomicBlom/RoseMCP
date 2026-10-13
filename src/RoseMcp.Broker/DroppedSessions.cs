@@ -11,8 +11,9 @@ namespace RoseMcp.Broker;
 /// </para>
 /// <para>
 /// Scoped by owner the way <see cref="LiveAppSessionManager.Find"/> is: that a session existed and
-/// what it was debugging is not another client's business, so a caller who did not start it is told
-/// nothing more than if it had never existed.
+/// what it was debugging is not another client's business, so a caller who was not one of its owners
+/// is told nothing more than if it had never existed. Every owner is told, the agent session a person
+/// shared it with as much as the one that started it.
 /// </para>
 /// </summary>
 public sealed class DroppedSessions(int capacity = DroppedSessions.DefaultCapacity)
@@ -34,12 +35,12 @@ public sealed class DroppedSessions(int capacity = DroppedSessions.DefaultCapaci
 		}
 	}
 
-	/// <summary>The dropped session with that id, if <paramref name="owner"/> started it.</summary>
-	public DroppedSession? Find(string sessionId, string? owner)
+	/// <summary>The dropped session with that id, if the call from <paramref name="transportSession"/>, filed under <paramref name="clientKey"/>, was one of its owners.</summary>
+	public DroppedSession? Find(string sessionId, string? transportSession, string? clientKey)
 	{
 		var dropped = ForOperator(sessionId);
 
-		return dropped is not null && string.Equals(dropped.Owner, owner, StringComparison.Ordinal) ? dropped : null;
+		return dropped is not null && dropped.Owners.Admits(transportSession, clientKey) ? dropped : null;
 	}
 
 	/// <summary>

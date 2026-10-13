@@ -33,6 +33,8 @@ public sealed class XamlRequestKindTests
 		["deselect"] = true,
 		["apply"] = true,
 		["detach"] = true,
+		["ask"] = false,
+		["changes"] = true,
 	};
 
 	/// <summary>Where the provider decides what a request means, which is the list this must match.</summary>
@@ -56,6 +58,8 @@ public sealed class XamlRequestKindTests
 	[Arguments("properties 1234", false)]
 	[Arguments("properties 1234 all", false)]
 	[Arguments("selection", false)]
+	[Arguments("ask 3", false)]
+	[Arguments("changes off", true)]
 	[Arguments("select", true)]
 	[Arguments("select rulers all myxaml", true)]
 	[Arguments("selecthandle 1234", true)]

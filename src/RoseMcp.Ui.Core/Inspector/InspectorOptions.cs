@@ -23,7 +23,7 @@ public sealed record InspectorOptions
 	/// </summary>
 	public string? Token { get; init; }
 
-	/// <summary>Which session to open on, or null to adopt the one session there is.</summary>
+	/// <summary>Which session to open on, or null to open on the start page, where a person picks an app to debug.</summary>
 	public string? SessionId { get; init; }
 
 	/// <summary>
@@ -37,8 +37,8 @@ public sealed record InspectorOptions
 	public int? TargetProcessId { get; init; }
 
 	/// <summary>
-	/// Whether to open an Inspector window even with no session named, which then adopts the one debug session
-	/// there is or says there are none or several. What "Debug an app" asks for; a launch naming nothing opens
+	/// Whether to open an Inspector window even with no session named, which then starts on the start page: the
+	/// running apps to attach to, a launch form and the targets debugged lately. What "Debug an app" asks for; a launch naming nothing opens
 	/// the RoseMCP window instead.
 	/// </summary>
 	public bool Inspect { get; init; }

@@ -64,13 +64,13 @@ public static class ResolvedImports
 
 			if (unresolvedAt is not { } at || !asked.Add(at.Name)) continue;
 
-			var (name, use) = at;
+			var (name, use, receiver) = at;
 
 			// How the name is used rules out kinds of candidate before any is counted: a namespace
 			// holding a type called Group is no answer to a call to Group(...), and counting it as the
-			// sole candidate imports it.
+			// sole candidate imports it. So is an extension method that does not take the receiver.
 			var resolution = await NameResolver.ResolveAsync(
-				snapshot, new ResolveNameRequest { Name = name, FilePath = path, Use = use }, cancellationToken);
+				snapshot, new ResolveNameRequest { Name = name, FilePath = path, Use = use, Receiver = receiver }, cancellationToken);
 
 			var usable = resolution.Candidates
 				.Where(candidate => candidate.AlreadyInScope is null && candidate.Caveat is null)

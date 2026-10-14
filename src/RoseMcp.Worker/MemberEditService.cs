@@ -740,8 +740,8 @@ public static class MemberEditService
 		var startsPair = !pairsRunOn && anchor is BasePropertyDeclarationSyntax && parsed[0] is BaseFieldDeclarationSyntax;
 		var endsPair = !pairsRunOn && parsed[^1] is BasePropertyDeclarationSyntax && follower is BaseFieldDeclarationSyntax;
 
-		var joinsAbove = Packs(anchor) && Packs(parsed[0]) && anchorIsPacked && !startsPair;
-		var joinsBelow = Packs(follower) && Packs(parsed[^1]) && !followerIsSeparated && !endsPair;
+		var joinsAbove = PacksAgainst(anchor, parsed[0]) && anchorIsPacked && !startsPair;
+		var joinsBelow = PacksAgainst(follower, parsed[^1]) && !followerIsSeparated && !endsPair;
 
 		for (var position = 0; position < parsed.Count; position++)
 		{
@@ -1367,6 +1367,29 @@ public static class MemberEditService
 	/// </summary>
 	private static bool Packs(MemberDeclarationSyntax? member) =>
 		member is BaseFieldDeclarationSyntax or BasePropertyDeclarationSyntax;
+
+	/// <summary>
+	/// Whether a member being added joins the block its neighbour is in rather than being spaced from it.
+	/// Both have to be the kind that packs, and a documented member packs only against a documented one: a
+	/// comment block written flush under an undocumented field reads as the end of that field, while a
+	/// block whose members are documented and packed already is the file saying it writes them that way.
+	/// </summary>
+	private static bool PacksAgainst(MemberDeclarationSyntax? neighbour, MemberDeclarationSyntax added) =>
+		Packs(neighbour) && Packs(added) && (!Documented(added) || Documented(neighbour!));
+
+	/// <summary>
+	/// Whether a member carries a documentation comment. A <c>///</c> line counts whether or not the
+	/// project's parse options read it as documentation, since a project that generates no documentation
+	/// file may parse it as an ordinary comment and it is still one to a reader.
+	/// </summary>
+	private static bool Documented(MemberDeclarationSyntax member)
+	{
+		var leading = member.GetLeadingTrivia();
+
+		return DocComment.Present(leading)
+			|| leading.Any(trivia => trivia.IsKind(SyntaxKind.SingleLineCommentTrivia)
+				&& trivia.ToString().StartsWith("///", StringComparison.Ordinal));
+	}
 
 	/// <summary>
 	/// What a declaration is called, which for a field is every variable it declares. Used both to

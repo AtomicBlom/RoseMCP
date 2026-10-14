@@ -115,7 +115,7 @@ public static class NameResolver
 		else
 		{
 			(found, unreferenced) = await ByNameAsync(
-				snapshot, projects, document, name, request.Use, notices, cancellationToken, progress);
+				snapshot, projects, document, name, request.Use, request.Receiver, notices, cancellationToken, progress);
 		}
 
 		progress?.Report("Working out what is in scope already", 85);
@@ -165,6 +165,7 @@ public static class NameResolver
 		Document? document,
 		string name,
 		NameUse use,
+		ITypeSymbol? receiver,
 		List<string> notices,
 		CancellationToken cancellationToken,
 		IWorkProgress? progress)
@@ -186,6 +187,8 @@ public static class NameResolver
 			progress?.Report($"Nothing is called {name}; looking for an extension method", 50);
 
 			found = await ExtensionsAsync(projects, name, cancellationToken);
+
+			if (receiver is not null) found = [.. found.Where(symbol => Takes((IMethodSymbol)symbol, receiver))];
 
 			if (found.Count > 0 && use.TakesAType())
 			{
@@ -318,6 +321,14 @@ public static class NameResolver
 			symbol => symbol is IMethodSymbol { IsExtensionMethod: true },
 			cancellationToken);
 	}
+
+	/// <summary>
+	/// Whether an extension method can be called on <paramref name="receiver"/>, its type arguments
+	/// inferred from it where it is generic. A receiver whose type did not bind takes nothing: no import
+	/// can be shown to fix a call on it, and the one a name search finds is a guess.
+	/// </summary>
+	private static bool Takes(IMethodSymbol extension, ITypeSymbol receiver) =>
+		receiver.TypeKind != TypeKind.Error && extension.ReduceExtensionMethod(receiver) is not null;
 
 	/// <summary>
 	/// Types of that name anywhere in the solution's own source, used only once the file's project

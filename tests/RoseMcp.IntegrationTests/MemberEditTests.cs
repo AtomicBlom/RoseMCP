@@ -377,6 +377,66 @@ public sealed class MemberEditTests
 	}
 
 	/// <summary>
+	/// A documented member packed against an undocumented one reads as the end of the member above it, so
+	/// one is spaced out of a block of undocumented fields on whichever side it would have joined. A block
+	/// whose fields are documented and packed already is the file saying it writes them that way, and a
+	/// documented field joins it.
+	/// </summary>
+	[Test]
+	[Arguments(
+		"After",
+		"_inNmi",
+		"\tprivate bool _inNmi;\r\n\r\n\t/// <summary>Added.</summary>\r\n\tprivate int _added;\r\n\r\n\t/// <summary>First.</summary>")]
+	[Arguments(
+		"Before",
+		"_inNmi",
+		"\tprivate int _spins;\r\n\r\n\t/// <summary>Added.</summary>\r\n\tprivate int _added;\r\n\r\n\tprivate bool _inNmi;")]
+	[Arguments(
+		"After",
+		"_first",
+		"\tprivate int _first;\r\n\t/// <summary>Added.</summary>\r\n\tprivate int _added;\r\n\t/// <summary>Second.</summary>")]
+	public async Task Spaces_a_documented_field_out_of_a_block_of_undocumented_ones(string side, string anchor, string expected)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Packed.cs"),
+			"""
+			namespace Library;
+
+			public sealed class Packed
+			{
+				private int _spins;
+				private bool _inNmi;
+
+				/// <summary>First.</summary>
+				private int _first;
+				/// <summary>Second.</summary>
+				private int _second;
+
+				public int All => _spins + (_inNmi ? 1 : 0) + _first + _second;
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Packed",
+			Code = "/// <summary>Added.</summary>\nprivate int _added;",
+			After = side == "After" ? anchor : null,
+			Before = side == "Before" ? anchor : null,
+		});
+
+		result.Applied.ShouldBeTrue();
+
+		(await ReadAsync(fixture, "Packed.cs")).ShouldContain(expected, Case.Sensitive);
+	}
+
+	/// <summary>
 	/// A backing field and the property over it are a block as much as a run of fields is. A pair added
 	/// as a pair stays packed, and a property added under a packed one joins it rather than opening a gap
 	/// in the middle of the pair.
@@ -1151,6 +1211,42 @@ public sealed class MemberEditTests
 				&& notice.Contains("taken back out", StringComparison.Ordinal));
 
 		(await ReadAsync(fixture, "Greeter.cs")).ShouldNotContain("using Library.Extras;", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A name after a dot is answered by an extension method only where the method takes the receiver,
+	/// which is the question the compiler's CS1061 asks. <c>Shouted</c> takes a string: called on one it
+	/// is imported, and called on an int nothing is. Importing it there would turn the CS1061 into a
+	/// CS1929 -- a different error, read as the name resolving -- and leave a using the call never needs.
+	/// </summary>
+	[Test]
+	[Arguments("string", true)]
+	[Arguments("int", false)]
+	public async Task Imports_an_extension_only_where_it_takes_the_receiver(string receiver, bool imports)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = $"public string Loud({receiver} value) => value.Shouted();",
+		});
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		if (imports)
+		{
+			result.IntroducedDiagnostics.ShouldBeEmpty();
+			text.ShouldContain("using Library.Extras;", Case.Sensitive);
+
+			return;
+		}
+
+		result.IntroducedDiagnostics.ShouldContain(entry => entry.Id == "CS1061");
+		result.Notices.ShouldContain(notice => notice.Contains("Shouted is used after a dot here", StringComparison.Ordinal));
+		text.ShouldNotContain("using Library.Extras;", Case.Sensitive);
 	}
 
 	/// <summary>

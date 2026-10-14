@@ -130,7 +130,7 @@ public static class BodyEdit
 		}
 
 		var at = matches[0];
-		var start = present[at].SpanStart;
+		var start = present[at].Span.Start;
 		var end = present[at + wanted.Count - 1].Span.End;
 
 		// Token by token rather than as one span, because what lies between two of them was not in find:
@@ -173,6 +173,12 @@ public static class BodyEdit
 	/// pass writes around it.
 	/// </para>
 	/// <para>
+	/// A needle on one line has no ending to follow, so it says nothing either way, and the replacement's
+	/// bare LFs are read as artefacts. They take the ending of the line the match is on, which inside a
+	/// literal is the ending the string already has, so a line added to a literal written with bare LFs
+	/// keeps them and one added to a CRLF literal does not leave a bare LF in it.
+	/// </para>
+	/// <para>
 	/// What is reported of that is decided on the body as it will be written, since a replacement is
 	/// as often the words inside a string already in the file as code carrying a literal of its own:
 	/// only the endings that land inside a literal's value changed a string, and the rest are layout.
@@ -207,6 +213,13 @@ public static class BodyEdit
 					written = Normalised(replace, lineEnding ?? ending, out changed);
 				}
 			}
+		}
+		else if (!find.Contains('\n', StringComparison.Ordinal))
+		{
+			// A needle on one line matched as written without saying anything about endings, so the
+			// replacement's bare LFs are read as transport too. They take the ending of the line the match
+			// is on rather than the file's, since inside a literal that is the ending the string already has.
+			written = Normalised(replace, EndingAfter(body, matches[0]) ?? lineEnding ?? Whitespace.Dominant(body), out changed);
 		}
 
 		if (matches.Count == 0)
@@ -260,6 +273,17 @@ public static class BodyEdit
 		}
 
 		return found;
+	}
+
+	/// <summary>
+	/// The ending of the line <paramref name="at"/> is on, or null where it is on the last line and has none.
+	/// </summary>
+	private static string? EndingAfter(string body, int at)
+	{
+		var feed = body.IndexOf('\n', at);
+		if (feed < 0) return null;
+
+		return feed > 0 && body[feed - 1] == '\r' ? "\r\n" : "\n";
 	}
 
 	/// <summary>
@@ -355,7 +379,9 @@ public static class BodyEdit
 
 	/// <summary>
 	/// The stretches of the body whose content is text rather than code: every comment, and every string
-	/// or character literal including the pieces of an interpolated one.
+	/// or character literal. An interpolated string is one stretch, holes and all, as the lexer reads it:
+	/// a match inside a hole is contained in the string, and one that runs on past the closing quote
+	/// rewrites a delimiter like any other.
 	/// <para>
 	/// A run of <c>//</c> comments on consecutive lines is one stretch rather than one per line, and is
 	/// marked as such. Roslyn makes each line its own trivia, but to anybody reading the file the run is
@@ -416,7 +442,7 @@ public static class BodyEdit
 				or SyntaxKind.SingleLineRawStringLiteralToken
 				or SyntaxKind.MultiLineRawStringLiteralToken
 				or SyntaxKind.CharacterLiteralToken
-				or SyntaxKind.InterpolatedStringTextToken;
+				or SyntaxKind.InterpolatedStringToken;
 
 			if (literal) stretches.Add(TextStretch.Of(token.Span, "a string"));
 
@@ -654,12 +680,33 @@ public static class BodyEdit
 	/// The tokens of a piece of code, trivia dropped. Matching on these rather than on text is what
 	/// makes an anchor survive a difference of indentation or line ending, which is a real way a text
 	/// edit misses in a repository whose files disagree about either.
+	/// <para>
+	/// An interpolated string is read as the parser reads it, holes as code. The lexer hands the whole
+	/// string back as one token and leaves splitting it to the parser, so read by the lexer alone an
+	/// expression inside a hole is no token at all, and an anchor on it matched nothing.
+	/// </para>
 	/// </summary>
-	private static IReadOnlyList<SyntaxToken> Tokens(string code) =>
+	private static IReadOnlyList<Lexeme> Tokens(string code) =>
 		[
 			.. SyntaxFactory.ParseTokens(code)
-				.Where(token => !token.IsKind(SyntaxKind.EndOfFileToken) && token.Span.Length > 0),
+				.SelectMany(token => token.IsKind(SyntaxKind.InterpolatedStringToken)
+					? Interpolated(token)
+					: [new Lexeme(token.Text, token.Span)])
+				.Where(lexeme => lexeme.Span.Length > 0),
 		];
+
+	/// <summary>
+	/// The tokens of an interpolated string as the parser splits it -- its delimiters, its text, and the
+	/// code in each hole, a string nested in one included -- each placed where it sits in the code the
+	/// string came from.
+	/// </summary>
+	private static IEnumerable<Lexeme> Interpolated(SyntaxToken token) =>
+		SyntaxFactory.ParseExpression(token.Text)
+			.DescendantTokens()
+			.Select(piece => new Lexeme(piece.Text, new TextSpan(token.SpanStart + piece.SpanStart, piece.Span.Length)));
+
+	/// <summary>A token's text and where it sits in the code it was read from.</summary>
+	private readonly record struct Lexeme(string Text, TextSpan Span);
 
 	/// <summary>
 	/// The first comment in the code, or null where it carries none. Trivia rather than a token, so
@@ -714,7 +761,7 @@ public static class BodyEdit
 	}
 
 	/// <summary>Every index in <paramref name="present"/> where <paramref name="wanted"/> starts.</summary>
-	private static IReadOnlyList<int> Matches(IReadOnlyList<SyntaxToken> present, IReadOnlyList<SyntaxToken> wanted)
+	private static IReadOnlyList<int> Matches(IReadOnlyList<Lexeme> present, IReadOnlyList<Lexeme> wanted)
 	{
 		var found = new List<int>();
 
@@ -758,13 +805,13 @@ public static class BodyEdit
 
 	/// <summary>Where the matches are, counted in tokens, so a caller can see why it is ambiguous.</summary>
 	private static string Where(
-		IReadOnlyList<SyntaxToken> present,
-		IReadOnlyList<SyntaxToken> wanted,
+		IReadOnlyList<Lexeme> present,
+		IReadOnlyList<Lexeme> wanted,
 		IReadOnlyList<int> matches)
 	{
 		_ = wanted;
 
-		var offsets = matches.Take(Listed).Select(at => present[at].SpanStart).ToArray();
+		var offsets = matches.Take(Listed).Select(at => present[at].Span.Start).ToArray();
 
 		return $" (at offsets {string.Join(", ", offsets)}{(matches.Count > Listed ? ", ..." : string.Empty)})";
 	}

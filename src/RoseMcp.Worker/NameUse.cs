@@ -85,8 +85,8 @@ public static class NameUses
 			+ $"not invoked, and an extension method needs a receiver. Declare {name}, or qualify the call.",
 		NameUse.Type => $"{name} is used as a type here, and no type of that name is in reach, so no import would "
 			+ "fix it.",
-		NameUse.Member => $"{name} is used after a dot here, and no extension method of that name is in reach, so "
-			+ "no import would fix it.",
+		NameUse.Member => $"{name} is used after a dot here, and no extension method of that name that takes what it "
+			+ "is called on is in reach, so no import would fix it.",
 		_ => null,
 	};
 }

@@ -58,6 +58,15 @@ joined with the block's own ending for the same reason in reverse: joins of anot
 the file's text look as though nobody had a view about endings, and a literal of its own holding a
 deliberate bare LF would be rewritten by an insertion that never touched it.
 
+A find-and-replace on the text (`includeTrivia`) has a needle as well as a replacement, and the
+replacement follows the needle. A needle spanning lines that matches only once its LFs are given
+the body's endings says the LFs were transport, so the replacement's are too; one that matches as
+written says they were the text's, which is how a literal written with bare LFs in a CRLF file is
+reached, and the replacement is taken literally with it. A needle on one line says neither, so it
+is read as saying nothing, and the replacement takes the ending of the line the match is on: the
+ending the literal it is editing already has. Splicing its LF as given left one bare LF in a CRLF
+literal on the commonest edit there is, adding a line to a usage string.
+
 A new file is asked as a whole. `rose_add_file` puts a namespace and imports around what the
 caller sent, so the condition is asked of the payload before either goes on, and each literal is
 named by its line in what was sent rather than in the file that comes out. An all-LF payload lands

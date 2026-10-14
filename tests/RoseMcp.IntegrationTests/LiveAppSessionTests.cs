@@ -76,6 +76,11 @@ public sealed class LiveAppSessionTests
 			marker.ShouldNotBeNull();
 			marker!.ExceptionType!.ShouldContain("RoseDebugProbeException", Case.Sensitive);
 
+			// And what it says about itself, read from its fields since Message is a getter: the type
+			// names the kind of failure, and only the message says which one.
+			marker.ExceptionMessage.ShouldBe("rose debug probe");
+			marker.Message.ShouldEndWith(": rose debug probe", Case.Sensitive);
+
 			// The exception carries a stack, and the throwing method is on it (#7, stack walk).
 			marker.Frames.ShouldNotBeNull();
 			marker.Frames!.ShouldContain(frame => frame.Contains("DebugProbeTarget.Program"));

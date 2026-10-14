@@ -27,6 +27,18 @@ public sealed record LiveDebugEvent
 	public string? ExceptionType { get; init; }
 
 	/// <summary>
+	/// What the exception says about itself, for an exception event: the message it was constructed with
+	/// and, for one about a file, which file. Null where it carries neither.
+	/// <para>
+	/// Read from its fields rather than from <c>Message</c>, which is a virtual property and so code in
+	/// the target. <c>FileLoadException</c> builds its message on first read from the file and the HRESULT,
+	/// so at first chance the file may be all it holds, and which assembly would not load is the whole of
+	/// what such an exception reports.
+	/// </para>
+	/// </summary>
+	public string? ExceptionMessage { get; init; }
+
+	/// <summary>
 	/// The managed call stack, innermost first, for an event captured while a thread was stopped (an
 	/// exception or a stopping breakpoint). Each entry is a resolved <c>Namespace.Type.Method</c>;
 	/// frames that could not be resolved are left out. Null when no stack was captured.

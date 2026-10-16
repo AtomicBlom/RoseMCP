@@ -111,6 +111,27 @@ public sealed class WindowsRunningApps : IRunningApps
 	}
 
 	/// <summary>
+	/// Whether a process runs .NET, by the runtime modules it has loaded; false for one this user cannot open for reading.
+	/// A single-file app is missed, since it loads no runtime module, which leaves it out of a frame host's apps rather
+	/// than attaching anywhere it should not.
+	/// </summary>
+	[SupportedOSPlatform("windows")]
+	internal static bool RunsDotNet(int processId)
+	{
+		var handle = OpenProcess(ProcessQueryInformation | ProcessVmRead, false, processId);
+		if (handle == IntPtr.Zero) return false;
+
+		try
+		{
+			return RunningApps.RunsDotNet(ModuleNames(handle));
+		}
+		finally
+		{
+			CloseHandle(handle);
+		}
+	}
+
+	/// <summary>
 	/// Each process with a visible, unowned, titled top-level window that is not a tool window, to that window's
 	/// title; a packaged app's frame window credited to the app inside it.
 	/// </summary>

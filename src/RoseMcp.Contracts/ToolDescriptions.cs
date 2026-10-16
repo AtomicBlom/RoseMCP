@@ -375,7 +375,8 @@ public static class ToolDescriptions
 	/// </para>
 	/// </summary>
 	public const string ProcessIdArgument =
-		"The process id to attach to. Must be a local process owned by the current user.";
+		"A local process owned by the current user. ApplicationFrameHost, which owns a packaged app's window, "
+			+ "attaches to the app inside it.";
 
 	/// <summary>
 	/// Whether to open the inspector window on the new session.

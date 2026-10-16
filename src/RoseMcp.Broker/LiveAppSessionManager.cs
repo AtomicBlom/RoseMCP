@@ -253,12 +253,19 @@ public sealed class LiveAppSessionManager(
 	/// refused where it may not; two attaches to one process at once are one attach and one refusal, and so are an
 	/// attach and a launch of the packaged app the process runs as, since both would be a debugger on it.
 	/// </para>
+	/// <para>
+	/// <c>ApplicationFrameHost</c> is resolved to the app inside its one frame before any of that, since it owns every
+	/// packaged app's window and so is what a process found by its window title is (<see cref="FrameHost"/>). Framing
+	/// none, or several, it is refused naming them.
+	/// </para>
 	/// </summary>
 	/// <exception cref="ArgumentException">The process may not be attached to, and the message says why.</exception>
 	/// <exception cref="LiveAppRefusedException">Another client's session is debugging it, an attach to it is already starting, or the host could not attach.</exception>
-	public async Task<LiveAppStart> AttachAsync(int processId, LiveAppOwners owners, CancellationToken cancellationToken)
+	public async Task<LiveAppStart> AttachAsync(int requestedId, LiveAppOwners owners, CancellationToken cancellationToken)
 	{
 		ArgumentNullException.ThrowIfNull(owners);
+
+		var (processId, moved) = FrameHost.Resolve(requestedId, _options.FramedAppsOf(requestedId));
 
 		LocalAttachPolicy.EnsureAttachable(processId);
 		EnsureNotRose(processId);
@@ -269,16 +276,23 @@ public sealed class LiveAppSessionManager(
 			: Claim(what, $"pid:{processId}");
 
 		var open = Sessions.FirstOrDefault(session => Debugs(session, processId));
-		if (Reached(open, owners, what) is { } existing) return existing;
+		var started = Reached(open, owners, what);
 
-		var target = new LiveAppTarget
+		if (started is null)
 		{
-			Kind = LiveAppTargetKind.AttachProcess,
-			ProcessId = processId,
-			Description = DescribeProcess(processId),
-		};
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = processId,
+				Description = DescribeProcess(processId),
+			};
 
-		return await StartCheckedAsync(target, owners, $"Could not attach to pid {processId}.", cancellationToken);
+			started = await StartCheckedAsync(target, owners, $"Could not attach to pid {processId}.", cancellationToken);
+		}
+
+		if (moved is not null) started.Session.Note(moved);
+
+		return started;
 	}
 
 	/// <summary>

@@ -180,6 +180,13 @@ public sealed class BrokerOptions
 	public Func<int, string?> AppUserModelIdOf { get; set; } = PackagedProcess.AppUserModelIdOf;
 
 	/// <summary>
+	/// The .NET apps a process frames when it is <c>ApplicationFrameHost</c>, or null when it is not: what lets an attach
+	/// that names the frame host reach the app inside it. Read from the desktop everywhere but a test, which says what its
+	/// pretend frame host frames.
+	/// </summary>
+	public Func<int, IReadOnlyList<FramedApp>?> FramedAppsOf { get; set; } = FrameHost.AppsFramedBy;
+
+	/// <summary>
 	/// Starts the transport to the live-app host a session talks to, in place of the host process for the target's
 	/// architecture; null starts that process. Set only by a test that stands a host of its own in for the real one,
 	/// so the session manager's rules can be driven where no debugger can run.

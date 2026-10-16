@@ -106,12 +106,14 @@ public sealed class OperatorDebugging(
 
 		if (!started.Existing)
 		{
-			var executable = ExecutableOf(request.ProcessId);
+			// The process attached to, which is not the one asked for where that was the frame host around an app's window.
+			var attached = started.Session.Target.ProcessId ?? request.ProcessId;
+			var executable = ExecutableOf(attached);
 
 			Remember(new RecentTargetRecord
 			{
 				Kind = nameof(LiveAppTargetKind.AttachProcess),
-				DisplayName = executable is null ? started.Session.Target.Description ?? $"pid {request.ProcessId}" : Path.GetFileNameWithoutExtension(executable),
+				DisplayName = executable is null ? started.Session.Target.Description ?? $"pid {attached}" : Path.GetFileNameWithoutExtension(executable),
 				ExecutablePath = executable,
 				LastUsedUtc = sessions.UtcNow,
 			});

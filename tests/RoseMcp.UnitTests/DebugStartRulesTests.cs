@@ -62,6 +62,45 @@ public sealed class DebugStartRulesTests : IDisposable
 		refused.Message.ShouldContain("this broker");
 	}
 
+	/// <summary>
+	/// An attach naming the frame host is resolved before any other rule: framing several apps it is refused naming
+	/// them, and framing one it is that app that is checked -- here one that is not running, which is the refusal
+	/// that shows the frame host itself was never what was attached to. No host is started either way.
+	/// </summary>
+	[Test]
+	public async Task An_attach_to_the_frame_host_is_made_to_the_app_inside_it()
+	{
+		const int FrameHostId = 29552;
+		const int Gone = int.MaxValue - 9;
+
+		var framed = new List<FramedApp> { new(Gone, "Drawboard Projects"), new(int.MaxValue - 11, "WinUI 2 Gallery") };
+
+		await using var hosts = new FakeLiveAppHost();
+		await using var sessions = new LiveAppSessionManager(
+			Options.Create(new BrokerOptions
+			{
+				LiveAppHost = hosts.For,
+				AppUserModelIdOf = _ => null,
+				FramedAppsOf = processId => processId == FrameHostId ? framed : null,
+			}),
+			NullLoggerFactory.Instance,
+			NullLogger<LiveAppSessionManager>.Instance);
+
+		var ambiguous = await Should.ThrowAsync<ArgumentException>(
+			() => sessions.AttachAsync(FrameHostId, LiveAppOwners.Person, CancellationToken.None));
+		ambiguous.Message.ShouldContain("ApplicationFrameHost", Case.Sensitive);
+		ambiguous.Message.ShouldContain($"pid {Gone}, 'Drawboard Projects'", Case.Sensitive);
+
+		framed.RemoveAt(1);
+
+		var resolved = await Should.ThrowAsync<ArgumentException>(
+			() => sessions.AttachAsync(FrameHostId, LiveAppOwners.Person, CancellationToken.None));
+		resolved.Message.ShouldContain($"No local process with id {Gone}", Case.Sensitive);
+
+		hosts.Started.ShouldBe(0);
+		sessions.Sessions.ShouldBeEmpty();
+	}
+
 	/// <summary>A process that is not running is said to be not running, rather than handed to a host that would fault.</summary>
 	[Test]
 	public async Task A_process_that_is_not_running_is_refused()

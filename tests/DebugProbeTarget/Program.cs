@@ -84,9 +84,10 @@ internal static class Program
 internal sealed class RoseDebugProbeException() : Exception("rose debug probe");
 
 /// <summary>
-/// A small object graph the evaluation and expansion tests drill into. Public fields (not
-/// properties) so a field-access reader can get at them without running a getter, and one array so
-/// an indexed path has something real to index.
+/// A small object graph the evaluation and expansion tests drill into. Mostly public fields, so a
+/// field-access reader can get at them without running a getter; one array, so an indexed path has
+/// something real to index; and one property of each kind, an auto-implemented one a read reaches and a
+/// computed one it refuses.
 /// </summary>
 internal sealed class ProbeState
 {
@@ -108,4 +109,16 @@ internal sealed class ProbeState
 	public string LongUrl = "https://example.invalid/authorize?response_type=code&client_id="
 		+ new string('a', 300)
 		+ "&redirect_uri=https%3a%2f%2flocalhost%2fcallback&scope=data%3aread%20data%3awrite&end=TAIL";
+
+	/// <summary>
+	/// An auto-implemented property, which a read reaches through the field the compiler declared behind
+	/// it while the path names the property, the way the source does.
+	/// </summary>
+	public string Mood { get; set; } = "calm";
+
+	/// <summary>
+	/// A property whose getter is code of its own. A read here runs none of the target's code, so this one
+	/// is refused, saying why, rather than reported as missing.
+	/// </summary>
+	public int Twice => Count * 2;
 }

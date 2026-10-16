@@ -118,6 +118,48 @@ public static class MethodTokens
 	}
 
 	/// <summary>
+	/// The field the C# compiler declares behind an auto-implemented property of this name. A record's
+	/// positional property and a property using the <c>field</c> keyword are backed the same way.
+	/// </summary>
+	public static string BackingFieldOf(string propertyName) => $"<{propertyName}>{BackingFieldSuffix}";
+
+	/// <summary>
+	/// The property a compiler-declared backing field implements, or null for a field somebody wrote.
+	/// A reader names the property, since that is what the source calls the value.
+	/// </summary>
+	public static string? PropertyBackedBy(string fieldName)
+	{
+		var isBacking = fieldName.Length > BackingFieldSuffix.Length + 2
+			&& fieldName[0] == '<'
+			&& fieldName.EndsWith($">{BackingFieldSuffix}", StringComparison.Ordinal);
+
+		return isBacking ? fieldName[1..^(BackingFieldSuffix.Length + 1)] : null;
+	}
+
+	/// <summary>
+	/// Whether a type declares a property of this name itself, not through a base. Asked once a name has
+	/// matched no field, to say that what it names is a property whose getter is code.
+	/// </summary>
+	public static bool DeclaresProperty(string modulePath, int typeToken, string propertyName)
+	{
+		try
+		{
+			if (Read(modulePath) is not { } metadata) return false;
+
+			var type = metadata.GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.EntityHandle(typeToken));
+
+			return type.GetProperties()
+				.Any(handle => metadata.StringComparer.Equals(metadata.GetPropertyDefinition(handle).Name, propertyName));
+		}
+		catch (Exception)
+		{
+			return false;
+		}
+	}
+
+	private const string BackingFieldSuffix = "k__BackingField";
+
+	/// <summary>
 	/// The fields a type declares, for listing what a value holds.
 	/// <para>
 	/// This type's own only. A base class's fields are as much a part of the object, but the base

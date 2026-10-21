@@ -141,6 +141,7 @@ public sealed class ProducedFactTests
 		["LiveDebugEvent.Frames"] = "The stack at a stop, read with the event rather than asked about.",
 		["LiveDebugEvent.Variables"] = "The frame at a stop, read with the event rather than asked about.",
 		["LiveDebugEvent.Logged"] = "The values a tracepoint was asked to log, read with the event.",
+		["LiveDebugEvent.ExceptionMessage"] = "What one throw says about itself, read with the event; exceptionType selects the kind, and a message is particular to the one thrown.",
 
 		// Facts the RoseMCP window has an equivalent of rather than the fact itself.
 		["WorkerActivity.StartedUtc"] = "A worker's own activity list is the Inspector's, by name; the RoseMCP window shows the activity record's times instead.",

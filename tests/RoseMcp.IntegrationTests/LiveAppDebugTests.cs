@@ -350,6 +350,15 @@ public sealed class LiveAppDebugTests
 			var missing = await session.EvaluateAsync("state.Nope", cancellationToken);
 			missing.Error.ShouldNotBeNull();
 
+			// An auto-property reads by its own name, through the field the compiler declared for it.
+			var mood = await session.EvaluateAsync("state.Mood", cancellationToken);
+			mood.Error.ShouldBeNull();
+			mood.Value.ShouldBe("\"calm\"");
+
+			// A property whose getter is code is refused for that reason, not reported as missing.
+			var twice = await session.EvaluateAsync("state.Twice", cancellationToken);
+			twice.Error.ShouldNotBeNull().ShouldContain("getter of its own", Case.Sensitive);
+
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
 			(await session.ContinueAsync(cancellationToken)).ShouldBeTrue();
 			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
@@ -630,6 +639,74 @@ public sealed class LiveAppDebugTests
 	}
 
 	/// <summary>
+	/// Two tracepoints at one place each log their own message. Both are named by method, so both sit at
+	/// its first instruction, and nothing a hit carries says which of two runtime breakpoints there it
+	/// came from: matched one by one, every hit went to the first and the second's message was never
+	/// logged. They share the place, and a hit there is a hit of each.
+	/// <para>
+	/// Removing one leaves the other firing, which is what says the runtime breakpoint they share
+	/// stays active while anything still asks for it.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task Two_tracepoints_at_one_place_each_log_their_own_message()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
+
+			var first = await session.AddTracepointAsync(
+				"DebugProbeTarget.Program.Beat", "first {iteration}", logEveryNthHit: null, condition: null, cancellationToken);
+			var second = await session.AddTracepointAsync(
+				"DebugProbeTarget.Program.Beat", "second {iteration}", logEveryNthHit: null, condition: null, cancellationToken);
+
+			first.Bound.ShouldBeTrue($"the first should bind; detail: {first.Detail}");
+			second.Bound.ShouldBeTrue($"the second should bind; detail: {second.Detail}");
+
+			var fromSecond = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains(": second ", StringComparison.Ordinal),
+				cancellationToken,
+				second.Cursor);
+			fromSecond.ShouldNotBeNull("the second tracepoint's own message should be logged");
+
+			var fromFirst = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains(": first ", StringComparison.Ordinal),
+				cancellationToken,
+				second.Cursor);
+			fromFirst.ShouldNotBeNull("the first tracepoint's own message should be logged");
+
+			// Each counted the hits for itself, rather than one counting both.
+			var listed = await session.ListTracepointsAsync(cancellationToken);
+			listed.Tracepoints.Count.ShouldBe(2);
+			listed.Tracepoints.ShouldAllBe(tracepoint => tracepoint.HitCount > 0);
+
+			var removed = await session.RemoveTracepointAsync(first.Id, cancellationToken);
+			removed.Tracepoints.ShouldHaveSingleItem().Id.ShouldBe(second.Id);
+
+			var afterRemoval = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains(": second ", StringComparison.Ordinal),
+				cancellationToken,
+				removed.Cursor);
+			afterRemoval.ShouldNotBeNull("the place stays active for the tracepoint still at it");
+
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("the target runs on through its tracepoints");
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
 	/// A tracepoint's message interpolates the frame it fired on: an argument by name, a field chain
 	/// into an object, and a local named from the module's PDB. It is the whole point of a tracepoint
 	/// -- a hit with no values says only that the code ran, which is the one thing a caller who set a
@@ -662,7 +739,7 @@ public sealed class LiveAppDebugTests
 			// holds, and mark indexes an array -- the three shapes a path has, in one message.
 			var tracepoint = await session.AddTracepointAsync(
 				"DebugProbeTarget.Program.Inspect",
-				"count={state.Count} inner={state.Inner.Count} mark={state.Marks[1]} missing={nope}",
+				"count={state.Count} inner={state.Inner.Count} mark={state.Marks[1]} mood={state.Mood} missing={nope}",
 				logEveryNthHit: null,
 				condition: null,
 				cancellationToken);
@@ -680,7 +757,7 @@ public sealed class LiveAppDebugTests
 			// count is whatever iteration this hit was; inner and mark are fixed by the probe, so
 			// they pin the field chain and the index rather than merely showing digits appeared.
 			hit!.Message.ShouldNotContain("{state.Count}", Case.Sensitive);
-			hit.Message.ShouldMatch(@"count=\d+ inner=-1 mark=8 ");
+			hit.Message.ShouldMatch(@"count=\d+ inner=-1 mark=8 mood=""calm"" ");
 
 			// A name the frame does not have keeps its place and says why, because a hit that
 			// silently dropped it would read as the value having been empty.
@@ -688,7 +765,7 @@ public sealed class LiveAppDebugTests
 
 			hit.Logged.ShouldNotBeNull();
 			hit.Logged!.Select(value => value.Name).ToArray().ShouldBe(
-				new[] { "state.Count", "state.Inner.Count", "state.Marks[1]", "nope" });
+				new[] { "state.Count", "state.Inner.Count", "state.Marks[1]", "state.Mood", "nope" });
 
 			var inner = hit.Logged.Single(value => value.Name == "state.Inner.Count");
 			inner.Value.ShouldBe("-1");
@@ -705,7 +782,7 @@ public sealed class LiveAppDebugTests
 			var one = await session.ReadEventsAsync(0, null, 500, 0, hit.Sequence, cancellationToken);
 			one.Events.ShouldHaveSingleItem().Sequence.ShouldBe(hit.Sequence);
 			one.Events[0].Message.ShouldBe(hit.Message);
-			one.Events[0].Logged!.Count.ShouldBe(4);
+			one.Events[0].Logged!.Count.ShouldBe(5);
 
 			// A sequence the buffer does not hold answers empty rather than with the next event
 			// along, which would be a different hit reported as the one asked for.

@@ -470,10 +470,10 @@ internal sealed class TargetBreakpoints(DebuggedTarget target, DebugEventBuffer 
 	internal void ReleaseForDetach() => _breakpoints.ReleaseForDetach();
 
 	/// <summary>
-	/// The binding a hit belongs to, and which hit of it this is. Null when nothing claims it, which
-	/// is what a breakpoint set by something other than this session looks like. Called with the gate
-	/// held, from the callback that announced the hit.
+	/// The bindings a hit belongs to, each with which hit of it this is: several where several were set
+	/// at one place, none where nothing claims it, which is what a breakpoint set by something other than
+	/// this session looks like. Called with the gate held, from the callback that announced the hit.
 	/// </summary>
-	internal (BreakpointBinding? Binding, long Ordinal) Match(CorDebugFunctionBreakpoint? breakpoint) =>
+	internal IReadOnlyList<(BreakpointBinding Binding, long Ordinal)> Match(CorDebugFunctionBreakpoint? breakpoint) =>
 		_breakpoints.Match(breakpoint);
 }

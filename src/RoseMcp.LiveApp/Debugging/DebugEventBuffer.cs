@@ -46,7 +46,8 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 		string? exceptionType = null,
 		IReadOnlyList<string>? frames = null,
 		IReadOnlyList<LiveVariable>? variables = null,
-		IReadOnlyList<LiveVariable>? logged = null)
+		IReadOnlyList<LiveVariable>? logged = null,
+		string? exceptionMessage = null)
 	{
 		lock (_gate)
 		{
@@ -60,6 +61,7 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 				ThreadId = threadId,
 				ModuleName = moduleName,
 				ExceptionType = exceptionType,
+				ExceptionMessage = exceptionMessage,
 				Frames = frames,
 				Variables = variables,
 				Logged = logged,

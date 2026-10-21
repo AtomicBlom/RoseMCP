@@ -484,10 +484,15 @@ internal sealed class CorDebugInspector(ILogger logger)
 		{
 			if (step.Field is { } field)
 			{
-				current = ResolveField(current, field);
+				var owner = current;
+				current = ResolveField(owner, field);
 				if (current is null)
 				{
-					failure = $"'{walked}' has no readable field '{field}' (not a field of that value, or it is null).";
+					failure = DeclaresProperty(owner, field)
+						? $"'{walked}.{field}' is a property with a getter of its own, and reading it would run the target's code, "
+							+ "which a read here never does. Name the field it returns instead; an auto-implemented property reads "
+							+ "by its own name."
+						: $"'{walked}' has no readable field '{field}' (not a field or auto-property of that value, or it is null).";
 					return null;
 				}
 
@@ -661,6 +666,12 @@ internal sealed class CorDebugInspector(ILogger logger)
 
 	private static LiveVariable DescribeField(CorDebugObjectValue objectValue, CorDebugClass cls, FieldMember field, string basePath)
 	{
+		// An auto-property's field is listed as the property, so the path it carries is the one a person
+		// would write and resolves back through the same read.
+		var property = MethodTokens.PropertyBackedBy(field.Name);
+		var name = property ?? field.Name;
+		var kind = property is null ? "field" : "property";
+
 		try
 		{
 			// GetFieldValue wants the raw ICorDebugClass; the ClrDebug wrapper is not it, and casting
@@ -669,11 +680,11 @@ internal sealed class CorDebugInspector(ILogger logger)
 
 			return new LiveVariable
 			{
-				Name = field.Name,
-				Kind = "field",
+				Name = name,
+				Kind = kind,
 				TypeName = read.TypeName,
 				Value = read.Value,
-				Path = ValuePath.Field(basePath, field.Name),
+				Path = ValuePath.Field(basePath, name),
 				HasChildren = read.HasChildren,
 				FullLength = read.FullLength,
 			};
@@ -684,10 +695,10 @@ internal sealed class CorDebugInspector(ILogger logger)
 			// unreadable rather than dropped, so a reader is not left wondering where it went.
 			return new LiveVariable
 			{
-				Name = field.Name,
-				Kind = "field",
+				Name = name,
+				Kind = kind,
 				Value = "(unreadable)",
-				Path = ValuePath.Field(basePath, field.Name),
+				Path = ValuePath.Field(basePath, name),
 				HasChildren = false,
 			};
 		}
@@ -824,12 +835,85 @@ internal sealed class CorDebugInspector(ILogger logger)
 		return FieldOn(objectValue, objectValue.Class, fieldName);
 	}
 
-	/// <summary>Reads a field declared on one level of a value's type chain, or null if it is not there.</summary>
+	/// <summary>
+	/// Whether any level of a value's type chain declares a property of this name, asked once the name
+	/// has matched no field so a refusal can say the property is code rather than that nothing is there.
+	/// </summary>
+	private static bool DeclaresProperty(CorDebugValue value, string name)
+	{
+		try
+		{
+			var unwrapped = Unwrap(value);
+			if (unwrapped is not CorDebugObjectValue objectValue) return false;
+
+			for (var type = ExactTypeOf(unwrapped); type is not null; type = BaseOf(type))
+			{
+				if (MethodTokens.DeclaresProperty(type.Class.Module.Name, (int)type.Class.Token, name)) return true;
+			}
+
+			return MethodTokens.DeclaresProperty(objectValue.Class.Module.Name, (int)objectValue.Class.Token, name);
+		}
+		catch (Exception)
+		{
+			return false;
+		}
+	}
+
+	/// <summary>
+	/// What a thrown exception says about itself, read from its fields: the message it was constructed
+	/// with and, for one about a file, the file. Null where it holds neither. Cut at
+	/// <see cref="MaxExceptionMessage"/>, since an event is listed in pages and one message the length of
+	/// a stack trace would crowd out every event beside it.
+	/// </summary>
+	internal static string? ExceptionMessage(CorDebugValue exception)
+	{
+		var message = StringField(exception, "_message");
+		var file = StringField(exception, "FileName");
+
+		var said = (message, file) switch
+		{
+			(null, null) => null,
+			(null, { } named) => $"file: {named}",
+			({ } text, { } named) when !text.Contains(named, StringComparison.Ordinal) => $"{text} (file: {named})",
+			_ => message,
+		};
+
+		return said is { Length: > MaxExceptionMessage } ? $"{said[..MaxExceptionMessage]}…" : said;
+	}
+
+	/// <summary>How much of an exception's message an event carries.</summary>
+	private const int MaxExceptionMessage = 1000;
+
+	/// <summary>A string field or auto-property of an object, or null where it is absent, null or not a string.</summary>
+	private static string? StringField(CorDebugValue value, string name)
+	{
+		try
+		{
+			var field = ResolveField(value, name);
+			if (field is null) return null;
+
+			return Unwrap(field) is CorDebugStringValue text ? text.GetString(text.Length) : null;
+		}
+		catch (Exception)
+		{
+			return null;
+		}
+	}
+
+	/// <summary>
+	/// Reads a field declared on one level of a value's type chain, or null if it is not there. A name
+	/// that is no field but an auto-implemented property reads the field the compiler declared behind it,
+	/// since that is the value the property returns and the name the source uses for it.
+	/// </summary>
 	private static CorDebugValue? FieldOn(CorDebugObjectValue objectValue, CorDebugClass cls, string fieldName)
 	{
 		try
 		{
-			var token = MethodTokens.FieldToken(cls.Module.Name, (int)cls.Token, fieldName);
+			var module = cls.Module.Name;
+			var type = (int)cls.Token;
+			var token = MethodTokens.FieldToken(module, type, fieldName)
+				?? MethodTokens.FieldToken(module, type, MethodTokens.BackingFieldOf(fieldName));
+
 			if (token is null) return null;
 
 			// GetFieldValue wants the raw ICorDebugClass; the ClrDebug wrapper is not it (casting the

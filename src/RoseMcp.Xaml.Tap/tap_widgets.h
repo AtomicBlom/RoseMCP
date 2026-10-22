@@ -33,6 +33,7 @@ static const wchar_t* const IconZoomOut = L"\xE71F";  // ZoomOut -- magnifier wi
 static const wchar_t* const IconPixels = L"\xE7A8";   // GridView -- a lattice, for the pixel lens
 static const wchar_t* const IconScale = L"\xE740";    // FullScreen -- arrows out, for scaling the app itself
 static const wchar_t* const IconRulers = L"\xECC6";   // Ruler -- a ruler, for the measuring mode
+static const wchar_t* const IconTimer = L"\xE916";    // Stopwatch -- for the delay before select
 
 class RoseWidgets
 {

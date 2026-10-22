@@ -96,6 +96,25 @@ Read before changing `src/RoseMcp.Xaml.Tap/tap_overlay.h` or `tap_measure.h`.
   outside the overlay's root, so `Chip` names each one `OverlayTipName` and `IsOurs` treats anything
   inside an element of that name as the overlay's -- or a tooltip still up where somebody clicks is
   picked as the app's.
+- **The delay goes before select mode and changes nothing about it, and the timer decides when select
+  arms.** With a delay set (`tap_tool_timer.h`), Select counts down instead of arming, and at zero
+  arms select exactly as the chip does with no delay; the picking after that is the ordinary hover
+  and click. The countdown is for opening a flyout or a menu by hand, so nothing is captured while
+  it runs, the mode stays `idle` -- which is the truthful answer, since the app is clickable -- and
+  the sweep is drawn on the chip, away from the pointer, where it cannot take hover from the app.
+  Zero is a `DispatcherTimer` stopped first thing in its tick, and the sweep and digit a storyboard
+  of the same length started in the same call -- which shows the countdown and decides nothing: the
+  sweep turns off the UI thread, so in a busy app it can run out before the tick is served. The chip
+  is never lit, because the accent means a mode has the pointer and a countdown takes nothing; the
+  delay is the number on its icon. Every exit -- Select or the timer chip again, Rulers,
+  arming either mode or going idle from the pipe, select-by-handle, deselect, hiding the toolbar --
+  goes through one `Finish`, which stops both. `Finish` arms select only after it has marked the
+  countdown finished, because arming cancels any countdown, and finding this one still running
+  would finish it again from inside itself. The delay menu is a `Border` on the overlay's canvas
+  with a transparent shield under it, not a `Flyout`, for the popup reason above, and its choices
+  are `Button`s that take focus when it opens and give it back to the chip when it closes, Escape
+  closing it as a flyout's would: a chip is reachable from the keyboard, so the menu it opens has to
+  be workable from there.
 - **No padding is not padding of zero, and XAML declares `Padding` on no common base.** `Control`,
   `Border`, `TextBlock`, `RichTextBlock`, `ContentPresenter`, `StackPanel`, `Grid` and `RelativePanel`
   each declare their own, so the box model asks those projections in turn, and a type with none is

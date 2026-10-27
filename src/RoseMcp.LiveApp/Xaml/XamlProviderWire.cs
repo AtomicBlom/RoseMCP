@@ -229,6 +229,11 @@ internal static class XamlProviderWire
 					SourceFile = EmptyToNull(fields[6]),
 					SourceLine = ParsePositive(fields[7]),
 					SourceColumn = ParsePositive(fields[8]),
+
+					// The twelfth field is there only from a tap that declared properties.writable, so its
+					// absence is the tap not saying rather than the property being read-only.
+					Writable = fields.Length > 11 ? fields[11] == TapRows.Writable : null,
+					NotWritableReason = fields.Length > 11 && fields[11] != TapRows.Writable ? fields[11] : null,
 				});
 			}
 		}

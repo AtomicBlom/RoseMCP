@@ -127,7 +127,8 @@ public sealed class LiveAppSession : IAsyncDisposable
 		ActivityLog activities,
 		ILoggerFactory loggerFactory,
 		CancellationToken cancellationToken,
-		IClientTransport? host = null)
+		IClientTransport? host = null,
+		bool attachesUiTooling = true)
 	{
 		var logger = loggerFactory.CreateLogger<LiveAppSession>();
 
@@ -135,7 +136,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new StdioClientTransportOptions
 			{
 				Command = hostPath,
-				Arguments = BuildArguments(target),
+				Arguments = BuildArguments(target, attachesUiTooling),
 
 				// Task Manager's Details tab shows this, which is how a human tells several hosts apart.
 				Name = $"rose-live-app {target.Description}",
@@ -313,7 +314,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// </summary>
 	public void Note(string notice) => _notice = notice;
 
-	private static List<string> BuildArguments(LiveAppTarget target)
+	private static List<string> BuildArguments(LiveAppTarget target, bool attachesUiTooling)
 	{
 		var arguments = new List<string>();
 
@@ -346,6 +347,8 @@ public sealed class LiveAppSession : IAsyncDisposable
 			arguments.Add("--description");
 			arguments.Add(description);
 		}
+
+		if (!attachesUiTooling) arguments.Add("--no-ui-tooling");
 
 		return arguments;
 	}

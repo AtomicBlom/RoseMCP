@@ -317,6 +317,12 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 	/// invisible from this side by construction.
 	/// </para>
 	/// </para>
+	/// <para>
+	/// The session's own background load of the toolbar is turned off, because it makes the same
+	/// abandoned injection first. Its provider can then arrive and connect before the read below is
+	/// asked, and the read finds it resident and never injects, so it times out on the pipe instead
+	/// and names that channel. With the background load off, the read's injection is the only one.
+	/// </para>
 	/// </remarks>
 	[Test]
 	[WinUiProbe]
@@ -337,7 +343,7 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 			// injection into a warm app finishes inside that often enough to pass at random.
 			using var shortened = new EnvironmentVariable("ROSEMCP_XAML_TIMEOUT_SECONDS", "0");
 
-			await using var manager = CreateManager();
+			await using var manager = CreateManager(configure: options => options.AttachesUiTooling = false);
 
 			var session = await manager.StartAsync(
 				new LiveAppTarget

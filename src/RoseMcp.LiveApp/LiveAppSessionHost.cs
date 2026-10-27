@@ -726,6 +726,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	/// </remarks>
 	private void AttachUiTooling()
 	{
+		if (!options.AttachesUiTooling) return;
+
 		int? targetProcessId;
 		XamlDiagnosticsSession xaml;
 		lock (_gate)

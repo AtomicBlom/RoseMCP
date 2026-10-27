@@ -87,6 +87,9 @@ public sealed record LiveAppSessionSummary
 	/// <summary>The sentence that decided <see cref="XamlStack"/>, naming the modules it read.</summary>
 	public required string XamlStackReason { get; init; }
 
+	/// <summary>The framework a dropped-in tap serves, where <see cref="XamlStack"/> is <see cref="Contracts.XamlStack.Tap"/>.</summary>
+	public string? XamlTap { get; init; }
+
 	/// <summary>Whether a diagnostics provider is resident, which decides what the next XAML read costs.</summary>
 	public required LiveXamlProvider XamlProvider { get; init; }
 

@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 
 using RoseMcp.Contracts;
+using RoseMcp.Tap.Protocol;
 
 namespace RoseMcp.LiveApp.Xaml;
 
@@ -63,6 +64,10 @@ internal sealed class XamlProviderSession(ILogger logger) : IDisposable
 	private XamlStackDetection? _stack;
 
 	private XamlTap? _tap;
+
+	// The dropped-in tap serving this session, where no in-box tap serves the target's framework. At most one
+	// of this and _tap is ever set: a target runs one framework.
+	private DroppedInTap? _droppedIn;
 
 	private InitializeXamlDiagnosticsEx? _initialise;
 
@@ -150,7 +155,7 @@ internal sealed class XamlProviderSession(ILogger logger) : IDisposable
 				_injections + 1);
 		}
 
-		var (_, error) = Inject(pid);
+		var error = Load(pid);
 		if (error is not null) return (null, error);
 
 		_injections++;
@@ -159,13 +164,134 @@ internal sealed class XamlProviderSession(ILogger logger) : IDisposable
 		{
 			// A refusal is said as itself. From outside it looks exactly like a provider that never
 			// connected, which sends the reader looking for one that failed to load.
-			if (_pipe?.Refused is { } refused) return (null, $"The XAML provider that connected was refused. {refused}");
+			if (_pipe?.Refused is { } refused) return (null, $"The {TapName} tap that connected was refused. {refused}");
 
-			return (null, "The XAML provider loaded but did not connect back on its pipe, which is how every request "
+			return (null, $"The {TapName} tap loaded but did not connect back on its pipe, which is how every request "
 				+ $"reaches it. It was given {Bounds.Greeting.TotalSeconds:0.##}s to connect.");
 		}
 
 		return (_pipe, null);
+	}
+
+	/// <summary>
+	/// The tap serving this session, by the name it goes by in a sentence: <c>UWP</c>, <c>WinUI</c>, or the
+	/// framework a dropped-in tap names. <c>XAML</c> until one has been chosen.
+	/// </summary>
+	internal string TapName => _droppedIn?.Name ?? _tap?.Name ?? "XAML";
+
+	/// <summary>
+	/// Why <paramref name="command"/> -- with <paramref name="item"/>, a mode or an edit kind, where it takes one
+	/// -- is not sent to the tap on <paramref name="pipe"/>, or null when the tap declared it.
+	/// <para>
+	/// Refused here rather than sent, because a tap answers a command it does not serve with an empty frame,
+	/// which reads as a lost message -- and a lost edit is one a caller is tempted to send again.
+	/// </para>
+	/// </summary>
+	internal string? Unserved(XamlProviderPipe pipe, string command, string? item = null)
+	{
+		var serves = item is null ? pipe.Capabilities.Serves(command) : pipe.Capabilities.Serves(command, item);
+		if (serves) return null;
+
+		var what = item is null ? $"'{command}'" : $"'{command}' with {item}";
+		return $"The {TapName} tap serving this app does not serve {what}, so it was not asked. It declared: "
+			+ $"{(pipe.Capabilities.Names.Count == 0 ? "nothing" : pipe.Capabilities.ToString())}.";
+	}
+
+	/// <summary>
+	/// Gets a tap resident in the target by whichever route serves its framework: injection for one an in-box
+	/// tap serves, and the framework's own diagnostics endpoint for one a dropped-in tap serves. Returns null
+	/// once the tap is loaded, or the sentence saying why it is not.
+	/// </summary>
+	private string? Load(int pid)
+	{
+		if (_stack is null or { Stack: XamlStack.Unknown }) _stack = XamlStackProbe.Detect(pid);
+
+		return XamlTaps.For(_stack.Stack) is null ? LoadThroughEndpoint(pid) : Inject(pid).Error;
+	}
+
+	/// <summary>
+	/// Loads a dropped-in tap through its framework's endpoint in the target: stages a work folder for its
+	/// log, makes the pipe it will greet on, and hands both to the endpoint with the key it must present.
+	/// <para>
+	/// The pipe accepts the range of protocols a tap built apart from RoseMCP may speak, where an injected
+	/// tap's accepts exactly this host's own. Nothing else about the channel differs: from the greeting on,
+	/// a dropped-in tap is read exactly as an in-box one is.
+	/// </para>
+	/// </summary>
+	private string? LoadThroughEndpoint(int pid)
+	{
+		var (tap, why) = ResolveDroppedIn(pid);
+		if (tap is null) return why;
+
+		string workDir;
+		try
+		{
+			bool fresh;
+			(workDir, fresh) = _sandbox.StageWorkFolder();
+
+			if (fresh || _pipe is null)
+			{
+				_pipe?.Dispose();
+				_pipe = new XamlProviderPipe(logger, TapProtocolRange.DroppedIn);
+				if (_pipe.Listen() is { } failed) return failed;
+			}
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			logger.LogWarning(exception, "Making the work folder for the {Tap} tap failed.", tap.Name);
+			return $"Could not make a work folder for the {tap.Name} tap: {exception.Message}";
+		}
+
+		var handshake = Stopwatch.StartNew();
+		var refusal = TapEndpointClient.Load(pid, tap, $"{workDir}|{_pipe.Name}|{_pipe.Nonce}", Bounds.Endpoint);
+		if (refusal is not null)
+		{
+			logger.LogWarning("The {Tap} endpoint in pid {Pid} did not load {Path}: {Refusal}", tap.Name, pid, tap.AssemblyPath, refusal);
+			return refusal;
+		}
+
+		logger.LogInformation(
+			"The {Tap} endpoint in pid {Pid} loaded {Path} in {HandshakeMs}ms.",
+			tap.Name,
+			pid,
+			tap.AssemblyPath,
+			handshake.ElapsedMilliseconds);
+
+		_endpointAnswered = true;
+		NoteProviderPipe();
+		return null;
+	}
+
+	/// <summary>
+	/// The dropped-in tap serving this target, chosen once and kept, or why none does. Read from the tap
+	/// folders when it is first asked for, so a tap dropped in after RoseMCP started serves the next session.
+	/// </summary>
+	private (DroppedInTap? Tap, string? Reason) ResolveDroppedIn(int pid)
+	{
+		if (_droppedIn is not null) return (_droppedIn, null);
+
+		var registry = TapRegistry.Read(logger);
+		var noInBoxTap = $"{XamlTaps.NoTapReason(_stack!.Stack)} ({_stack.Reason}).";
+		var (tap, reason) = DroppedInTaps.Choose(
+			registry.Taps,
+			pid,
+			XamlStackProbe.LoadedModules(pid),
+			TapEndpointClient.Listening,
+			noInBoxTap,
+			registry.Folders);
+
+		if (tap is null) return (null, reason);
+
+		_droppedIn = tap;
+		_stack = new XamlStackDetection
+		{
+			Stack = XamlStack.Tap,
+			Evidence = [EndpointWire.PipeName(tap.Endpoint, pid)],
+			Reason = $"the {tap.Name} tap dropped into {Path.GetDirectoryName(tap.AssemblyPath)} serves it, and its endpoint is listening in the target",
+			TapName = tap.Name,
+		};
+
+		return (tap, null);
 	}
 
 	/// <summary>
@@ -383,7 +509,13 @@ internal sealed class XamlProviderSession(ILogger logger) : IDisposable
 			return;
 		}
 
-		var answered = _pipe.Request("detach", Bounds.Greeting);
+		if (Unserved(_pipe, TapCommands.Detach) is { } unserved)
+		{
+			logger.LogInformation("Not asking the tap to detach. {Unserved}", unserved);
+			return;
+		}
+
+		var answered = _pipe.Request(TapCommands.Detach, Bounds.Greeting);
 		if (answered is null)
 		{
 			logger.LogWarning("The XAML provider did not acknowledge the detach, so it may still hold its interfaces.");

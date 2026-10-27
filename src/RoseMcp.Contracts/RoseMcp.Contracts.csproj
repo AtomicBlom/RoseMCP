@@ -1,3 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <!-- The tap contract's types are internal wherever it is compiled in, so two assemblies that each
+         carry a copy never clash. Here they are public, because every host above this one reads and
+         writes the protocol through them. -->
+    <DefineConstants>$(DefineConstants);ROSEMCP_TAP_PUBLIC</DefineConstants>
+  </PropertyGroup>
+
+  <!-- The tap protocol, from the contract repository both RoseMCP and every tap compile in as source:
+       external/RoseMcp.Tap, a git submodule. Protocol/ only; the endpoint is compiled by the frameworks
+       that host it, never by RoseMCP. -->
+  <ItemGroup>
+    <Compile Include="..\..\external\RoseMcp.Tap\Protocol\*.cs" Link="Tap\%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>

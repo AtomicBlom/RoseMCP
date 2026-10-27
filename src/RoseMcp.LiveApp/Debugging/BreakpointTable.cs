@@ -75,22 +75,30 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 	/// </summary>
 	internal bool? StopsOnHit(string id) => _bindings.FirstOrDefault(entry => entry.Id == id)?.StopOnHit;
 
-	/// <summary>Drops a binding and deactivates whatever it had bound, reporting whether it was there.</summary>
+	/// <summary>
+	/// Drops a binding and deactivates whatever it had bound, reporting whether it was there. A runtime
+	/// breakpoint another binding shares stays active, since that binding is still asking for the place.
+	/// </summary>
 	internal bool Remove(string id)
 	{
 		var binding = _bindings.FirstOrDefault(entry => entry.Id == id);
 		if (binding is null) return false;
 
+		_bindings.Remove(binding);
+
+		var runtime = binding.Breakpoint;
+		var stillWanted = runtime is not null && _bindings.Exists(other => ReferenceEquals(other.Breakpoint, runtime));
+		if (runtime is null || stillWanted) return true;
+
 		try
 		{
-			binding.Breakpoint?.Activate(false);
+			runtime.Activate(false);
 		}
 		catch (Exception exception)
 		{
 			logger.LogDebug(exception, "Deactivating binding {Id} failed.", id);
 		}
 
-		_bindings.Remove(binding);
 		return true;
 	}
 
@@ -170,49 +178,69 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 	}
 
 	/// <summary>
-	/// The binding a hit belongs to, and which hit of it this is. Null when nothing claims it, which
-	/// is what a breakpoint set by something other than this session looks like.
+	/// The bindings a hit belongs to, each with which hit of it this is. Empty when nothing claims it,
+	/// which is what a breakpoint set by something other than this session looks like.
+	/// <para>
+	/// Several when they were set at one place: they share one runtime breakpoint (see
+	/// <see cref="TryBind"/>), so one hit there is a hit of each, and each counts it, logs its own message
+	/// and decides its own condition.
+	/// </para>
 	/// </summary>
-	internal (BreakpointBinding? Binding, long Ordinal) Match(CorDebugFunctionBreakpoint? breakpoint)
+	internal IReadOnlyList<(BreakpointBinding Binding, long Ordinal)> Match(CorDebugFunctionBreakpoint? breakpoint)
 	{
-		var binding = Claim(breakpoint);
+		var claimed = Claim(breakpoint);
 
-		// With one binding bound, an unidentified hit is unambiguously it.
-		binding ??= _bindings.Count(entry => entry.Bound) == 1 ? _bindings.First(entry => entry.Bound) : null;
+		// With one place bound, an unidentified hit is unambiguously there.
+		if (claimed.Count == 0)
+		{
+			var bound = _bindings.Where(entry => entry.Bound).ToList();
+			var onePlace = bound.Count > 0 && bound.TrueForAll(entry => ReferenceEquals(entry.Breakpoint, bound[0].Breakpoint));
 
-		return (binding, binding is null ? 0 : ++binding.HitCount);
+			if (onePlace) claimed = bound;
+		}
+
+		return [.. claimed.Select(binding => (binding, ++binding.HitCount))];
 	}
 
 	/// <summary>
-	/// The binding that owns a hit, or null when no single one does.
+	/// The bindings that own a hit: every one set at the place it fired, or none.
 	/// <para>
-	/// The IL offset is what separates two bindings in one method, and two in one method is a pairing
-	/// the position listing invites a caller into: a named method binds at its first instruction and a
-	/// picked position binds inside the IL, and both are function breakpoints on the same metadata
-	/// token. Matching on the token alone hands every hit to whichever was registered first, so a stop
-	/// meant to hold the target logs and continues instead, under another binding's id.
+	/// The IL offset is what separates two places in one method, and two in one method is a pairing the
+	/// position listing invites a caller into: a named method binds at its first instruction and a picked
+	/// position binds inside the IL, and both are function breakpoints on the same metadata token.
+	/// Matching on the token alone hands every hit to whichever was registered first, so a stop meant to
+	/// hold the target logs and continues instead, under another binding's id.
 	/// </para>
 	/// <para>
 	/// The offset rather than the breakpoint object's identity, because ClrDebug's interfaces are
 	/// source-generated ComWrappers rather than classic RCWs: the same COM pointer is not promised to
-	/// come back as the same managed object, so identity here would work until it quietly did not.
-	/// An offset that cannot be read falls back to the token, which is ambiguous for two bindings in
-	/// one method and no worse than not looking.
+	/// come back as the same managed object, so identity here would work until it quietly did not. That
+	/// is also why two bindings at one place share one runtime breakpoint rather than each having its
+	/// own: two breakpoints at one offset are told apart by nothing a hit carries, so the first would be
+	/// handed both hits. An offset that cannot be read falls back to the token, and takes the bindings
+	/// at the first place in the method that matched, which is ambiguous for two places in one method
+	/// and no worse than not looking.
 	/// </para>
 	/// </summary>
-	private BreakpointBinding? Claim(CorDebugFunctionBreakpoint? breakpoint)
+	private List<BreakpointBinding> Claim(CorDebugFunctionBreakpoint? breakpoint)
 	{
-		if (breakpoint is null) return null;
+		if (breakpoint is null) return [];
 
 		var (token, moduleName, offset) = TryFunctionIdentity(breakpoint);
-		if (token is null) return null;
+		if (token is null) return [];
 
-		return _bindings.FirstOrDefault(entry =>
-			entry.Bound
-			&& entry.Token == token
-			&& (moduleName is null
-				|| string.Equals(moduleName, entry.ModulePath, StringComparison.OrdinalIgnoreCase))
-			&& (offset is null || (entry.Location.IlOffset ?? 0) == offset));
+		var matching = _bindings
+			.Where(entry => entry.Bound
+				&& entry.Token == token
+				&& (moduleName is null || string.Equals(moduleName, entry.ModulePath, StringComparison.OrdinalIgnoreCase))
+				&& (offset is null || (entry.Location.IlOffset ?? 0) == offset))
+			.ToList();
+
+		if (matching.Count == 0) return matching;
+
+		var place = matching[0].Breakpoint;
+
+		return [.. matching.Where(entry => ReferenceEquals(entry.Breakpoint, place))];
 	}
 
 	/// <summary>
@@ -375,15 +403,15 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 
 		try
 		{
-			var function = module.GetFunctionFromToken(token.Value);
+			// A binding at a place another already holds takes the same runtime breakpoint, since a hit
+			// on either of two at one offset would carry nothing to say which, and both would go to the
+			// first.
+			var sharing = _bindings.FirstOrDefault(other => other.Bound
+				&& other.Token == token.Value
+				&& string.Equals(other.ModulePath, module.Name, StringComparison.OrdinalIgnoreCase)
+				&& (other.Location.IlOffset ?? 0) == (offset ?? 0));
 
-			// A named method binds at its first instruction; a picked position binds inside the IL,
-			// which is the only way to stop on a line that is not the method's first.
-			var breakpoint = offset is { } instruction
-				? function.ILCode.CreateBreakpoint(instruction)
-				: function.CreateBreakpoint();
-
-			breakpoint.Activate(true);
+			var breakpoint = sharing?.Breakpoint ?? Created(module.GetFunctionFromToken(token.Value), offset);
 
 			binding.Breakpoint = breakpoint;
 			binding.Token = token.Value;
@@ -391,7 +419,11 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 			binding.Source = TargetSymbols.SourceAt(module.Name, token.Value, offset ?? 0);
 			binding.Detail = null;
 			binding.WillNotBind = false;
-			buffer.Append(LiveDebugEventKind.SessionNotice, $"{binding.Id} bound at {binding.Raw}.");
+			buffer.Append(
+				LiveDebugEventKind.SessionNotice,
+				sharing is null
+					? $"{binding.Id} bound at {binding.Raw}."
+					: $"{binding.Id} bound at {binding.Raw}, the place {sharing.Id} is bound at; each is told of every hit there.");
 			logger.LogInformation("Binding {Id} bound at {Location} (token 0x{Token:x8}).", binding.Id, binding.Raw, token.Value);
 		}
 		catch (Exception exception)
@@ -405,6 +437,21 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 			binding.WillNotBind = true;
 			logger.LogDebug(exception, "Binding {Id} at {Location} failed.", binding.Id, binding.Raw);
 		}
+	}
+
+	/// <summary>
+	/// A new runtime breakpoint, active. A named method binds at its first instruction; a picked position
+	/// binds inside the IL, which is the only way to stop on a line that is not the method's first.
+	/// </summary>
+	private static CorDebugFunctionBreakpoint Created(CorDebugFunction function, int? offset)
+	{
+		var breakpoint = offset is { } instruction
+			? function.ILCode.CreateBreakpoint(instruction)
+			: function.CreateBreakpoint();
+
+		breakpoint.Activate(true);
+
+		return breakpoint;
 	}
 
 	/// <summary>

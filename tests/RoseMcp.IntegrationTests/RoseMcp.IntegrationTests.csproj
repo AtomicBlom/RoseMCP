@@ -32,6 +32,10 @@
     <ProjectReference Include="..\..\src\RoseMcp.LiveApp\RoseMcp.LiveApp.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" />
     <!-- A real .NET target the attach test launches and debugs; built alongside, never referenced. -->
     <ProjectReference Include="..\DebugProbeTarget\DebugProbeTarget.csproj" ReferenceOutputAssembly="false" />
+    <!-- A target hosting a framework's diagnostics endpoint, and the dropped-in tap it loads: built
+         alongside, never referenced, for the test that reads a tree through the whole tool path. -->
+    <ProjectReference Include="..\TapProbeTarget\TapProbeTarget.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\RoseMcp.TestTap\RoseMcp.TestTap.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\RoseMcp.TestSupport\RoseMcp.TestSupport.csproj" />
   </ItemGroup>
 

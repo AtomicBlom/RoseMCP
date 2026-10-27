@@ -741,13 +741,16 @@ function Clear-InstallPayload
     <#
         Removes the binaries an install is made of, and nothing else.
 
-        The whole root cannot simply be deleted: settings.json and Logs/ live under it. Nor can a new
-        payload merely be copied over the old one, because `publish -o` never removes what it does not
-        write, so a file that has left the product stays in the install forever and gets loaded by a
+        The whole root cannot simply be deleted: settings.json, Logs/ and taps/ live under it. Nor can a
+        new payload merely be copied over the old one, because `publish -o` never removes what it does
+        not write, so a file that has left the product stays in the install forever and gets loaded by a
         version that never shipped it.
 
-        Logs/ is the one directory that is not payload. Everything else at the root -- the satellite
-        assembly folders, tray/, inspector/, live-app/ -- came from a publish and goes.
+        Logs/ and taps/ are the directories that are not payload: one is what RoseMCP wrote, the other
+        what somebody dropped in for it to load into their apps. Everything else at the root -- the
+        satellite assembly folders, tray/, inspector/, live-app/ -- came from a publish and goes. The two
+        are named here rather than read from the layout, because removing an install has no layout to
+        read.
 
         -KeepCurrentRelay keeps the relay's folder where the relay in it is the one this layout would
         install, because its relays are still running and holding it; a relay of another protocol goes
@@ -761,7 +764,7 @@ function Clear-InstallPayload
 
     if (-not (Test-Path $Root)) { return }
 
-    $kept = @('Logs')
+    $kept = @('Logs', 'taps')
     if ($KeepCurrentRelay -and (Test-RelayCurrent -Root $Root)) { $kept += (Get-PublishedLayout).relay.folder }
 
     Get-ChildItem -LiteralPath $Root -Directory |

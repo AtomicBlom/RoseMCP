@@ -8,6 +8,7 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 
 using RoseMcp.Contracts;
+using RoseMcp.Tap.Protocol;
 
 namespace RoseMcp.LiveApp.Xaml;
 
@@ -62,15 +63,27 @@ public sealed class XamlProviderPipe : IDisposable
 
 	private volatile string? _refused;
 
+	private volatile TapCapabilities _capabilities = TapCapabilities.None;
+
+	private readonly TapProtocolRange _accepted;
+
 	/// <summary>
 	/// The id of the last request sent, which the reply to it echoes. Incremented rather than reset per
 	/// connection, so no two requests a host ever sends share one.
 	/// </summary>
 	private int _lastRequest;
 
+	/// <summary>A pipe for an in-box tap, which has to speak exactly this host's protocol.</summary>
 	public XamlProviderPipe(ILogger logger)
+		: this(logger, TapProtocolRange.InBox)
+	{
+	}
+
+	/// <summary>A pipe for a tap that may speak any protocol in <paramref name="accepted"/>.</summary>
+	public XamlProviderPipe(ILogger logger, TapProtocolRange accepted)
 	{
 		_logger = logger;
+		_accepted = accepted;
 
 		// The target pid is not in the name on purpose: one host serves one app, and a name carrying
 		// only our own pid is one a recycled pid cannot collide with while we are alive to hold it.
@@ -93,6 +106,13 @@ public sealed class XamlProviderPipe : IDisposable
 	/// and which sends the reader looking for a provider that failed to load.
 	/// </summary>
 	public string? Refused => _refused;
+
+	/// <summary>
+	/// What the tap holding the far end declared it serves, from its greeting; <see cref="TapCapabilities.None"/>
+	/// while none is connected. Read before a request is sent, so one the tap does not serve is refused here by
+	/// name instead of reaching a tap that would answer it with an empty frame.
+	/// </summary>
+	public TapCapabilities Capabilities => _capabilities;
 
 	/// <summary>
 	/// Whether a provider is holding the far end and has greeted the host, which is the whole of what
@@ -219,7 +239,7 @@ public sealed class XamlProviderPipe : IDisposable
 
 		try
 		{
-			var payload = Encoding.UTF8.GetBytes(XamlWire.Frame(id, request));
+			var payload = Encoding.UTF8.GetBytes(TapWire.Frame(id, request));
 			var header = new byte[4];
 			header[0] = (byte)(payload.Length & 0xFF);
 			header[1] = (byte)((payload.Length >> 8) & 0xFF);
@@ -266,7 +286,7 @@ public sealed class XamlProviderPipe : IDisposable
 			while (true)
 			{
 				var frame = _replies.Reader.ReadAsync(expiry.Token).AsTask().GetAwaiter().GetResult();
-				if (XamlWire.TryReadFrame(frame, out var answered, out var body) && answered == id) return body;
+				if (TapWire.TryReadFrame(frame, out var answered, out var body) && answered == id) return body;
 
 				_logger.LogWarning(
 					"Discarding a late XAML provider reply to request {Answered} on {PipeName} while waiting for "
@@ -353,7 +373,7 @@ public sealed class XamlProviderPipe : IDisposable
 				// not written for, and one that is not ours answers with whatever it likes -- both of which
 				// come back as data, with source file and line attached, where a refusal comes back as a
 				// reason.
-				var refusal = XamlWire.RefuseGreeting(frame, Nonce);
+				var refusal = XamlWire.RefuseGreeting(frame, Nonce, _accepted, out var capabilities);
 				if (refusal is not null)
 				{
 					_refused = refusal;
@@ -364,6 +384,7 @@ public sealed class XamlProviderPipe : IDisposable
 
 				greeted = true;
 				_refused = null;
+				_capabilities = capabilities;
 
 				// Before the source is completed, so a caller released by the greeting cannot look at
 				// Connected and be told the provider that just greeted it is not there.
@@ -405,6 +426,7 @@ public sealed class XamlProviderPipe : IDisposable
 		// one's, already completed.
 		_greeting = NewGreeting();
 		_connected = false;
+		_capabilities = TapCapabilities.None;
 
 		while (_replies.Reader.TryRead(out _))
 		{

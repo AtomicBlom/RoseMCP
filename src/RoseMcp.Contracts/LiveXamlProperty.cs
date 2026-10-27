@@ -46,4 +46,17 @@ public sealed record LiveXamlProperty
 	public int? SourceLine { get; init; }
 
 	public int? SourceColumn { get; init; }
+
+	/// <summary>
+	/// Whether a live edit can change this property, from a tap that says so; null where the tap does not.
+	/// <para>
+	/// Said per property because a framework's answer differs within one element: a value a compiled binding
+	/// writes, a read-only property, or a type with no run-time parser all read like any other value, and an
+	/// agent learning that only from a failed <c>rose_xaml_apply</c> has already edited the markup.
+	/// </para>
+	/// </summary>
+	public bool? Writable { get; init; }
+
+	/// <summary>Why <see cref="Writable"/> is false, in the tap's words; null otherwise.</summary>
+	public string? NotWritableReason { get; init; }
 }

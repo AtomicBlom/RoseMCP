@@ -63,6 +63,10 @@
     "marker": "relay-protocol.txt",
     "why": "The stdio relay a client registers: the server published a second time, into a folder of its own inside each Windows runtime's payload. A deploy leaves the installed folder, and the relays running from it, alone while its marker names the protocol being installed, so a session keeps its connection across the deploy; a different protocol replaces the folder and stops those relays. The protocol is the one RelayProtocol.Version names in the code. Windows only: elsewhere a running file can be replaced, so a client registers the server in the root."
   },
+  "taps": {
+    "folder": "taps",
+    "why": "Where taps dropped in from outside RoseMCP are looked for first: assemblies a framework ships so RoseMCP can inspect apps built on it. Not payload, so a deploy and an install keep it and an uninstall leaves it: what is in it is somebody else's, the way settings.json is somebody's choice. It sits beside settings.json, which puts it in the install root wherever RoseMCP is installed to its default folder."
+  },
   "liveAppHost": {
     "project": "RoseMcp.LiveApp",
     "executable": "RoseMcp.LiveApp",

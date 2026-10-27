@@ -43,4 +43,10 @@ public sealed record RoseSettings
 
 	/// <summary>What <see cref="ActivityRetentionDays"/> is when nobody has chosen.</summary>
 	public const int DefaultActivityRetentionDays = 7;
+
+	/// <summary>
+	/// Folders to look for dropped-in taps in, after the <c>taps</c> folder beside this file. A tap's own build
+	/// output can be named here, so rebuilding it is all it takes for the next session to use the new one.
+	/// </summary>
+	public IReadOnlyList<string> TapFolders { get; init; } = [];
 }

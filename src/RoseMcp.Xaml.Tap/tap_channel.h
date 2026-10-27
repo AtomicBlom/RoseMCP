@@ -50,7 +50,15 @@ static std::wstring g_pipeNonce;
 // XamlWire.ProtocolVersion on the host, and a unit test there reads this line to hold the two in step:
 // the host refuses a provider that greets with any other, because a stale copy reading rows it was not
 // written for answers with data rather than with an error.
-static constexpr int RoseTapProtocolVersion = 4;
+static constexpr int RoseTapProtocolVersion = 5;
+
+// What this provider serves, on the line after its greeting: every command, both overlay modes and
+// every edit kind. The host refuses anything a tap does not declare without sending it, so a verb added
+// to Serve and not here is a verb no host ever asks for. The same line as XamlWire.InBoxCapabilityLine,
+// held to it by a unit test there.
+static constexpr const char* RoseTapCapabilities =
+	"apply:AddChild,ClearProperty,RemoveChild,SetProperty,SetResource ask changes deselect detach idle properties "
+	"select:pick,rulers selecthandle selection tree";
 
 static std::mutex g_logMutex;
 
@@ -169,9 +177,11 @@ static void ConnectPipe()
 
 	Log(L"pipe: connected to " + path);
 
-	// The protocol this provider speaks and the key its session issued. The host reads nothing else
-	// from a provider until this is right, so a stale copy is refused by name rather than read.
-	const std::string greeting = "RoseTap/" + std::to_string(RoseTapProtocolVersion) + "/" + Utf8(g_pipeNonce);
+	// The protocol this provider speaks and the key its session issued, then what it serves. The host
+	// reads nothing else from a provider until this is right, so a stale copy is refused by name rather
+	// than read.
+	const std::string greeting = "RoseTap/" + std::to_string(RoseTapProtocolVersion) + "/" + Utf8(g_pipeNonce)
+		+ "\n" + RoseTapCapabilities;
 	if (!WriteFrame(greeting)) Log(L"pipe: connected but could not write the greeting");
 }
 

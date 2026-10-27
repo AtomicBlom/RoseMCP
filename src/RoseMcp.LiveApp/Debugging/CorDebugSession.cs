@@ -806,48 +806,80 @@ internal sealed class CorDebugSession : IDisposable
 		var unhandled = exception.EventType == CorDebugExceptionCallbackType.DEBUG_EXCEPTION_UNHANDLED;
 		var kind = unhandled ? LiveDebugEventKind.ExceptionUnhandled : LiveDebugEventKind.ExceptionFirstChance;
 		var typeName = StopNarrative.ExceptionType(exception.Thread);
+		var said = StopNarrative.ExceptionMessage(exception.Thread);
 
 		// The thread is stopped in this callback, so this is the moment its stack can be walked.
 		var frames = _narrative.Frames(exception.Thread);
 
 		_buffer.Append(
 			kind,
-			$"{(unhandled ? "Unhandled" : "First-chance")} {typeName} on thread {CorDebugInspector.TryThreadId(exception.Thread)?.ToString() ?? "?"}",
+			$"{(unhandled ? "Unhandled" : "First-chance")} {typeName} on thread {CorDebugInspector.TryThreadId(exception.Thread)?.ToString() ?? "?"}"
+				+ (said is null ? string.Empty : $": {said}"),
 			threadId: CorDebugInspector.TryThreadId(exception.Thread),
 			exceptionType: typeName,
-			frames: frames.Count > 0 ? frames : null);
+			frames: frames.Count > 0 ? frames : null,
+			exceptionMessage: said);
 	}
 
 	private bool RecordBreakpointHit(BreakpointCorDebugManagedCallbackEventArgs hit)
 	{
 		var threadId = CorDebugInspector.TryThreadId(hit.Thread);
 
-		BreakpointBinding? binding;
-		long ordinal;
+		IReadOnlyList<(BreakpointBinding Binding, long Ordinal)> claimed;
 		lock (_target.Gate)
 		{
-			(binding, ordinal) = Bindings.Match(hit.Breakpoint as CorDebugFunctionBreakpoint);
+			claimed = Bindings.Match(hit.Breakpoint as CorDebugFunctionBreakpoint);
 		}
 
-		// A condition is a cheap read-and-compare on the stopped frame; if it fails, act as if unhit.
-		if (binding?.Condition is { } condition && !condition.Evaluate(_narrative.TopFrameVariables(hit.Thread)))
+		// A hit nothing claims still happened, and is logged at a location it cannot name.
+		if (claimed.Count == 0)
 		{
+			LogTracepointHit(hit.Thread, threadId, binding: null, ordinal: 0);
 			return true;
 		}
 
-		if (binding is { StopOnHit: true })
+		// Every binding at the place sees the same frame, so its variables are read once, and only where
+		// a condition asks.
+		IReadOnlyList<LiveVariable>? variables = null;
+		(BreakpointBinding Binding, long Ordinal)? held = null;
+
+		foreach (var (binding, ordinal) in claimed)
 		{
-			return HoldAtStop(hit.Thread, LiveDebugEventKind.BreakpointHit, $"Breakpoint {binding.Raw} hit #{ordinal}", binding.Id, binding.AutoContinueSeconds);
+			// A condition is a cheap read-and-compare on the stopped frame; one that fails leaves this
+			// binding as if unhit, whatever the others at the place decide.
+			if (binding.Condition is { } condition && !condition.Evaluate(variables ??= _narrative.TopFrameVariables(hit.Thread)))
+			{
+				continue;
+			}
+
+			if (binding.StopOnHit)
+			{
+				held ??= (binding, ordinal);
+				continue;
+			}
+
+			LogTracepointHit(hit.Thread, threadId, binding, ordinal);
 		}
 
-		// Tracepoint: a hit-count filter still counts every hit; it only thins what is logged.
-		if (binding?.LogEveryNthHit is { } nth && ordinal % nth != 0) return true;
+		// Held after the tracepoints have logged, so a tracepoint sharing the place says it was reached
+		// before the stop the target is then held at.
+		return held is not { } stop
+			|| HoldAtStop(hit.Thread, LiveDebugEventKind.BreakpointHit, $"Breakpoint {stop.Binding.Raw} hit #{stop.Ordinal}", stop.Binding.Id, stop.Binding.AutoContinueSeconds);
+	}
+
+	/// <summary>
+	/// Logs one tracepoint's hit with its own message, rendered against the frame the hit fired on. A
+	/// hit-count filter still counts every hit; it only thins what is logged.
+	/// </summary>
+	private void LogTracepointHit(CorDebugThread thread, int? threadId, BreakpointBinding? binding, long ordinal)
+	{
+		if (binding?.LogEveryNthHit is { } nth && ordinal % nth != 0) return;
 
 		var location = binding?.Raw ?? "unknown location";
 
 		// Rendered after the filters, not before: reading the frame is the expensive part of a hit,
 		// and a hit that is conditioned out or thinned away never needed its values.
-		var logged = binding?.LogTemplate is { } template ? _narrative.Interpolate(hit.Thread, template) : null;
+		var logged = binding?.LogTemplate is { } template ? _narrative.Interpolate(thread, template) : null;
 		var suffix = logged?.Text is { Length: > 0 } message ? $": {message}" : string.Empty;
 
 		_buffer.Append(
@@ -855,7 +887,6 @@ internal sealed class CorDebugSession : IDisposable
 			$"Tracepoint {location} hit #{ordinal} on thread {threadId?.ToString() ?? "?"}{suffix}",
 			threadId: threadId,
 			logged: logged?.Values is { Count: > 0 } values ? values : null);
-		return true;
 	}
 
 	/// <summary>

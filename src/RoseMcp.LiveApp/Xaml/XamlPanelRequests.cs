@@ -1,4 +1,5 @@
 using RoseMcp.Contracts;
+using RoseMcp.Tap.Protocol;
 
 namespace RoseMcp.LiveApp.Xaml;
 
@@ -26,6 +27,10 @@ public static class XamlPanelRequests
 	{
 		ArgumentNullException.ThrowIfNull(pipe);
 
+		// A tap with no Ask button has never been pressed, which is an answer rather than a silence: said as
+		// none, so a window asking on every refresh is not told the app has stopped answering.
+		if (!pipe.Capabilities.Serves(TapCommands.Ask)) return (true, null);
+
 		var reply = pipe.Request($"ask {Math.Max(0, seen)}", bound);
 		return reply is null ? (false, null) : (true, XamlWire.ReadAsk(reply));
 	}
@@ -38,6 +43,8 @@ public static class XamlPanelRequests
 	public static bool? ChangeMarks(XamlProviderPipe pipe, bool shown, TimeSpan bound)
 	{
 		ArgumentNullException.ThrowIfNull(pipe);
+
+		if (!pipe.Capabilities.Serves(TapCommands.Changes)) return null;
 
 		var reply = pipe.Request(shown ? "changes on" : "changes off", bound)?.Trim();
 		return reply switch
@@ -65,6 +72,14 @@ public static class XamlPanelRequests
 	{
 		ArgumentNullException.ThrowIfNull(pipe);
 		ArgumentNullException.ThrowIfNull(readAfter);
+
+		if (!pipe.Capabilities.Serves(TapCommands.Changes))
+		{
+			return new LiveXamlSelection
+			{
+				Detail = "The tap serving this app does not mark what live edits changed, so there is no switch to set.",
+			};
+		}
 
 		if (ChangeMarks(pipe, shown, bound) is not { } switched)
 		{

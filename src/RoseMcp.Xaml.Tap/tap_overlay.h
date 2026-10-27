@@ -189,6 +189,7 @@ public:
 	{
 		Select,
 		Rulers,
+		Timer,
 	};
 
 	void BeginOperation(Operation operation)
@@ -250,6 +251,7 @@ public:
 	// the two together would remove "keep this one and stop capturing my clicks".
 	void GoIdle() override
 	{
+		CancelCountdown();
 		HideCapture();
 		SetPointing(Pointing::None);
 		m_pick.Hover(nullptr, std::wstring());
@@ -337,6 +339,7 @@ public:
 	// was selected" rather than having both read as success.
 	bool Deselect() override
 	{
+		CancelCountdown();
 		const bool had = m_pick.Clear(nullptr);
 
 		Log(had ? L"overlay: selection cleared" : L"overlay: deselect with nothing selected");
@@ -385,6 +388,9 @@ public:
 	bool SelectByHandle(InstanceHandle handle) override
 	{
 		if (!m_diagnostics || handle == 0) return false;
+
+		// An agent naming an element outright beats a countdown somebody may have forgotten about.
+		CancelCountdown();
 
 		::IInspectable* raw = nullptr;
 		if (FAILED(m_diagnostics->GetIInspectableFromHandle(handle, &raw)) || !raw)
@@ -438,6 +444,12 @@ private:
 	bool Point(Pointing mode)
 	{
 		if (!m_root || mode == Pointing::None) return false;
+
+		// Arming a mode, from the toolbar or the pipe, is a decision about the pointer now, so a
+		// countdown that would arm select later is cancelled rather than left to fire into the mode.
+		// When the countdown's own expiry is what arms select, this finds it already finished and
+		// does nothing.
+		CancelCountdown();
 
 		// Switching between the modes keeps the layer that is already up rather than replacing it.
 		// Arming is what a caller waits on, and what it waits for is a layer XAML has arranged --
@@ -688,7 +700,7 @@ private:
 		// button for nothing: pressing the mode that is on turns it off, which is where the hand already
 		// is. What follows them is a toggle and actions, which are different kinds of thing and do not
 		// belong in that run.
-		m_selectButton = Chip(SelectIcon(), L"Select element -- click again to stop", [this] { ToggleMode(Pointing::Select); });
+		m_selectButton = Chip(SelectIcon(), L"Select element, after the delay if one is set -- click again to stop", [this] { SelectChip(); });
 		m_rulersButton = Chip(
 			Glyph(IconRulers, 12.0),
 			L"Rulers -- show the picked element's margin and padding, and measure from it to whatever the "
@@ -696,6 +708,9 @@ private:
 				L"there instead. Click Rulers again to stop",
 			[this] { ToggleMode(Pointing::Rulers); });
 		m_bar.Children().Append(m_selectButton);
+
+		// Straight after Select, because it changes what Select does; it is not a mode of its own.
+		m_bar.Children().Append(m_timerTool.Button());
 		m_bar.Children().Append(m_rulersButton);
 
 		m_myXamlButton = Chip(
@@ -1021,6 +1036,10 @@ private:
 	{
 		if (!m_rows || !m_thumb) return;
 
+		// The exception to the modes running on: a countdown nobody can see is one nobody can cancel,
+		// and its menu would hang under a toolbar that is gone.
+		if (collapsed) m_timerTool.Dismiss();
+
 		m_rows.Visibility(collapsed ? xaml::Visibility::Collapsed : xaml::Visibility::Visible);
 		m_thumb.Visibility(collapsed ? xaml::Visibility::Visible : xaml::Visibility::Collapsed);
 	}
@@ -1141,6 +1160,52 @@ private:
 		// Its own buttons are its own business: which of them wears the accent depends on state
 		// this no longer holds.
 		m_zoomTool.RefreshChrome();
+		m_timerTool.RefreshChrome();
+	}
+
+	// Select with a delay set counts down instead of arming, and a second press during the countdown
+	// is the way out of it. Otherwise the chip is a mode button like Rulers: with select on, a press
+	// turns it off rather than counting down to turn it on again.
+	void SelectChip()
+	{
+		if (m_timerTool.Running())
+		{
+			CancelCountdown();
+			return;
+		}
+
+		const bool armsAtOnce = m_timerTool.Delay() <= 0 || m_pointing == Pointing::Select;
+		if (armsAtOnce)
+		{
+			ToggleMode(Pointing::Select);
+			return;
+		}
+
+		// Out of any mode first: the countdown exists so the app can be used while it runs, and a
+		// capture layer would take every click meant for it.
+		GoIdle();
+		m_timerTool.Start();
+	}
+
+	void CancelCountdown()
+	{
+		m_timerTool.Cancel();
+	}
+
+	// The countdown reached zero: arm select mode, exactly as the Select chip does with no delay. The
+	// delay goes before the mode and changes nothing about it, so the picking that follows is the
+	// ordinary hover and click, and the host sees the mode go from idle to select as it would for a
+	// click on the chip.
+	void CountdownEnded()
+	{
+		try
+		{
+			if (!BeginSelect(false)) Log(L"overlay: select mode did not arm after the countdown");
+		}
+		catch (winrt::hresult_error const& error)
+		{
+			Log(std::wstring(L"overlay: select mode could not arm after the countdown: ") + error.message().c_str());
+		}
 	}
 
 	/// Whether an element was declared in the app's own markup.
@@ -1423,10 +1488,60 @@ private:
 	// able to tell those apart, and neither drawn alone does it.
 
 
+	// Everything under a point, topmost first: the open popups, then the page.
+	//
+	// Popups first because they draw over the page, and a pick has to mean what a click there would
+	// land on. Flyouts, menus and tooltips are not under XamlRoot.Content() at all -- they live in the
+	// popup root beside it -- so a hit test of the content alone looks straight through an open
+	// flyout and reports the page behind it. That is the wrong answer exactly where it matters most,
+	// since the UI that dismisses itself on a click elsewhere is the UI hardest to pick any other way.
+	//
+	// GetOpenPopupsForXamlRoot does not say which popup is on top. Later-opened ones are taken to be,
+	// so the list is walked from its end; with one popup open, which is the ordinary case, the order
+	// does not arise.
+	std::vector<xaml::UIElement> Under(winrt::Windows::Foundation::Point const& point)
+	{
+		std::vector<xaml::UIElement> found;
+
+		if (const auto root = Root())
+		{
+			try
+			{
+				const auto popups = xmedia::VisualTreeHelper::GetOpenPopupsForXamlRoot(root);
+				for (uint32_t i = popups.Size(); i > 0; i--)
+				{
+					const auto child = popups.GetAt(i - 1).Child();
+					if (!child) continue;
+
+					for (auto&& element : xmedia::VisualTreeHelper::FindElementsInHostCoordinates(point, child, m_includeAllElements))
+					{
+						found.push_back(element);
+					}
+				}
+			}
+			catch (winrt::hresult_error const& error)
+			{
+				// A popup closing between the enumeration and the hit test is ordinary, and costs only
+				// the popups: the page below is still answered.
+				Trace(std::wstring(L"under: popups could not be hit-tested: ") + error.message().c_str());
+			}
+		}
+
+		if (const auto content = Content())
+		{
+			// includeAllElements: see Beneath for why it defaults to false.
+			for (auto&& element : xmedia::VisualTreeHelper::FindElementsInHostCoordinates(point, content, m_includeAllElements))
+			{
+				found.push_back(element);
+			}
+		}
+
+		return found;
+	}
+
 	xaml::UIElement Beneath(winrt::Windows::Foundation::Point const& point, winrt::Windows::Foundation::Rect& rect)
 	{
-		const auto root = Content();
-		if (!root)
+		if (!Content())
 		{
 			Trace(L"beneath: the window has no content");
 			return nullptr;
@@ -1447,7 +1562,7 @@ private:
 		//
 		// True stays available on request, because inspecting an invisible overlay host is sometimes
 		// exactly the goal. It is never the default.
-		const auto found = xmedia::VisualTreeHelper::FindElementsInHostCoordinates(point, root, m_includeAllElements);
+		const auto found = Under(point);
 		uint32_t considered = 0;
 		for (auto&& element : found)
 		{
@@ -1605,7 +1720,10 @@ private:
 		Log(L"overlay: recorded " + RosePick::Describe(element) + L" and " + std::to_wstring(written) + L" row(s) from the tree");
 	}
 
-	// Anything under our own root is ours -- the capture layer, the toolbar, and every part of it.
+	// Anything under our own root is ours -- the capture layer, the toolbar, and every part of it -- and
+	// so is anything inside a chip's tooltip, which opens in the popup root instead and is known by the
+	// name Chip gives it. Under hit-tests the open popups, so without the second a chip's tooltip
+	// still up where somebody clicks would be picked as the app's.
 	bool IsOurs(xaml::UIElement const& element) const
 	{
 		if (!m_root) return false;
@@ -1614,6 +1732,10 @@ private:
 		while (node)
 		{
 			if (node == m_root) return true;
+
+			const auto named = node.try_as<xaml::FrameworkElement>();
+			if (named && named.Name() == OverlayTipName) return true;
+
 			node = xmedia::VisualTreeHelper::GetParent(node);
 		}
 
@@ -1629,7 +1751,6 @@ private:
 	/// costs a few more rows in a file that is written once per click.
 	InstanceHandle Record(xaml::UIElement const& element, winrt::Windows::Foundation::Point const& point)
 	{
-		const auto root = Content();
 		InstanceHandle selected = 0;
 		unsigned int written = 0;
 
@@ -1638,21 +1759,18 @@ private:
 			InstanceHandle topmost = 0;
 			InstanceHandle topmostApp = 0;
 
-			if (root)
+			for (auto&& candidate : Under(point))
 			{
-				for (auto&& candidate : xmedia::VisualTreeHelper::FindElementsInHostCoordinates(point, root, m_includeAllElements))
-				{
-					if (IsOurs(candidate)) continue;
+				if (IsOurs(candidate)) continue;
 
-					winrt::Windows::Foundation::Rect ignored{};
-					if (!Bounds(candidate, ignored)) continue;
-					if (written >= 16) break; // Deep templates go on a long way; the top of the stack is the useful part.
+				winrt::Windows::Foundation::Rect ignored{};
+				if (!Bounds(candidate, ignored)) continue;
+				if (written >= 16) break; // Deep templates go on a long way; the top of the stack is the useful part.
 
-					const InstanceHandle handle = WriteCandidate(file, candidate);
-					if (topmost == 0) topmost = handle;
-					if (topmostApp == 0 && IsAppXaml(handle)) topmostApp = handle;
-					written++;
-				}
+				const InstanceHandle handle = WriteCandidate(file, candidate);
+				if (topmost == 0) topmost = handle;
+				if (topmostApp == 0 && IsAppXaml(handle)) topmostApp = handle;
+				written++;
 			}
 
 			// The framework found nothing usable but something was picked, so say that much.
@@ -1813,6 +1931,17 @@ private:
 	// What live edits changed, marked over the app. Its switch is the toolbar's Changes button and the
 	// host's `changes on|off`, which are one switch.
 	RoseChangesTool m_changesTool{ *this };
+
+	// The delay before select. Its busy signal is an operation like any other, so the panel stays
+	// legible while its menu is open or a countdown is running with the pointer out in the app.
+	RoseTimerTool m_timerTool{
+		*this,
+		[this] { CountdownEnded(); },
+		[this](bool busy)
+		{
+			if (busy) BeginOperation(Operation::Timer);
+			else EndOperation(Operation::Timer);
+		} };
 };
 
 // Leaked deliberately: see the note on RoseOverlay. Only ever touched on the app's UI thread.

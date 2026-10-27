@@ -84,10 +84,11 @@ internal static class Program
 internal sealed class RoseDebugProbeException() : Exception("rose debug probe");
 
 /// <summary>
-/// A small object graph the evaluation and expansion tests drill into. Public fields so a
-/// field-access reader can get at them without running a getter, one array so an indexed path has
-/// something real to index, and one auto-property -- the only kind of property a reader can reach,
-/// through the field behind it.
+/// A small object graph the evaluation and expansion tests drill into. Mostly public fields, so a
+/// field-access reader can get at them without running a getter; one array, so an indexed path has
+/// something real to index; one property of each kind, an auto-implemented one a read reaches and a
+/// computed one it refuses; and one value of each shape a value is shown by what it holds rather than
+/// by its type -- an enum, flags, a small struct, a collection and a nullable.
 /// </summary>
 internal sealed class ProbeState
 {
@@ -111,10 +112,16 @@ internal sealed class ProbeState
 		+ "&redirect_uri=https%3a%2f%2flocalhost%2fcallback&scope=data%3aread%20data%3awrite&end=TAIL";
 
 	/// <summary>
-	/// An auto-property, which a path names as the source does and the reader reaches through the
-	/// field the compiler stores it in, since reading the property itself would run its getter.
+	/// An auto-implemented property, which a read reaches through the field the compiler declared behind
+	/// it while the path names the property, the way the source does.
 	/// </summary>
-	public string Title { get; set; } = "probe";
+	public string Mood { get; set; } = "calm";
+
+	/// <summary>
+	/// A property whose getter is code of its own. A read here runs none of the target's code, so this one
+	/// is refused, saying why, rather than reported as missing.
+	/// </summary>
+	public int Twice => Count * 2;
 
 	/// <summary>An enum set to a member, so a value shows by its name rather than by its type.</summary>
 	public ProbeShape Shape = ProbeShape.Ellipse;

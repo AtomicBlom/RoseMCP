@@ -7,6 +7,12 @@ public sealed class LiveAppOptions
 {
 	public required LiveAppTarget Target { get; init; }
 
+	/// <summary>
+	/// Whether the session loads the XAML provider into its target as soon as it is ready, for the in-app toolbar. Off
+	/// with <c>--no-ui-tooling</c>, for a caller that has to make the session's first load itself.
+	/// </summary>
+	public bool AttachesUiTooling { get; init; } = true;
+
 	/// <summary>A short token for the log file name; derived from the target.</summary>
 	public string LogDiscriminator => Target switch
 	{
@@ -23,6 +29,7 @@ public sealed class LiveAppOptions
 		string? launchUwp = null;
 		string? arguments = null;
 		string? description = null;
+		var attachesUiTooling = true;
 
 		for (var i = 0; i < args.Length; i++)
 		{
@@ -57,13 +64,17 @@ public sealed class LiveAppOptions
 					description = args[++i];
 					break;
 
+				case "--no-ui-tooling":
+					attachesUiTooling = false;
+					break;
+
 				default:
 					throw new ArgumentException($"Unrecognised argument: {args[i]}");
 			}
 		}
 
 		var target = BuildTarget(attachPid, launchPath, launchUwp, arguments, description);
-		return new LiveAppOptions { Target = target };
+		return new LiveAppOptions { Target = target, AttachesUiTooling = attachesUiTooling };
 	}
 
 	private static LiveAppTarget BuildTarget(int? attachPid, string? launchPath, string? launchUwp, string? arguments, string? description)

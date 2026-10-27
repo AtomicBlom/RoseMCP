@@ -474,9 +474,9 @@ public sealed class LiveAppDebugTools(
 		"Reads a snapshot of a running app's live XAML visual tree: a flat list of elements, each with "
 			+ "a stable handle, its parent handle and child index to rebuild the tree from, its type, "
 			+ "its x:Name where it has one, and an address that names it even where it has not. It "
-			+ "injects a diagnostics provider into the target and enumerates on the app's UI thread. "
-			+ "The target must be a XAML app (UWP or WinUI); one with no XAML UI, or a build with no "
-			+ "provider, comes back with a detail and no nodes rather than failing.")]
+			+ "loads a diagnostics tap into the target and enumerates on the app's UI thread. "
+			+ "The target must be a UWP or WinUI app, or one a dropped-in tap serves; one with no UI "
+			+ "a tap serves comes back with a detail and no nodes rather than failing.")]
 	public async Task<LiveXamlTree> XamlTreeAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.XamlRootArgument)] string? root = null,

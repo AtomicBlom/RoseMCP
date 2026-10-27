@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 
 using ClrDebug;
 
-using RoseMcp.Contracts;
 using RoseMcp.Symbols;
 
 namespace RoseMcp.LiveApp.Debugging;
@@ -289,7 +288,7 @@ internal static class ValueReader
 			var read = Read(value.GetFieldValue(cls.Raw, field.Token), depth + 1, SummaryStringLength);
 			if (read.Value is null) return null;
 
-			parts.Add($"{ValuePath.PropertyOf(field.Name) ?? field.Name} = {read.Value}");
+			parts.Add($"{MethodTokens.PropertyBackedBy(field.Name) ?? field.Name} = {read.Value}");
 		}
 
 		return new ReadValue(typeName, $"{{{typeName}}} {string.Join(", ", parts)}", true);

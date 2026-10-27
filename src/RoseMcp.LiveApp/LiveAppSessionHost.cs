@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using RoseMcp.Contracts;
 using RoseMcp.LiveApp.Debugging;
@@ -109,6 +110,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 				XamlStack = stack?.Stack ?? XamlStack.Unknown,
 				XamlStackReason = stack?.Reason
 					?? "this session has no target process yet, so its loaded modules cannot be read",
+				XamlTap = stack?.TapName,
 				XamlProvider = xaml?.Provider ?? LiveXamlProvider.None,
 				LastEvent = _events.Newest(),
 				XamlAsk = xaml?.LastAsk,
@@ -136,7 +138,13 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		if (known is { Stack: not XamlStack.Unknown }) return known;
 		if (targetProcessId is not { } pid) return known;
 
-		return XamlStackProbe.Detect(pid);
+		var probed = XamlStackProbe.Detect(pid);
+		if (probed.Stack != XamlStack.Unknown) return probed;
+
+		// No framework an in-box tap serves, so a dropped-in tap may: one whose endpoint is listening makes the
+		// target inspectable before any agent has asked for its tree. Its refusals are logged when a session
+		// chooses a tap, not on every poll.
+		return XamlStackProbe.DroppedIn(pid, TapRegistry.Cached(NullLogger.Instance)) ?? probed;
 	}
 
 	/// <summary>
@@ -718,6 +726,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	/// </remarks>
 	private void AttachUiTooling()
 	{
+		if (!options.AttachesUiTooling) return;
+
 		int? targetProcessId;
 		XamlDiagnosticsSession xaml;
 		lock (_gate)

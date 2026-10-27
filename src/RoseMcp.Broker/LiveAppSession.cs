@@ -255,6 +255,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 			Stop = state == LiveAppSessionState.Ended ? null : info?.Stop,
 			XamlStack = info?.XamlStack ?? XamlStack.Unknown,
 			XamlStackReason = info?.XamlStackReason ?? "the host has not reported on this session yet",
+			XamlTap = info?.XamlTap,
 			XamlProvider = info?.XamlProvider ?? LiveXamlProvider.None,
 			HostLogPath = info?.HostLogPath,
 			LastEventAge = info?.LastEvent is { } beat ? now - beat.TimestampUtc : null,

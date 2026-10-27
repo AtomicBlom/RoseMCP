@@ -44,8 +44,11 @@ after it. That matters when the two ends are released apart, and these are not -
 beside the host that stages it, so two formats meet only through a stale copy, and there a tolerant
 format is the wrong answer: it reads the stale copy's rows as data. A protocol version in the greeting,
 refused on mismatch, is what a lock-step pair needs. Text also stays readable in a log, which is how
-this channel's failures have been diagnosed. If the provider is ever released on its own, the
-evolvability argument comes back, and `XamlWire` is the one place the format would change.
+this channel's failures have been diagnosed. A tap that is released on its own -- one a framework ships
+and drops in -- brings the evolvability argument back, and it is answered by a version range and
+declared capabilities rather than a tolerant format; see
+[the decision on dropped-in taps](a-framework-ships-its-own-tap-and-hosts-the-endpoint-that-loads-it.md).
+The in-box taps keep the exact version.
 
 What does cost time at scale is the tree read itself: it serialises every element whatever was asked
 for, and the host pages and filters afterwards (#322).

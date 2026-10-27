@@ -150,3 +150,17 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   project whenever the time or the tree's state moved. So the dirty flag is the assembly's as of its
   last compile, and is shown, never compared. See
   [the decision](../decisions/a-build-is-named-by-its-commit.md).
+- **`taps/` is not payload, and nothing that installs RoseMCP may clear it.** A tap dropped in from
+  outside -- a framework's own assembly, loaded into apps built on that framework -- is somebody's file
+  the way `settings.json` is somebody's choice, and it sits beside `settings.json`, which puts it in the
+  install root wherever RoseMCP installs to its default folder. `Clear-InstallPayload` deletes every
+  folder at the root it does not name, so a `taps/` it did not name would be emptied by the next deploy
+  with no error anywhere: the next session would simply find no tap, and report the framework as
+  unserved. It is named there, in the layout file, and in both installers' uninstall paths, which keep it
+  unless asked to purge.
+  <br>
+  **A dropped-in tap never serves a framework an in-box tap serves.** The in-box taps are chosen first,
+  by loaded modules as above, and discovery refuses a dropped-in tap that names UWP or WinUI or their
+  modules, naming both. Otherwise one stray assembly in a folder would quietly replace the tap every
+  UWP or WinUI app has been served by, and the first sign would be different answers. See
+  [the decision](../decisions/a-framework-ships-its-own-tap-and-hosts-the-endpoint-that-loads-it.md).

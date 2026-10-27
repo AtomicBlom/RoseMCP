@@ -26,6 +26,12 @@ public static class RoseSettingsFile
 		DefaultIgnoreCondition = JsonIgnoreCondition.Never,
 	};
 
+	/// <summary>
+	/// The environment variable that points RoseMCP's per-machine records at another folder than this user's local
+	/// application data. A process RoseMCP starts inherits it, so every host of one server reads the same folder.
+	/// </summary>
+	public const string LocalAppDataVariable = "ROSEMCP_LOCAL_APP_DATA";
+
 	/// <summary>The file, which need not exist.</summary>
 	/// <param name="localAppData">Where local application data is, for a test that wants its own.</param>
 	public static string PathFor(string? localAppData = null)

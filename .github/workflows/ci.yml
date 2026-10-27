@@ -68,6 +68,8 @@ jobs:
       # the base branch as it is now: diffing the two is exactly what merging would change.
       - uses: actions/checkout@v7
         with:
+          # RoseMcp.Contracts compiles the tap protocol from the external/RoseMcp.Tap submodule.
+          submodules: true
           fetch-depth: 2
 
       - name: Classify the changed files
@@ -114,6 +116,8 @@ jobs:
       # with no tags by default -- which would silently version every build 0.0.0-alpha.0.
       - uses: actions/checkout@v7
         with:
+          # RoseMcp.Contracts compiles the tap protocol from the external/RoseMcp.Tap submodule.
+          submodules: true
           fetch-depth: 0
 
       - name: Set up .NET
@@ -185,6 +189,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # RoseMcp.Contracts compiles the tap protocol from the external/RoseMcp.Tap submodule.
+          submodules: true
           fetch-depth: 0
 
       - name: Set up .NET
@@ -332,6 +338,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # RoseMcp.Contracts compiles the tap protocol from the external/RoseMcp.Tap submodule.
+          submodules: true
           fetch-depth: 0
 
       - name: Set up .NET
@@ -629,6 +637,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
+        with:
+          # RoseMcp.Contracts compiles the tap protocol from the external/RoseMcp.Tap submodule.
+          submodules: true
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
@@ -691,6 +702,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # RoseMcp.Contracts compiles the tap protocol from the external/RoseMcp.Tap submodule.
+          submodules: true
           fetch-depth: 0
 
       - name: Set up .NET

@@ -18,6 +18,9 @@ internal sealed record XamlTap
 {
 	public required XamlStack Stack { get; init; }
 
+	/// <summary>The framework this tap serves, as it reads in a sentence: <c>UWP</c>, <c>WinUI</c>.</summary>
+	public required string Name { get; init; }
+
 	/// <summary>
 	/// The well-known diagnostics endpoint to ask for. Anything else makes
 	/// <c>InitializeXamlDiagnosticsEx</c> return ERROR_NOT_FOUND (0x80070490).

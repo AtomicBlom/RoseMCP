@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 
 using RoseMcp.Contracts;
+using RoseMcp.Tap.Protocol;
 using RoseMcp.XamlDiff;
 
 namespace RoseMcp.LiveApp.Xaml;
@@ -124,6 +125,8 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		var (pipe, unready) = _provider.Connect(pid);
 		if (pipe is null) return new LiveXamlTree { Detail = unready };
 
+		if (_provider.Unserved(pipe, TapCommands.Tree) is { } unserved) return new LiveXamlTree { Detail = unserved };
+
 		var request = "tree";
 
 		var served = pipe.Request(request, Reply);
@@ -152,6 +155,7 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 
 		var (pipe, unready) = _provider.Connect(pid);
 		if (pipe is null) return new LiveXamlProperties { Handle = handle, Detail = unready };
+		if (_provider.Unserved(pipe, TapCommands.Properties) is { } unserved) return new LiveXamlProperties { Handle = handle, Detail = unserved };
 
 		// The reply is a status line and then the rows, so "the chain could not be read" stays
 		// distinguishable from "read it and there was nothing" -- a distinction an empty reply cannot
@@ -218,6 +222,8 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		var (pipe, unready) = _provider.Connect(pid);
 		if (pipe is null) return new LiveXamlSelection { Detail = unready };
 
+		if (_provider.Unserved(pipe, TapCommands.Idle) is { } unserved) return new LiveXamlSelection { Detail = unserved };
+
 		var request = "idle";
 
 		if (pipe.Request(request, Reply) is null)
@@ -251,6 +257,9 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		var (pipe, unready) = _provider.Connect(pid);
 		if (pipe is null) return new LiveXamlSelection { Detail = unready };
 
+		var unserved = _provider.Unserved(pipe, TapCommands.Select, rulers ? TapCommands.SelectRulers : TapCommands.SelectPick);
+		if (unserved is not null) return new LiveXamlSelection { Detail = unserved };
+
 		// The provider reports the extent XAML arranged its capture layer at, and a zero is checked
 		// rather than assumed: an overlay that exists but was given no area is armed, invisible, and
 		// cannot be clicked -- which is indistinguishable from working if all you check is that it
@@ -264,7 +273,7 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 			return new LiveXamlSelection { Detail = Unanswered(request, $"{(rulers ? "rulers" : "select")} mode to be armed") };
 		}
 
-		var fields = XamlWire.Fields(served.Trim());
+		var fields = TapWire.Fields(served.Trim());
 		var width = fields.Length > 1 && int.TryParse(fields[1], out var armedWidth) ? armedWidth : 0;
 		var height = fields.Length > 2 && int.TryParse(fields[2], out var armedHeight) ? armedHeight : 0;
 		if (width <= 0 || height <= 0)
@@ -324,6 +333,8 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 	{
 		var (pipe, unready) = _provider.Connect(pid);
 		if (pipe is null) return new LiveXamlSelection { Detail = unready };
+
+		if (_provider.Unserved(pipe, TapCommands.Deselect) is { } unserved) return new LiveXamlSelection { Detail = unserved };
 
 		var request = "deselect";
 
@@ -435,6 +446,8 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		// A refusal costs what an answer costs, which a channel of files could not manage: the provider
 		// writes a selection only when it has one to record, so a handle naming something that is not an
 		// element produced no file and the refusal arrived as a timeout. A reply always arrives.
+		if (_provider.Unserved(pipe, TapCommands.SelectHandle) is { } unserved) return new LiveXamlSelection { Detail = unserved };
+
 		var request = $"selecthandle {handle}";
 
 		var served = pipe.Request(request, Reply);
@@ -496,10 +509,12 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 	{
 		changeMarks = null;
 
-		if (_provider.ResidentPipe is null)
+		if (_provider.ResidentPipe is not { } resident)
 		{
 			return new LiveXamlSelection { Detail = "No XAML tool has run against this session yet, so the in-app toolbar is not installed." };
 		}
+
+		if (_provider.Unserved(resident, TapCommands.Selection) is { } unserved) return new LiveXamlSelection { Detail = unserved };
 
 		// This call deliberately does not inject, and over the pipe that costs nothing: the provider
 		// answers from what it holds, and the reply is matched to this request by the id it echoes.
@@ -542,7 +557,7 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 
 			foreach (var line in rows)
 			{
-				var fields = XamlWire.Fields(line);
+				var fields = TapWire.Fields(line);
 				if (fields.Length < 4 || !ulong.TryParse(fields[0], out var handle)) continue;
 
 				var name = fields[2];
@@ -614,7 +629,7 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		{
 			// The same tree every other read asks for, and over the same channel. It is joined onto the
 			// selection for source info and addresses, which exist in the tree and nowhere else.
-			if (_provider.ResidentPipe is not { } pipe) return [];
+			if (_provider.ResidentPipe is not { } pipe || !pipe.Capabilities.Serves(TapCommands.Tree)) return [];
 
 			var served = pipe.Request("tree", Reply);
 			if (served is null) return [];
@@ -670,7 +685,7 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		if (served is null) return null;
 
 		var lines = served.Split('\n');
-		var header = XamlWire.Fields(lines[0]);
+		var header = TapWire.Fields(lines[0]);
 		if (header.Length < 3) return null;
 
 		// The fourth field is whether the app marks what live edits changed. A header without one says

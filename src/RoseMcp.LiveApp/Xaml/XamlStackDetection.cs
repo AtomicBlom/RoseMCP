@@ -23,4 +23,10 @@ internal sealed record XamlStackDetection
 
 	/// <summary>How the answer was reached, as a sentence fit to appear in an error.</summary>
 	public required string Reason { get; init; }
+
+	/// <summary>
+	/// The framework a dropped-in tap serves, where <see cref="Stack"/> is <see cref="XamlStack.Tap"/>: the
+	/// tap's own name for it, since the enum has no value for a framework RoseMCP does not ship a tap for.
+	/// </summary>
+	public string? TapName { get; init; }
 }

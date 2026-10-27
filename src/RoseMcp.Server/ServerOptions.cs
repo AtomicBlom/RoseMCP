@@ -29,7 +29,7 @@ public sealed record ServerOptions
 	/// workspace reasons, and the activity record where no log root moves it -- at another folder than this user's
 	/// local application data.
 	/// </summary>
-	public const string LocalAppDataVariable = "ROSEMCP_LOCAL_APP_DATA";
+	public const string LocalAppDataVariable = RoseMcp.Settings.RoseSettingsFile.LocalAppDataVariable;
 
 	/// <summary>
 	/// Where the broker keeps its per-machine records instead of this user's local application data, from

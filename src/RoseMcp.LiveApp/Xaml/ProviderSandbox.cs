@@ -91,6 +91,27 @@ internal sealed class ProviderSandbox(ILogger logger)
 	}
 
 	/// <summary>
+	/// A work folder with nothing staged in it, for a tap a framework's endpoint loads rather than one this
+	/// host injects: the folder is where that tap writes its log. Made once per session and cleared of what
+	/// dead hosts left exactly as a staged folder is, so it goes the same way when the session does. No
+	/// grants, because the endpoint route serves desktop apps, which run as the user who owns the folder.
+	/// </summary>
+	internal (string WorkDir, bool Fresh) StageWorkFolder()
+	{
+		if (_workDir is not null && Directory.Exists(_workDir)) return (_workDir, false);
+
+		var root = Path.Combine(Path.GetTempPath(), "RoseMcpXaml");
+		Sweep(root);
+
+		var workDir = Path.Combine(root, Environment.ProcessId.ToString());
+		TryDeleteDirectory(workDir);
+		Directory.CreateDirectory(workDir);
+
+		_workDir = workDir;
+		return (workDir, true);
+	}
+
+	/// <summary>
 	/// Deletes the sandbox folders whose host is gone. <see cref="SandboxSweep"/> decides each one, and
 	/// says how a recycled pid is told from a live host and why a folder that cannot be decided costs
 	/// only that folder.

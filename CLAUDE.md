@@ -35,6 +35,7 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 | `RoseMcp.LiveApp` | The live-app host: one ICorDebug session and one XAML diagnostics session, for one debugged process. |
 | `RoseMcp.Xaml.Tap` | The native in-app provider, shared between frameworks: the tap, the overlay, the pipe. Headers only, in four tiers by what each names -- see [tap-tiers.md](docs/invariants/tap-tiers.md). Only tier 3 -- `tap_render.h`, the overlay and the toolbar's pieces -- is compiled per framework; the COM object names no projection, and `TapTierTests` fails if it does. |
 | `RoseMcp.Xaml.Uwp.Tap`, `RoseMcp.Xaml.WinUi.Tap` | The two bindings of that provider, one per XAML framework. Which one serves a target is decided by the framework the target runs. |
+| `external/RoseMcp.Tap` | The tap contract, a git submodule of its own (MIT): `Protocol/` -- framing, escaping, the greeting and its capabilities, reply rows, the endpoint request and the `RoseMcpTap` attribute -- compiled into `RoseMcp.Contracts` and into every tap a framework ships; `Endpoint/` is the pipe listener and loader a framework hosts so its tap can be loaded into a running app, and RoseMCP never compiles it outside a test. See [the decision](docs/decisions/a-framework-ships-its-own-tap-and-hosts-the-endpoint-that-loads-it.md). |
 | `RoseMcp.Ui.Core` | The half of both windows that is not WinUI: rows, formatting, the poll loop, the in-place merge, and `OperatorClient`. Plain `net10.0`, so it runs in the fast suite. |
 | `RoseMcp.Ui` | WinUI class library. Themes, window chrome, the crash handler and the icon assets, shared so a second window is the same product rather than a lookalike. |
 | `RoseMcp.Tray` | WinUI 3 tray app for http mode. Hosts the broker in-process, so its window reads the live `WorkspaceManager` rather than a pushed copy. |
@@ -43,7 +44,7 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 Logic goes in `Contracts` only when a test needs it and the host that owns it cannot be referenced.
 `XamlStackModules`, `ToolArgumentShape`, `PathArguments`, `XamlProviderPath`, `ValuePath`,
 `SymbolLocation`, `HostVersion`, `BuildIdentity`, `BreakpointCondition`, `LogMessageTemplate`, `XamlRequestKind`,
-`SandboxSweep`, `XamlWire`, `ToolJson` and `ToolFailure` are the whole list, each a pure function over strings or
+`SandboxSweep`, `XamlWire`, `TapProtocolRange`, `DroppedInTaps`, `ToolJson` and `ToolFailure` are the whole list, each a pure function over strings or
 JSON -- or, for `ToolFailure`, over the exception a boundary caught -- with the host's own facts passed in. Three of the launchable hosts are `net10.0-windows` or reachable only as a
 child process, so a rule living beside its host is a rule the unit suite cannot see -- and one kept
 `internal` there is a rule no test can see at all. It is not a licence for behaviour: anything holding
@@ -86,9 +87,9 @@ touch and read that file first.
 | [analyzers-and-generators.md](docs/invariants/analyzers-and-generators.md) | analyzer loading, `RoseMcp.XamlStubs`, anything handing Roslyn an `AnalyzerReference` |
 | [xaml-live-edit.md](docs/invariants/xaml-live-edit.md) | `rose_xaml_*`, `src/RoseMcp.XamlDiff/`, the apply path in `src/RoseMcp.LiveApp/Xaml/` |
 | [tap-tiers.md](docs/invariants/tap-tiers.md) | a new file under `src/RoseMcp.Xaml.Tap/`, moving code between them, either provider's include order |
-| [xaml-tap-lifecycle.md](docs/invariants/xaml-tap-lifecycle.md) | `tap_object.h`, the pipe's wire format (`tap_channel.h`, `XamlWire`), injection, anything that advises the visual tree |
+| [xaml-tap-lifecycle.md](docs/invariants/xaml-tap-lifecycle.md) | `tap_object.h`, the pipe's wire format (`tap_channel.h`, `XamlWire`), the tap contract in `external/RoseMcp.Tap`, capabilities, injection, anything that advises the visual tree |
 | [overlay.md](docs/invariants/overlay.md) | `tap_overlay.h`, `tap_measure.h` |
-| [hosts-and-deploy.md](docs/invariants/hosts-and-deploy.md) | `XamlStackModules`, architecture detection, `XamlProviderSession`, `tools/deploy.ps1`, what an install carries |
+| [hosts-and-deploy.md](docs/invariants/hosts-and-deploy.md) | `XamlStackModules`, architecture detection, `XamlProviderSession`, `tools/deploy.ps1`, what an install carries, the taps folder, which tap serves a target |
 | [live-app-tests.md](docs/invariants/live-app-tests.md) | any live-app test or fixture |
 
 A new invariant goes in the file whose trigger already covers it, or in a new file with a trigger of
@@ -113,6 +114,9 @@ dotnet test
 dotnet format                      # run before every commit
 dotnet format --verify-no-changes  # what CI checks
 ```
+
+A clone or a new worktree needs `git submodule update --init` before anything builds: `RoseMcp.Contracts`
+compiles the tap protocol from `external/RoseMcp.Tap`.
 
 Run it:
 

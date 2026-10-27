@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 
 using RoseMcp.Contracts;
+using RoseMcp.Tap.Protocol;
 
 namespace RoseMcp.UnitTests;
 
@@ -38,12 +39,12 @@ public sealed class XamlWireTests
 	[Arguments("all of them: \t \n \r \\ and after")]
 	public void A_field_holds_no_delimiter_once_escaped_and_comes_back_as_it_was(string value)
 	{
-		var escaped = XamlWire.Escape(value);
+		var escaped = TapWire.Escape(value);
 
 		escaped.ShouldNotContain('\t');
 		escaped.ShouldNotContain('\n');
 		escaped.ShouldNotContain('\r');
-		XamlWire.Unescape(escaped).ShouldBe(value);
+		TapWire.Unescape(escaped).ShouldBe(value);
 	}
 
 	/// <summary>
@@ -60,8 +61,8 @@ public sealed class XamlWireTests
 			["AddChild", "#Slot7", string.Empty, string.Empty, string.Empty, "slot:1", "2"],
 		];
 
-		var message = string.Join('\n', commands.Select(fields => XamlWire.Row(fields)));
-		var read = message.Split('\n').Select(XamlWire.Fields).ToArray();
+		var message = string.Join('\n', commands.Select(fields => TapWire.Row(fields)));
+		var read = message.Split('\n').Select(TapWire.Fields).ToArray();
 
 		read.Length.ShouldBe(commands.Length);
 		for (var i = 0; i < commands.Length; i++)
@@ -78,15 +79,15 @@ public sealed class XamlWireTests
 	[Test]
 	public void Two_rows_whose_fields_differ_only_in_where_a_tab_falls_are_different_rows()
 	{
-		XamlWire.Row("a", "b\tc").ShouldNotBe(XamlWire.Row("a\tb", "c"));
+		TapWire.Row("a", "b\tc").ShouldNotBe(TapWire.Row("a\tb", "c"));
 	}
 
 	[Test]
 	public void A_frame_carries_its_id_and_its_body_whole()
 	{
-		var frame = XamlWire.Frame(42, "apply\nSetProperty\tone\nAddChild\ttwo");
+		var frame = TapWire.Frame(42, "apply\nSetProperty\tone\nAddChild\ttwo");
 
-		XamlWire.TryReadFrame(frame, out var id, out var body).ShouldBeTrue();
+		TapWire.TryReadFrame(frame, out var id, out var body).ShouldBeTrue();
 		id.ShouldBe(42u);
 		body.ShouldBe("apply\nSetProperty\tone\nAddChild\ttwo");
 	}
@@ -95,7 +96,7 @@ public sealed class XamlWireTests
 	[Test]
 	public void An_empty_body_keeps_its_id()
 	{
-		XamlWire.TryReadFrame(XamlWire.Frame(7, string.Empty), out var id, out var body).ShouldBeTrue();
+		TapWire.TryReadFrame(TapWire.Frame(7, string.Empty), out var id, out var body).ShouldBeTrue();
 		id.ShouldBe(7u);
 		body.ShouldBe(string.Empty);
 	}
@@ -108,13 +109,13 @@ public sealed class XamlWireTests
 	[Arguments(" 1\ntree")]
 	public void Something_that_was_not_made_as_a_frame_is_not_read_as_one(string frame)
 	{
-		XamlWire.TryReadFrame(frame, out _, out _).ShouldBeFalse();
+		TapWire.TryReadFrame(frame, out _, out _).ShouldBeFalse();
 	}
 
 	[Test]
 	public void The_greeting_a_provider_sends_is_accepted_with_the_key_its_session_issued()
 	{
-		XamlWire.RefuseGreeting(XamlWire.Greeting("abc123"), "abc123").ShouldBeNull();
+		XamlWire.RefuseGreeting(XamlWire.Greeting("abc123"), "abc123", TapProtocolRange.InBox, out _).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -124,7 +125,7 @@ public sealed class XamlWireTests
 	[Test]
 	public void A_provider_that_greets_without_a_version_is_refused_as_older_than_the_host()
 	{
-		var refusal = XamlWire.RefuseGreeting(XamlWire.UnversionedGreeting, "abc123");
+		var refusal = XamlWire.RefuseGreeting(XamlWire.UnversionedGreeting, "abc123", TapProtocolRange.InBox, out _);
 
 		refusal.ShouldNotBeNull();
 		refusal.ShouldContain("older than this host", Case.Sensitive);
@@ -134,7 +135,7 @@ public sealed class XamlWireTests
 	[Test]
 	public void A_provider_that_speaks_another_version_is_refused_naming_both()
 	{
-		var refusal = XamlWire.RefuseGreeting($"{XamlWire.GreetingPrefix}{XamlWire.ProtocolVersion + 1}/abc123", "abc123");
+		var refusal = XamlWire.RefuseGreeting($"{XamlWire.GreetingPrefix}{XamlWire.ProtocolVersion + 1}/abc123", "abc123", TapProtocolRange.InBox, out _);
 
 		refusal.ShouldNotBeNull();
 		refusal.ShouldContain($"protocol {XamlWire.ProtocolVersion + 1}", Case.Sensitive);
@@ -148,7 +149,7 @@ public sealed class XamlWireTests
 	[Test]
 	public void A_provider_that_presents_another_key_is_refused()
 	{
-		var refusal = XamlWire.RefuseGreeting(XamlWire.Greeting("someone-else"), "abc123");
+		var refusal = XamlWire.RefuseGreeting(XamlWire.Greeting("someone-else"), "abc123", TapProtocolRange.InBox, out _);
 
 		refusal.ShouldNotBeNull();
 		refusal.ShouldContain("key", Case.Sensitive);
@@ -157,17 +158,56 @@ public sealed class XamlWireTests
 	[Test]
 	public void A_provider_given_no_key_is_refused_rather_than_accepted()
 	{
-		XamlWire.RefuseGreeting(XamlWire.Greeting(string.Empty), "abc123").ShouldNotBeNull();
+		XamlWire.RefuseGreeting(XamlWire.Greeting(string.Empty), "abc123", TapProtocolRange.InBox, out _).ShouldNotBeNull();
 	}
 
 	/// <summary>Whatever reached the pipe first can send anything, so a refusal quotes only the start of it.</summary>
 	[Test]
 	public void Something_that_is_not_a_greeting_is_refused_and_quoted_short()
 	{
-		var refusal = XamlWire.RefuseGreeting(new string('x', 5000), "abc123");
+		var refusal = XamlWire.RefuseGreeting(new string('x', 5000), "abc123", TapProtocolRange.InBox, out _);
 
 		refusal.ShouldNotBeNull();
 		refusal.Length.ShouldBeLessThan(200, $"expected a short refusal, got {refusal.Length} characters");
+	}
+
+	/// <summary>
+	/// An accepted greeting hands back what the tap declared, which is what lets the host refuse a command the
+	/// tap does not serve without sending it.
+	/// </summary>
+	[Test]
+	public void An_accepted_greeting_carries_what_the_tap_serves()
+	{
+		XamlWire.RefuseGreeting(XamlWire.Greeting("abc123"), "abc123", TapProtocolRange.InBox, out var capabilities).ShouldBeNull();
+
+		capabilities.Serves(TapCommands.Tree).ShouldBeTrue();
+		capabilities.Serves(TapCommands.Apply, TapCommands.SetResource).ShouldBeTrue();
+		capabilities.Serves(TapCommands.Select, TapCommands.SelectRulers).ShouldBeTrue();
+	}
+
+	/// <summary>
+	/// A tap built apart from RoseMCP may speak an older protocol than the host, down to the first that declared
+	/// capabilities, and is told which side to rebuild when it falls outside.
+	/// </summary>
+	[Test]
+	public void A_dropped_in_tap_is_accepted_across_its_range_and_told_which_side_is_behind_outside_it()
+	{
+		var accepted = new TapProtocolRange(5, 7);
+
+		XamlWire.RefuseGreeting("RoseTap/6/abc123\ntree", "abc123", accepted, out var capabilities).ShouldBeNull();
+		capabilities.Serves(TapCommands.Tree).ShouldBeTrue();
+
+		XamlWire.RefuseGreeting("RoseTap/4/abc123", "abc123", accepted, out _).ShouldNotBeNull().ShouldContain("rebuilt against a newer one");
+		XamlWire.RefuseGreeting("RoseTap/8/abc123\ntree", "abc123", accepted, out _).ShouldNotBeNull().ShouldContain("RoseMCP has to be updated");
+	}
+
+	/// <summary>A refused greeting declares nothing, so nothing is sent to a tap the host did not accept.</summary>
+	[Test]
+	public void A_refused_greeting_declares_nothing()
+	{
+		XamlWire.RefuseGreeting(XamlWire.Greeting("someone-else"), "abc123", TapProtocolRange.InBox, out var capabilities).ShouldNotBeNull();
+
+		capabilities.Names.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -178,7 +218,7 @@ public sealed class XamlWireTests
 	[Test]
 	public void An_apply_row_carries_the_element_and_the_old_value_after_the_fields_it_is_keyed_by()
 	{
-		var row = XamlWire.ReadApplyRow(XamlWire.Row("SetProperty", "#Ink", "Margin", "applied", string.Empty, "4242", "12,0\t12,0"));
+		var row = XamlWire.ReadApplyRow(TapWire.Row("SetProperty", "#Ink", "Margin", "applied", string.Empty, "4242", "12,0\t12,0"));
 
 		row.ShouldNotBeNull();
 		row.Op.ShouldBe("SetProperty");
@@ -197,7 +237,7 @@ public sealed class XamlWireTests
 	[Test]
 	public void A_row_that_reached_no_element_has_no_handle_and_an_empty_old_value_is_kept()
 	{
-		var row = XamlWire.ReadApplyRow(XamlWire.Row("SetProperty", "#Gone", "Text", "target not found", string.Empty, "0", string.Empty));
+		var row = XamlWire.ReadApplyRow(TapWire.Row("SetProperty", "#Gone", "Text", "target not found", string.Empty, "0", string.Empty));
 
 		row.ShouldNotBeNull();
 		row.Handle.ShouldBeNull();
@@ -211,7 +251,7 @@ public sealed class XamlWireTests
 	[Test]
 	public void A_row_of_five_fields_still_reads()
 	{
-		var row = XamlWire.ReadApplyRow(XamlWire.Row("AddChild", "#Slot7", string.Empty, "applied", "$1"));
+		var row = XamlWire.ReadApplyRow(TapWire.Row("AddChild", "#Slot7", string.Empty, "applied", "$1"));
 
 		row.ShouldNotBeNull();
 		row.Status.ShouldBe("applied");
@@ -231,7 +271,7 @@ public sealed class XamlWireTests
 	[Test]
 	public void A_press_of_ask_is_read_with_what_it_names()
 	{
-		var measured = XamlWire.ReadAsk(XamlWire.Row("ask", "3", "measurement", "Button #Eraser ↔ Slider #Width: 14 apart", "11", "12", string.Empty, "1500") + "\n");
+		var measured = XamlWire.ReadAsk(TapWire.Row("ask", "3", "measurement", "Button #Eraser ↔ Slider #Width: 14 apart", "11", "12", string.Empty, "1500") + "\n");
 
 		measured.ShouldNotBeNull();
 		measured.Sequence.ShouldBe(3);
@@ -242,7 +282,7 @@ public sealed class XamlWireTests
 		measured.Colour.ShouldBeNull();
 		measured.Age.ShouldBe(TimeSpan.FromMilliseconds(1500), "how long ago it was pressed, by the app's clock");
 
-		var colour = XamlWire.ReadAsk(XamlWire.Row("ask", "4", "colour", "#C2185B at 10, 20", "0", "0", "#C2185B", "0"));
+		var colour = XamlWire.ReadAsk(TapWire.Row("ask", "4", "colour", "#C2185B at 10, 20", "0", "0", "#C2185B", "0"));
 
 		colour.ShouldNotBeNull();
 		colour.Element.ShouldBeNull();
@@ -284,6 +324,24 @@ public sealed class XamlWireTests
 	}
 
 	/// <summary>
+	/// The provider declares what it serves in <c>tap_channel.h</c>, and the host refuses whatever a tap does not
+	/// declare without sending it -- so a capability the provider gains and the line leaves out is one no host ever
+	/// uses, and one the line names that the provider lost is a command answered with an empty frame.
+	/// </summary>
+	[Test]
+	public void The_provider_declares_the_capabilities_the_host_expects()
+	{
+		var channel = ProviderSource();
+
+		var declared = Regex.Match(channel, @"static constexpr const char\* RoseTapCapabilities =\s*((?:""[^""]*""\s*)+);");
+		declared.Success.ShouldBeTrue($"{ProviderChannel} no longer declares RoseTapCapabilities where this looks for it.");
+
+		var line = string.Concat(Regex.Matches(declared.Groups[1].Value, @"""([^""]*)""").Select(literal => literal.Groups[1].Value));
+		line.ShouldBe(XamlWire.InBoxCapabilityLine);
+		TapCapabilities.Parse(line).ToString().ShouldBe(line, "the line is written in the order a tap writes it");
+	}
+
+	/// <summary>
 	/// The two escape tables, compared. Each side escapes exactly these four characters as these four
 	/// sequences, and the provider's reader undoes the three that are letters -- a backslash before
 	/// anything else, the backslash included, standing for itself on both sides.
@@ -305,7 +363,7 @@ public sealed class XamlWireTests
 
 		foreach (var (raw, source, escaped) in table)
 		{
-			XamlWire.Escape(raw.ToString()).ShouldBe(escaped);
+			TapWire.Escape(raw.ToString()).ShouldBe(escaped);
 			escape.ShouldContain(source, Case.Sensitive);
 		}
 

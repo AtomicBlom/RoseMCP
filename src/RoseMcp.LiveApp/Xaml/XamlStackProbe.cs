@@ -92,7 +92,7 @@ internal static class XamlStackProbe
 	/// The loaded module names, or empty when they cannot be read -- an exited process, or one of
 	/// another architecture. Both are ordinary here, so failure is silence rather than an exception.
 	/// </summary>
-	private static IReadOnlyList<string> LoadedModules(int processId)
+	internal static IReadOnlyList<string> LoadedModules(int processId)
 	{
 		try
 		{

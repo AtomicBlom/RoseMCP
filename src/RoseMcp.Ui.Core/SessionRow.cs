@@ -426,12 +426,16 @@ public sealed class SessionRow : Observable
 		return setter.Agent?.Name is { Length: > 0 } name ? $"set by {name}" : "set by an agent session";
 	}
 
-	/// <summary>The framework a target runs, as the header names it; empty where it is none the debugger recognised.</summary>
-	public static string DescribeFramework(XamlStack stack) => stack switch
+	/// <summary>
+	/// The framework a target runs, as the header names it; empty where it is none the debugger recognised.
+	/// <paramref name="tap"/> is the name a dropped-in tap gives its framework, which is the only name there is for it.
+	/// </summary>
+	public static string DescribeFramework(XamlStack stack, string? tap = null) => stack switch
 	{
 		XamlStack.Uwp => "UWP",
 		XamlStack.WinUi => "WinUI 3",
 		XamlStack.Wpf => "WPF",
+		XamlStack.Tap => tap ?? "a dropped-in tap's framework",
 		_ => string.Empty,
 	};
 
@@ -512,7 +516,7 @@ public sealed class SessionRow : Observable
 		_stoppedAt = summary.Stop is { } stop
 			? $"stopped {DateTime.SpecifyKind(stop.StoppedAtUtc, DateTimeKind.Utc).ToLocalTime().ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture)}"
 			: string.Empty;
-		_framework = DescribeFramework(summary.XamlStack);
+		_framework = DescribeFramework(summary.XamlStack, summary.XamlTap);
 		AppLine = DescribeApp(Facts, _framework, _solution);
 
 		Tick(_readAtUtc);
@@ -622,10 +626,10 @@ public sealed class SessionRow : Observable
 	}
 
 	/// <summary>
-	/// Whether a target's XAML can be inspected at all. Only the two frameworks with a diagnostics
-	/// tap: WPF's live diagnostics are managed rather than a COM tap, and Unknown is not a framework.
+	/// Whether a target's UI can be inspected at all: the two frameworks RoseMCP ships a tap for, and any
+	/// framework a dropped-in tap serves. WPF has no tap, and Unknown is not a framework.
 	/// </summary>
-	public static bool Inspectable(XamlStack stack) => stack is XamlStack.Uwp or XamlStack.WinUi;
+	public static bool Inspectable(XamlStack stack) => stack is XamlStack.Uwp or XamlStack.WinUi or XamlStack.Tap;
 
 	/// <summary>
 	/// What can be inspected, or why nothing can, naming the target's framework and how that was
@@ -639,17 +643,11 @@ public sealed class SessionRow : Observable
 	/// </summary>
 	public static string DescribeXaml(LiveAppSessionSummary summary)
 	{
-		var named = summary.XamlStack switch
-		{
-			XamlStack.Uwp => "UWP",
-			XamlStack.WinUi => "WinUI 3",
-			XamlStack.Wpf => "WPF",
-			_ => "no XAML framework",
-		};
+		var named = summary.XamlStack == XamlStack.Unknown ? "no XAML framework" : DescribeFramework(summary.XamlStack, summary.XamlTap);
 
 		if (!Inspectable(summary.XamlStack))
 		{
-			return $"No visual tree: {named} ({summary.XamlStackReason}). Only UWP and WinUI targets can be inspected.";
+			return $"No visual tree: {named} ({summary.XamlStackReason}). Only UWP and WinUI targets, and those a dropped-in tap serves, can be inspected.";
 		}
 
 		var provider = summary.XamlProvider switch

@@ -109,6 +109,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 				XamlStack = stack?.Stack ?? XamlStack.Unknown,
 				XamlStackReason = stack?.Reason
 					?? "this session has no target process yet, so its loaded modules cannot be read",
+				XamlTap = stack?.TapName,
 				XamlProvider = xaml?.Provider ?? LiveXamlProvider.None,
 				LastEvent = _events.Newest(),
 				XamlAsk = xaml?.LastAsk,

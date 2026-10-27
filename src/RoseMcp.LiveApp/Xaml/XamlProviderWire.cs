@@ -1,6 +1,7 @@
 using System.Globalization;
 
 using RoseMcp.Contracts;
+using RoseMcp.Tap.Protocol;
 using RoseMcp.XamlDiff;
 
 namespace RoseMcp.LiveApp.Xaml;
@@ -16,7 +17,7 @@ namespace RoseMcp.LiveApp.Xaml;
 /// pipe.
 /// </para>
 /// <para>
-/// Every row is made with <see cref="XamlWire.Row"/> and taken apart with <see cref="XamlWire.Fields"/>,
+/// Every row is made with <see cref="TapWire.Row"/> and taken apart with <see cref="TapWire.Fields"/>,
 /// in both directions, because a value can hold a tab or a newline and the protocol is delimited by
 /// both. No field here is joined or split any other way.
 /// </para>
@@ -43,7 +44,7 @@ internal static class XamlProviderWire
 	/// without every command having to carry every field.
 	/// </summary>
 	internal static string Line(string op, string target, string property, string valueType, string value, string arg, int index) =>
-		XamlWire.Row(op, target, property, valueType, value, arg, index.ToString(CultureInfo.InvariantCulture));
+		TapWire.Row(op, target, property, valueType, value, arg, index.ToString(CultureInfo.InvariantCulture));
 
 	/// <summary>
 	/// How a command's result is found again. The arg is part of it: without it, one slot given two
@@ -52,7 +53,7 @@ internal static class XamlProviderWire
 	/// the same string.
 	/// </summary>
 	internal static string Key(string op, string target, string property, string arg) =>
-		XamlWire.Row(op, target, property, arg);
+		TapWire.Row(op, target, property, arg);
 
 	/// <summary>The command for one build step, with the key its result will come back under.</summary>
 	internal static (string Line, string Key) Command(XamlStep step) => step.Kind switch
@@ -137,7 +138,7 @@ internal static class XamlProviderWire
 	/// </summary>
 	private static string Describe(string key)
 	{
-		var fields = XamlWire.Fields(key);
+		var fields = TapWire.Fields(key);
 		if (fields.Length < 4) return key;
 
 		var subject = fields[2].Length > 0 ? fields[2] : fields[3];
@@ -166,7 +167,7 @@ internal static class XamlProviderWire
 		{
 			if (line.Length == 0) continue;
 
-			var fields = XamlWire.Fields(line);
+			var fields = TapWire.Fields(line);
 			if (fields.Length < 9) continue;
 			if (!ulong.TryParse(fields[0], out var handle) || !ulong.TryParse(fields[1], out var parent) || !int.TryParse(fields[2], out var childIndex))
 			{
@@ -206,7 +207,7 @@ internal static class XamlProviderWire
 		{
 			if (line.Length == 0) continue;
 
-			var fields = XamlWire.Fields(line);
+			var fields = TapWire.Fields(line);
 			if (fields[0] == "E" && fields.Length >= 5)
 			{
 				typeName = EmptyToNull(fields[1]);

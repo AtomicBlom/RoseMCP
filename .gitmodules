@@ -1,0 +1,4 @@
+[submodule "external/RoseMcp.Tap"]
+	path = external/RoseMcp.Tap
+	url = https://github.com/AtomicBlom/RoseMcp.Tap.git
+	branch = main

@@ -465,6 +465,19 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 			};
 		}
 
+		// A tap can pick by handle without being able to report its pick: one with no overlay yet. What it
+		// said is the answer then, rather than a read it would refuse turning a selection into a failure.
+		if (!pipe.Capabilities.Serves(TapCommands.Selection))
+		{
+			return new LiveXamlSelection
+			{
+				Selected = true,
+				Handle = handle,
+				Detail = $"Handle {handle} is selected. The {_provider.TapName} tap does not report its selection, so "
+					+ "nothing more about it can be read back.",
+			};
+		}
+
 		return ReadSelectionCore();
 	}
 

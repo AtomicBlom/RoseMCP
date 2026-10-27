@@ -93,10 +93,12 @@ jobs:
           unseen='^(docs/|wiki/|tools/|\.claude/|src/RoseMcp\.Xaml(\.Uwp|\.WinUi)?\.Tap/|\.github/workflows/release\.yml$|[^/]+\.md$)'
           # What a probe-app test reaches: the broker and the projects it references, the live-app
           # host and the projects it loads, both taps and their shared headers, the probe apps, the
-          # test project and its shared doubles, and the build inputs every one of them reads.
+          # test project and its shared doubles, and the build inputs every one of them reads -- the
+          # tap contract among them, the submodule RoseMcp.Contracts compiles in, whose bump changes
+          # only its own path.
           # ProbeAppCategoryTests holds this against the test project's reference graph, so a new
           # reference fails there until it is added here or named as one no probe-app test reaches.
-          probes='^(src/RoseMcp\.(Broker|Contracts|Logging|Settings|Solutions|LiveApp|Symbols|XamlDiff)/|src/RoseMcp\.Xaml(\.Uwp|\.WinUi)?\.Tap/|tests/apps/|tests/RoseMcp\.(IntegrationTests|TestSupport)/|Directory\.(Build|Packages)\.props$|global\.json$|\.github/workflows/ci\.yml$)'
+          probes='^(src/RoseMcp\.(Broker|Contracts|Logging|Settings|Solutions|LiveApp|Symbols|XamlDiff)/|src/RoseMcp\.Xaml(\.Uwp|\.WinUi)?\.Tap/|tests/apps/|tests/RoseMcp\.(IntegrationTests|TestSupport)/|external/RoseMcp\.Tap$|Directory\.(Build|Packages)\.props$|global\.json$|\.github/workflows/ci\.yml$)'
 
           if grep -Eq "$providers" <<< "$changed"; then p=true; else p=false; fi
           if grep -Evq "$unseen" <<< "$changed"; then i=true; else i=false; fi

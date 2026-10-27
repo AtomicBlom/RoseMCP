@@ -62,6 +62,7 @@ static const CLSID CLSID_RoseTap =
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.UI.Xaml.h>
+#include <winrt/Windows.UI.Xaml.Automation.h> // AutomationProperties, for naming what only an icon shows
 #include <winrt/Windows.UI.Xaml.Controls.h>
 #include <winrt/Windows.UI.Xaml.Controls.Primitives.h> // ButtonBase::Click, or it is "auto before defined"
 #include <winrt/Windows.UI.Xaml.Media.h>
@@ -245,4 +246,5 @@ static bool RoseTapRunWalk(const std::function<void()>& walk)
 #include "../RoseMcp.Xaml.Tap/tap_pick.h"
 #include "../RoseMcp.Xaml.Tap/tap_tool_rulers.h"
 #include "../RoseMcp.Xaml.Tap/tap_tool_changes.h"
+#include "../RoseMcp.Xaml.Tap/tap_tool_timer.h"
 #include "../RoseMcp.Xaml.Tap/tap_overlay.h"

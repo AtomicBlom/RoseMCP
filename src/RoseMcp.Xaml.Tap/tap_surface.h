@@ -32,6 +32,10 @@
 // UI instead of reporting it as part of the app's.
 static const wchar_t* const OverlayRootName = L"__RoseMcpOverlay";
 
+// The name every toolbar chip's tooltip carries, which is how the overlay knows one is its own: a
+// tooltip opens in the popup root, outside the overlay's root, where nothing else would say so.
+static const wchar_t* const OverlayTipName = L"__RoseMcpOverlayTip";
+
 // Set true to stop the toolbar hiding itself from the tree, so RoseMCP's own tools can be pointed at
 // RoseMCP's own UI. Off in anything anyone else runs: the toolbar is not part of the app, and
 // reporting it as though it were is exactly the noise the filter exists to remove.

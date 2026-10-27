@@ -27,6 +27,7 @@
     <Project Path="tests/DebugProbeTarget/DebugProbeTarget.csproj" />
     <Project Path="tests/RoseMcp.TestSupport/RoseMcp.TestSupport.csproj" />
     <Project Path="tests/RoseMcp.TestTap/RoseMcp.TestTap.csproj" />
+    <Project Path="tests/TapProbeTarget/TapProbeTarget.csproj" />
     <Project Path="tests/RoseMcp.UnitTests/RoseMcp.UnitTests.csproj" />
     <Project Path="tests/RoseMcp.IntegrationTests/RoseMcp.IntegrationTests.csproj" />
     <Project Path="tests/RoseMcp.IntegrationTests.Windows/RoseMcp.IntegrationTests.Windows.csproj" />

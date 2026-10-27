@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- A target hosting a framework's diagnostics endpoint the way a framework hosts it: the tap contract
+       compiled in as source, internal, with nothing of RoseMCP's referenced. -->
+  <ItemGroup>
+    <Compile Include="..\..\external\RoseMcp.Tap\Protocol\*.cs" Link="Tap\Protocol\%(Filename)%(Extension)" />
+    <Compile Include="..\..\external\RoseMcp.Tap\Endpoint\*.cs" Link="Tap\Endpoint\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

@@ -153,6 +153,23 @@ internal sealed class StopNarrative(ILogger logger)
 		}
 	}
 
+	/// <summary>
+	/// What the exception a thread is reporting says about itself, read from its fields; null where it
+	/// holds no message and no file, or could not be read. The type alone says what kind of failure it
+	/// was and rarely which one: a <c>FileLoadException</c> without its file leaves the stack to guess from.
+	/// </summary>
+	internal static string? ExceptionMessage(CorDebugThread thread)
+	{
+		try
+		{
+			return thread.CurrentException is { } value ? CorDebugInspector.ExceptionMessage(value) : null;
+		}
+		catch (Exception)
+		{
+			return null;
+		}
+	}
+
 	private static string? DescribeFrame(CorDebugFrame frame)
 	{
 		try

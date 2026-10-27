@@ -17,7 +17,10 @@ public sealed record LiveVariable
 {
 	public required string Name { get; init; }
 
-	/// <summary>"argument", "local", "field" or "element".</summary>
+	/// <summary>
+	/// "argument", "local", "field", "property" or "element". A property is an auto-implemented one,
+	/// read from the field the compiler declared behind it and addressed by the property's name.
+	/// </summary>
 	public required string Kind { get; init; }
 
 	public string? TypeName { get; init; }

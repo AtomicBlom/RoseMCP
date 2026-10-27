@@ -194,6 +194,15 @@ public sealed class BrokerOptions
 	public Func<LiveAppTarget, ModelContextProtocol.Client.IClientTransport>? LiveAppHost { get; set; }
 
 	/// <summary>
+	/// Whether a session loads the XAML provider into its target as soon as it is attached, so the in-app toolbar is there
+	/// for a person without an agent having asked a XAML question first. On everywhere but a test that has to make the
+	/// session's first load itself: the session's own load runs in the background, and when its bound expires the provider
+	/// can still arrive and be connected before the test asks -- so the test's request finds it resident and never loads
+	/// the provider whose wait it is measuring.
+	/// </summary>
+	public bool AttachesUiTooling { get; set; } = true;
+
+	/// <summary>
 	/// The clock idle eviction reads: when a worker started, was last used and stopped, when the sweep
 	/// ticks and what it takes "now" to be -- and when the session manager found a live-app host gone
 	/// and how long ago that was. The system clock everywhere but a test, which replaces it to

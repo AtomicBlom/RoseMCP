@@ -196,7 +196,7 @@ public sealed class LiveAppSessionManager(
 		try
 		{
 			var session = await LiveAppSession.StartAsync(
-				sessionId, target, architecture, hostPath, Activities, loggerFactory, cancellationToken, standIn);
+				sessionId, target, architecture, hostPath, Activities, loggerFactory, cancellationToken, standIn, _options.AttachesUiTooling);
 
 			// Recorded before it is reachable, so there is no window in which a session exists with no
 			// owner and every caller is its owner.

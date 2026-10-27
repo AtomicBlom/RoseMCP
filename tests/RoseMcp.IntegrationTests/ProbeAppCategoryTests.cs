@@ -152,6 +152,8 @@ public sealed class ProbeAppCategoryTests
 		["RoseMcp.Worker"] = "the Roslyn worker, and what only it loads; a probe-app test opens no workspace",
 		["RoseMcp.Server"] = "the console host; a probe-app test drives the live-app session manager in its own process",
 		["DebugProbeTarget"] = "the plain .NET target only the integration job's debugger tests launch",
+		["TapProbeTarget"] = "the target hosting a tap endpoint, which only the integration job's dropped-in tap test launches",
+		["RoseMcp.TestTap"] = "the dropped-in tap that same test loads, which no probe app ever does",
 	};
 
 	/// <summary>

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 
 using RoseMcp.Contracts;
+using RoseMcp.Tap.Protocol;
 using RoseMcp.XamlDiff;
 
 namespace RoseMcp.LiveApp.Xaml;
@@ -70,14 +71,32 @@ internal sealed class XamlApply(XamlProviderSession provider, ILogger logger)
 		// taking apart lives in the diff library, which is pure and unit tested; doing it here would put
 		// the fiddliest part of this somewhere no unit test can reach.
 		var commands = new List<string>();
-		var plans = new List<(XamlEdit Edit, List<string> Keys)>();
+		var plans = new List<(XamlEdit Edit, List<string> Keys, string? Unserved)>();
 		var notes = new List<string>();
 		if (inputs.Note is not null) notes.Add(inputs.Note);
 		notes.AddRange(diff.Notes);
 
+		// Connected before the commands are built rather than after, because what the tap declared decides
+		// which edits are sent at all: one it does not apply is reported as not served and never reaches it,
+		// and the rest are applied as usual.
+		XamlProviderPipe? pipe = null;
+		if (diff.Edits.Count > 0)
+		{
+			string? unready;
+			(pipe, unready) = _provider.Connect(pid);
+			if (pipe is null) return new LiveXamlApplyResult { Detail = unready };
+			if (_provider.Unserved(pipe, TapCommands.Apply) is { } unserved) return new LiveXamlApplyResult { Detail = unserved };
+		}
+
 		foreach (var edit in diff.Edits)
 		{
 			var keys = new List<string>();
+
+			if (!pipe!.Capabilities.Serves(TapCommands.Apply, edit.Kind.ToString()))
+			{
+				plans.Add((edit, keys, $"not served: the {_provider.TapName} tap does not apply {edit.Kind} edits"));
+				continue;
+			}
 
 			if (edit.Kind is XamlEditKind.SetProperty or XamlEditKind.ClearProperty or XamlEditKind.RemoveChild)
 			{
@@ -127,17 +146,14 @@ internal sealed class XamlApply(XamlProviderSession provider, ILogger logger)
 				}
 			}
 
-			plans.Add((edit, keys));
+			plans.Add((edit, keys, null));
 		}
 
 		var outcomes = new Dictionary<string, XamlApplyRow>(StringComparer.Ordinal);
 		if (commands.Count > 0)
 		{
-			var (pipe, unready) = _provider.Connect(pid);
-			if (pipe is null) return new LiveXamlApplyResult { Detail = unready };
-
 			var request = "apply\n" + string.Join("\n", commands);
-			var served = pipe.Request(request, Reply);
+			var served = pipe!.Request(request, Reply);
 			if (served is null)
 			{
 				// Not retried anywhere, and the baseline is deliberately left where it was. A structural
@@ -162,7 +178,7 @@ internal sealed class XamlApply(XamlProviderSession provider, ILogger logger)
 		if (inputs.SourcePath is not null) _baselines.Advance(inputs.SourcePath, inputs.NewXaml);
 
 		var results = new List<LiveXamlEditResult>();
-		foreach (var (edit, keys) in plans)
+		foreach (var (edit, keys, unserved) in plans)
 		{
 			results.Add(new LiveXamlEditResult
 			{
@@ -170,7 +186,7 @@ internal sealed class XamlApply(XamlProviderSession provider, ILogger logger)
 				Target = edit.Target,
 				Property = edit.Property,
 				Value = edit.Value,
-				Status = XamlProviderWire.Outcome(keys, outcomes),
+				Status = unserved ?? XamlProviderWire.Outcome(keys, outcomes),
 				Handle = XamlProviderWire.HandleOf(keys, outcomes, edit.Target),
 				OldValue = XamlProviderWire.OldValueOf(edit.Kind, keys, outcomes),
 			});

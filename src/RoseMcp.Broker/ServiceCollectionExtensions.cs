@@ -107,7 +107,8 @@ public static class ServiceCollectionExtensions
 		rose_debug_step, rose_debug_continue and rose_debug_evaluate (field chains only, and no
 		debuggee code is run). rose_debug_detach leaves the target running.
 
-		A running UWP or WinUI app is inspected and edited in place against the same session.
+		A running UWP or WinUI app, or one a dropped-in tap serves, is inspected and edited in
+		place against the same session.
 		rose_xaml_tree and rose_xaml_properties read the live visual tree and one element's real
 		values, with where each was set. rose_xaml_apply live-edits it from the XAML file with no
 		relaunch -- what Visual Studio calls XAML Hot Reload -- and the first call for a file records

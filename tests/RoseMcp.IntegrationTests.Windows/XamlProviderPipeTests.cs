@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 using RoseMcp.Contracts;
 using RoseMcp.LiveApp.Xaml;
+using RoseMcp.Tap.Protocol;
 
 namespace RoseMcp.IntegrationTests.Windows;
 
@@ -184,7 +185,7 @@ public sealed class XamlProviderPipeTests
 		{
 			var (id, request) = await ReadRequestAsync(second);
 			request.ShouldBe("tree");
-			await SendFrameAsync(second, XamlWire.Frame(id, "one\ttwo"));
+			await SendFrameAsync(second, TapWire.Frame(id, "one\ttwo"));
 		});
 
 		pipe.Request("tree", Patience).ShouldBe("one\ttwo");
@@ -213,11 +214,11 @@ public sealed class XamlProviderPipeTests
 		{
 			var (first, _) = await ReadRequestAsync(provider);
 			await gaveUp.Task;
-			await SendFrameAsync(provider, XamlWire.Frame(first, "the tree, late"));
+			await SendFrameAsync(provider, TapWire.Frame(first, "the tree, late"));
 
 			var (second, request) = await ReadRequestAsync(provider);
 			request.ShouldBe("selection");
-			await SendFrameAsync(provider, XamlWire.Frame(second, "the selection"));
+			await SendFrameAsync(provider, TapWire.Frame(second, "the selection"));
 		});
 
 		pipe.Request("tree", TimeSpan.FromMilliseconds(300)).ShouldBeNull();
@@ -245,15 +246,15 @@ public sealed class XamlProviderPipeTests
 		{
 			var (first, none) = await ReadRequestAsync(provider);
 			asked.Add(none);
-			await SendFrameAsync(provider, XamlWire.Frame(first, "none\n"));
+			await SendFrameAsync(provider, TapWire.Frame(first, "none\n"));
 
 			var (second, fresh) = await ReadRequestAsync(provider);
 			asked.Add(fresh);
-			await SendFrameAsync(provider, XamlWire.Frame(second, "ask\t1\telement\tthe element Button · Ok picked in the app\t42\t0\t\t500\n"));
+			await SendFrameAsync(provider, TapWire.Frame(second, "ask\t1\telement\tthe element Button · Ok picked in the app\t42\t0\t\t500\n"));
 
 			var (third, held) = await ReadRequestAsync(provider);
 			asked.Add(held);
-			await SendFrameAsync(provider, XamlWire.Frame(third, "ask\t1\telement\tthe element Button · Ok picked in the app\t42\t0\t\t500\n"));
+			await SendFrameAsync(provider, TapWire.Frame(third, "ask\t1\telement\tthe element Button · Ok picked in the app\t42\t0\t\t500\n"));
 		});
 
 		XamlPanelRequests.Ask(pipe, 0, Patience).ShouldBe((true, null));
@@ -311,7 +312,7 @@ public sealed class XamlProviderPipeTests
 			{
 				var (id, request) = await ReadRequestAsync(provider);
 				asked.Add(request);
-				await SendFrameAsync(provider, XamlWire.Frame(id, $"ask\t1\telement\tthe element Button · Ok\t42\t0\t\t{twoHours}\n"));
+				await SendFrameAsync(provider, TapWire.Frame(id, $"ask\t1\telement\tthe element Button · Ok\t42\t0\t\t{twoHours}\n"));
 			}
 		});
 
@@ -345,7 +346,7 @@ public sealed class XamlProviderPipeTests
 			{
 				var (id, request) = await ReadRequestAsync(first);
 				request.ShouldBe("ask 0");
-				await SendFrameAsync(first, XamlWire.Frame(id, "ask\t1\telement\tthe element Button · Ok\t42\t0\t\t100\n"));
+				await SendFrameAsync(first, TapWire.Frame(id, "ask\t1\telement\tthe element Button · Ok\t42\t0\t\t100\n"));
 			});
 
 			collector.Collect(pipe, Patience, DateTime.UtcNow).ShouldNotBeNull().Readable.ShouldBe("the element Button · Ok");
@@ -358,7 +359,7 @@ public sealed class XamlProviderPipeTests
 		{
 			var (id, request) = await ReadRequestAsync(second);
 			request.ShouldBe("ask 0", "a reconnected provider is asked from nothing");
-			await SendFrameAsync(second, XamlWire.Frame(id, "ask\t1\tcolour\tthe colour #C2185B\t0\t0\t#C2185B\t100\n"));
+			await SendFrameAsync(second, TapWire.Frame(id, "ask\t1\tcolour\tthe colour #C2185B\t0\t0\t#C2185B\t100\n"));
 		});
 
 		collector.Collect(pipe, Patience, DateTime.UtcNow).ShouldNotBeNull();
@@ -382,7 +383,7 @@ public sealed class XamlProviderPipeTests
 		{
 			var (id, request) = await ReadRequestAsync(provider);
 			request.ShouldBe("changes off");
-			await SendFrameAsync(provider, XamlWire.Frame(id, "off\n"));
+			await SendFrameAsync(provider, TapWire.Frame(id, "off\n"));
 
 			// The selection read is never answered.
 			(await ReadRequestAsync(provider)).Request.ShouldBe("selection");
@@ -418,16 +419,16 @@ public sealed class XamlProviderPipeTests
 		{
 			var (first, off) = await ReadRequestAsync(provider);
 			off.ShouldBe("changes off");
-			await SendFrameAsync(provider, XamlWire.Frame(first, "off\n"));
+			await SendFrameAsync(provider, TapWire.Frame(first, "off\n"));
 
 			var (second, on) = await ReadRequestAsync(provider);
 			on.ShouldBe("changes on");
 
 			// Somebody pressed the panel's button between the two: the provider's answer is the truth.
-			await SendFrameAsync(provider, XamlWire.Frame(second, "off\n"));
+			await SendFrameAsync(provider, TapWire.Frame(second, "off\n"));
 
 			var (third, _) = await ReadRequestAsync(provider);
-			await SendFrameAsync(provider, XamlWire.Frame(third, "something else\n"));
+			await SendFrameAsync(provider, TapWire.Frame(third, "something else\n"));
 		});
 
 		XamlPanelRequests.ChangeMarks(pipe, shown: false, Patience).ShouldBe(false);
@@ -551,7 +552,7 @@ public sealed class XamlProviderPipeTests
 	private static async Task<(uint Id, string Request)> ReadRequestAsync(Stream stream)
 	{
 		var frame = await ReadFrameAsync(stream);
-		XamlWire.TryReadFrame(frame, out var id, out var request).ShouldBeTrue($"a request with no id: '{frame}'");
+		TapWire.TryReadFrame(frame, out var id, out var request).ShouldBeTrue($"a request with no id: '{frame}'");
 
 		return (id, request);
 	}

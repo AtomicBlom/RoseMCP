@@ -19,8 +19,8 @@
     left alone, and its relays running, when the relay in it speaks the relay protocol this package
     does, so those sessions reconnect to the new tray by themselves.
 
-    State is kept, not replaced: settings.json and Logs/ sit under the same root as the binaries and
-    survive an install. Only -Uninstall -Purge removes them.
+    State is kept, not replaced: settings.json, Logs/ and taps/ sit under the same root as the binaries
+    and survive an install. Only -Uninstall -Purge removes settings and taps.
 
     Paths use forward slashes throughout; PowerShell accepts them on Windows.
 
@@ -214,22 +214,22 @@ function Remove-Install
 
     Remove-Item -Path $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue
 
-    # Logs go either way, and settings only on -Purge. They are not the same kind of thing: a log is
-    # diagnostic output nothing reads again once the product is gone, and it is the part that reaches
-    # gigabytes, while settings.json is what somebody chose and is worth having again if they
-    # reinstall. This matches what the Inno installer's uninstall does, so which way RoseMCP was
-    # installed does not change what removing it leaves behind.
+    # Logs go either way, and settings and taps only on -Purge. They are not the same kind of thing: a
+    # log is diagnostic output nothing reads again once the product is gone, and it is the part that
+    # reaches gigabytes, while settings.json is what somebody chose and taps/ what somebody dropped in,
+    # both worth having again if they reinstall. This matches what the Inno installer's uninstall does,
+    # so which way RoseMCP was installed does not change what removing it leaves behind.
     Remove-Item -LiteralPath "$Root/Logs" -Recurse -Force -ErrorAction SilentlyContinue
 
     if ($Purge)
     {
         Remove-Item -LiteralPath "$Root/settings.json" -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host '  removed settings and logs'
+        Write-Host '  removed settings, taps and logs'
     }
     else
     {
-        Write-Host "  removed logs; kept settings.json under $Root (use -Purge to remove it)"
+        Write-Host "  removed logs; kept settings.json and taps/ under $Root (use -Purge to remove them)"
     }
 
     Write-Host 'uninstalled'

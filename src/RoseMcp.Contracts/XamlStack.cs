@@ -30,4 +30,10 @@ public enum XamlStack
 
 	/// <summary>PresentationFramework: WPF, whose live diagnostics are managed rather than a COM tap.</summary>
 	Wpf,
+
+	/// <summary>
+	/// A framework served by a tap dropped into one of RoseMCP's tap folders rather than shipped with it. Which
+	/// framework is the tap's to name, so it travels beside this value rather than as one of its own.
+	/// </summary>
+	Tap,
 }

@@ -28,6 +28,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # RoseMcp.Contracts compiles the tap protocol from the external/RoseMcp.Tap submodule.
+          submodules: true
           # MinVer reads the tag being released; the default single-commit fetch has no tags at all.
           fetch-depth: 0
 

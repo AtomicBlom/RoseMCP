@@ -11,6 +11,7 @@ internal static class XamlTaps
 	private static readonly XamlTap UwpTap = new()
 	{
 		Stack = XamlStack.Uwp,
+		Name = "UWP",
 		EndpointName = "VisualDiagConnection1",
 		InitializeLibrary = "Windows.UI.Xaml.dll",
 
@@ -29,6 +30,7 @@ internal static class XamlTaps
 	private static readonly XamlTap WinUiTap = new()
 	{
 		Stack = XamlStack.WinUi,
+		Name = "WinUI",
 
 		// Not VisualDiagConnection1. The framework builds this name at runtime as prefix + instance
 		// count (DXamlCore.cpp), so the binary's string table holds only "WinUIVisualDiagConnection"

@@ -86,22 +86,36 @@ Read before changing `src/RoseMcp.Xaml.Tap/tap_object.h`, the pipe's wire format
   that predates it still delivers a greeting the host can read and refuse, where a longer header would
   misread it by four bytes and wait out the bound for the rest of a frame that never comes.
   <br>
-  **A provider is refused unless it greets with this host's protocol version and this session's key.**
-  The host and the provider ship together, so two versions meet only through a stale copy -- one left in
-  a sandbox folder, or copied over by hand in a rebuild loop -- and a stale copy reading rows it was not
-  written for answers with data, source file and line attached, rather than with an error. The key is
-  minted per session and handed over in the injection's initialisation data, because the pipe grants
-  every packaged app on the machine and reaching it proves nothing about who connected. Raise
-  `XamlWire.ProtocolVersion` and `RoseTapProtocolVersion` together whenever either end changes what it
-  writes or how it reads; a unit test reads the provider's constant and fails when the two differ.
+  **A tap is refused unless it greets with a protocol version its kind of tap may speak and this
+  session's key.** An in-box tap may speak exactly this host's version: the host and it ship together,
+  so two versions meet only through a stale copy -- one left in a sandbox folder, or copied over by hand
+  in a rebuild loop -- and a stale copy reading rows it was not written for answers with data, source
+  file and line attached, rather than with an error. A dropped-in tap may speak any version from the
+  first that declared capabilities up to this host's (`TapProtocolRange.DroppedIn`), because it is built
+  and released apart from RoseMCP and exact matching would break it at every change it had no part in;
+  outside that range it is refused by name, saying which side is behind. The key is minted per session
+  and handed over in the startup data, because the pipe grants every packaged app on the machine and
+  reaching it proves nothing about who connected. The version lives in the tap contract
+  (`TapGreeting.ProtocolVersion`, which `XamlWire.ProtocolVersion` is) and moves only when a row an
+  existing command answers with changes shape; raise it with `RoseTapProtocolVersion`, which a unit test
+  holds to it.
+  <br>
+  **A tap says what it serves on the line after its greeting, and the host sends nothing else.** A
+  command, a mode of `select` and an edit kind of `apply` a tap did not declare is refused by the host
+  naming the tap, without being sent, because a tap answers what it does not serve with an empty frame,
+  which reads as a lost message -- and a lost edit is one a caller is tempted to resend. A name the host
+  does not know is ignored and a name that is missing is not served, so a new capability is a new name
+  rather than a protocol version. The in-box taps declare everything they serve in
+  `RoseTapCapabilities`; a unit test holds it to `XamlWire.InBoxCapabilityLine`, and a verb added to
+  `Serve` and not to that line is a verb no host ever sends.
   <br>
   **Every field that can hold text is escaped with one table, in both directions.** The protocol is
   delimited by tabs and newlines, and a property value is the caller's markup, which holds either.
   Escaped in one direction only, a tab in a value shifts every field after it and a newline splits one
   command into two -- and since a result is found again by the fields it was sent with, an edit that
-  landed reports that it was never applied. `XamlWire` is the host's half and `tap_channel.h` the
-  provider's; a unit test holds the provider's table against the host's, because the live round trip
-  that proves them runs only where there is a probe app.
+  landed reports that it was never applied. The tap contract's `TapWire` is the host's half and every
+  managed tap's, and `tap_channel.h` the in-box taps'; a unit test holds the in-box table against the
+  contract's, because the live round trip that proves them runs only where there is a probe app.
   <br>
   **A read may fall back to the other channel and a batch may not**, and that asymmetry is the thing
   to preserve if a fallback is ever reintroduced. Asking for a tree twice costs a second answer.

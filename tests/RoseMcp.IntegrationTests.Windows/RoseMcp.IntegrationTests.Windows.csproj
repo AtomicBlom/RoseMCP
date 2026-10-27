@@ -24,6 +24,16 @@
     <ProjectReference Include="..\..\src\RoseMcp.LiveApp\RoseMcp.LiveApp.csproj" />
   </ItemGroup>
 
+  <!-- A framework's diagnostics endpoint, compiled in as a framework compiles it, so the route a dropped-in
+       tap takes can be driven end to end inside this process: the endpoint loads the test tap, and the tap
+       greets the host pipe. The protocol types it uses come from RoseMcp.Contracts. The test tap is built
+       first and found by path, never referenced, or the endpoint would find it already loaded. -->
+  <ItemGroup>
+    <Compile Include="..\..\external\RoseMcp.Tap\Endpoint\*.cs" Link="Tap\%(Filename)%(Extension)" />
+    <ProjectReference Include="..\RoseMcp.TestTap\RoseMcp.TestTap.csproj" ReferenceOutputAssembly="false" />
+    <AssemblyMetadata Include="TestTapPath" Value="$(MSBuildThisFileDirectory)..\RoseMcp.TestTap\bin\$(Configuration)\net10.0\RoseMcp.TestTap.dll" />
+  </ItemGroup>
+
   <ItemGroup>
     <Using Include="TUnit.Core" />
     <Using Include="Shouldly" />

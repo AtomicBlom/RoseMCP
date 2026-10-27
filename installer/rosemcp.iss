@@ -162,6 +162,8 @@ Filename: "{app}\tray\RoseMcp.Tray.exe"; \
 ; deliberately not listed: somebody who uninstalls to reinstall a newer build should not lose what
 ; they configured, and a single json file is not what anyone is reclaiming space for.
 Type: filesandordirs; Name: "{app}\Logs"
+; taps\ is deliberately not listed either, for the reason settings are not: a tap dropped in is
+; somebody's own file, and the next install looks for it in the same place.
 ; The relay, which an install that kept it never recorded laying down.
 Type: filesandordirs; Name: "{app}\relay"
 ; The install root itself, once its contents are gone. Inno removes only the files it laid down, and
@@ -266,7 +268,7 @@ end;
   forever and be loaded by a version that never shipped it; Inno's own file list cannot see those,
   because it never put them there.
 
-  Clearing keeps Logs/ and settings.json, which live under the same root and are not payload, and the
+  Clearing keeps Logs/, taps/ and settings.json, which live under the same root and are not payload, and the
   relay's folder where the relay in it is this one: its relays are still running, and stay so.
   Whether it was kept is read back afterwards, which is what RelayIsStale answers. }
 function PrepareToInstall(var NeedsRestart: Boolean): String;

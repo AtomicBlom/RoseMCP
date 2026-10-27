@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A dropped-in tap with one element, built the way a framework's tap is built: the contract's
+       Protocol/ compiled in as source, and nothing of RoseMCP's referenced. The Windows integration suite
+       loads it through a real endpoint in its own process and reads it over a real host pipe. Found by
+       path rather than referenced, or it would already be in the suite's own load context. -->
+
+  <ItemGroup>
+    <Compile Include="..\..\external\RoseMcp.Tap\Protocol\*.cs" Link="Tap\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

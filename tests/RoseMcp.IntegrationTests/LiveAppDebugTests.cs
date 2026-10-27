@@ -89,7 +89,7 @@ public sealed class LiveAppDebugTests
 
 			var hit = await WaitForEventAsync(
 				session,
-				entry => entry.Kind == LiveDebugEventKind.BreakpointHit,
+				entry => entry.Kind == LiveDebugEventKind.TracepointHit,
 				cancellationToken);
 			hit.ShouldNotBeNull();
 			hit!.Message.ShouldContain("beat", Case.Sensitive);
@@ -101,11 +101,11 @@ public sealed class LiveAppDebugTests
 			unfiltered.Events.ShouldContain(entry => entry.Kind == LiveDebugEventKind.ModuleLoaded);
 			unfiltered.Skipped.ShouldBe(0);
 
-			var hitsOnly = await session.ReadEventsAsync(0, ["BreakpointHit"], limit: 500, cancellationToken);
+			var hitsOnly = await session.ReadEventsAsync(0, ["TracepointHit"], limit: 500, cancellationToken);
 			hitsOnly.Events.ShouldNotBeEmpty();
 			foreach (var entry in hitsOnly.Events)
 			{
-				entry.Kind.ShouldBe(LiveDebugEventKind.BreakpointHit);
+				entry.Kind.ShouldBe(LiveDebugEventKind.TracepointHit);
 			}
 
 			// The two things that make a filter usable rather than a trap: it says how much it passed
@@ -122,7 +122,7 @@ public sealed class LiveAppDebugTests
 			hitsOnly.NextCursor.ShouldBeGreaterThanOrEqualTo(lastRead,
 				$"the filtered cursor ({hitsOnly.NextCursor}) should be at or past the last event it returned ({lastRead})");
 
-			var nextPage = await session.ReadEventsAsync(hitsOnly.NextCursor, ["BreakpointHit"], limit: 500, cancellationToken);
+			var nextPage = await session.ReadEventsAsync(hitsOnly.NextCursor, ["TracepointHit"], limit: 500, cancellationToken);
 
 			// Paging forward is the property, and this checks it directly: reading is exclusive of the
 			// cursor, so nothing already returned can come back whether the two were equal or not.
@@ -133,7 +133,7 @@ public sealed class LiveAppDebugTests
 			// and out of history. Nothing in the page shows that, so the page says it: an agent that
 			// acts and then waits for the result of its action is otherwise handed the past and told
 			// it is the present.
-			var fromTheStart = await session.ReadEventsAsync(0, ["BreakpointHit"], limit: 500, waitSeconds: 5, cancellationToken);
+			var fromTheStart = await session.ReadEventsAsync(0, ["TracepointHit"], limit: 500, waitSeconds: 5, cancellationToken);
 			fromTheStart.Events.ShouldNotBeEmpty();
 			fromTheStart.Notices.ShouldContain(
 				notice => notice.Contains("returned without waiting", StringComparison.Ordinal));
@@ -150,7 +150,7 @@ public sealed class LiveAppDebugTests
 			// it started from was written. A notice on every correct call is a notice nobody reads.
 			var sinceThen = await session.ReadEventsAsync(
 				fromTheStart.Cursor,
-				["BreakpointHit"],
+				["TracepointHit"],
 				limit: 500,
 				waitSeconds: 30,
 				cancellationToken);
@@ -671,7 +671,7 @@ public sealed class LiveAppDebugTests
 
 			var hit = await WaitForEventAsync(
 				session,
-				entry => entry.Kind == LiveDebugEventKind.BreakpointHit,
+				entry => entry.Kind == LiveDebugEventKind.TracepointHit,
 				cancellationToken,
 				tracepoint.Cursor);
 
@@ -714,6 +714,58 @@ public sealed class LiveAppDebugTests
 
 			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 			child.HasExited.ShouldBeFalse("the target runs on through an interpolated tracepoint");
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// What a placeholder names is rendered the way a reader would write it, read from memory alone:
+	/// an auto-property by its own name, an enum by its member, flags by theirs, a small struct by its
+	/// fields, a list by its count and a nullable by its value. Each of these logged its type alone,
+	/// which says nothing a tracepoint was set to find out, and the property was not reachable at all
+	/// without spelling the compiler's backing field.
+	/// </summary>
+	[Test]
+	public async Task A_tracepoint_renders_properties_enums_structs_and_collections_by_what_they_hold()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+
+			var tracepoint = await session.AddTracepointAsync(
+				"DebugProbeTarget.Program.Inspect",
+				"title={state.Title} shape={state.Shape} style={state.Style} size={state.Size} items={state.Items} maybe={state.Maybe}",
+				logEveryNthHit: null,
+				condition: null,
+				cancellationToken);
+
+			tracepoint.Bound.ShouldBeTrue($"tracepoint should bind; detail: {tracepoint.Detail}");
+
+			var hit = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.TracepointHit,
+				cancellationToken,
+				tracepoint.Cursor);
+
+			hit.ShouldNotBeNull();
+			hit!.Message.ShouldContain(
+				"title=\"probe\" shape=Ellipse style=Bold | Underline "
+					+ "size={DebugProbeTarget.ProbeSize} Width = 3, Height = 4 "
+					+ "items={System.Collections.Generic.List`1} Count = 3 maybe=5",
+				Case.Sensitive);
+
+			var logged = hit.Logged.ShouldNotBeNull();
+			logged.Single(value => value.Name == "state.Shape").TypeName.ShouldBe("DebugProbeTarget.ProbeShape");
+			logged.Single(value => value.Name == "state.Maybe").TypeName.ShouldBe("int?");
+
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -783,11 +835,12 @@ public sealed class LiveAppDebugTests
 					new AddTracepointRequest { Location = "Elsewhere.Pulse.Tick", LogMessage = "again" },
 					new AddTracepointRequest { Location = "NotYetLoaded!Somewhere.Later.Run" },
 					new AddTracepointRequest { Location = "DebugProbeTarget.Program.NoSuchMethod" },
+					new AddTracepointRequest { Location = "DebugProbeTarget.Programm.Beat" },
 				],
 				cancellationToken);
 
-			batch.Total.ShouldBe(8);
-			batch.Added.ShouldBe(5);
+			batch.Total.ShouldBe(9);
+			batch.Added.ShouldBe(6);
 			batch.Cursor.ShouldBeGreaterThan(0, "a batch is an action, so it hands back the cursor");
 			batch.Results.Select(outcome => outcome.Location).ShouldBe(
 			[
@@ -799,6 +852,7 @@ public sealed class LiveAppDebugTests
 				"Elsewhere.Pulse.Tick",
 				"NotYetLoaded!Somewhere.Later.Run",
 				"DebugProbeTarget.Program.NoSuchMethod",
+				"DebugProbeTarget.Programm.Beat",
 			]);
 
 			batch.Results[0].Status.ShouldBe("added");
@@ -828,8 +882,13 @@ public sealed class LiveAppDebugTests
 			batch.Results[7].Status.ShouldBe("added, will not bind: no method DebugProbeTarget.Program.NoSuchMethod in DebugProbeTarget.dll");
 			batch.Results[7].Tracepoint.ShouldNotBeNull().Bound.ShouldBeFalse();
 
+			// A type nothing loaded declares could be in a module still to come, so it waits -- but a
+			// loaded type a letter away is named, since a misspelling waits for as long as the session.
+			batch.Results[8].Status.ShouldStartWith("added, not bound yet: no loaded module declares DebugProbeTarget.Programm", Case.Sensitive);
+			batch.Results[8].Status.ShouldContain("did you mean DebugProbeTarget.Program (in DebugProbeTarget.dll)", Case.Sensitive);
+
 			var held = await session.ListTracepointsAsync(cancellationToken);
-			held.Tracepoints.Count.ShouldBe(5);
+			held.Tracepoints.Count.ShouldBe(6);
 
 			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 			child.HasExited.ShouldBeFalse("the target runs on through a batch of tracepoints");

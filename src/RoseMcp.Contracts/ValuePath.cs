@@ -72,6 +72,31 @@ public sealed record ValuePath
 	public static string Element(string parent, int index) => $"{parent}[{index}]";
 
 	/// <summary>
+	/// The field the C# compiler stores an auto-property in: <c>&lt;Name&gt;k__BackingField</c>.
+	/// <para>
+	/// A path names what the source names, and the source names the property. Reading the property
+	/// would run its getter, which nothing here does, but an auto-property's getter only returns this
+	/// field, so reading the field is the same answer without running anything. A property with a body
+	/// of its own has no such field, and stays out of reach.
+	/// </para>
+	/// </summary>
+	public static string BackingField(string property) => $"<{property}>k__BackingField";
+
+	/// <summary>
+	/// The auto-property a field backs, or null when the field is not a compiler's backing field. What
+	/// an expansion lists a field as, so the path it hands out is the one a person would type, and
+	/// <see cref="BackingField"/> resolves it back.
+	/// </summary>
+	public static string? PropertyOf(string field)
+	{
+		const string Suffix = ">k__BackingField";
+
+		var isBacking = field.Length > Suffix.Length + 1 && field[0] == '<' && field.EndsWith(Suffix, StringComparison.Ordinal);
+
+		return isBacking ? field[1..^Suffix.Length] : null;
+	}
+
+	/// <summary>
 	/// Reads a path, refusing anything it cannot read rather than guessing at it. A path that means
 	/// something other than what it says would expand the wrong value and report success, which is
 	/// the one outcome worth an exception here.

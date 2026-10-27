@@ -84,9 +84,10 @@ internal static class Program
 internal sealed class RoseDebugProbeException() : Exception("rose debug probe");
 
 /// <summary>
-/// A small object graph the evaluation and expansion tests drill into. Public fields (not
-/// properties) so a field-access reader can get at them without running a getter, and one array so
-/// an indexed path has something real to index.
+/// A small object graph the evaluation and expansion tests drill into. Public fields so a
+/// field-access reader can get at them without running a getter, one array so an indexed path has
+/// something real to index, and one auto-property -- the only kind of property a reader can reach,
+/// through the field behind it.
 /// </summary>
 internal sealed class ProbeState
 {
@@ -108,4 +109,47 @@ internal sealed class ProbeState
 	public string LongUrl = "https://example.invalid/authorize?response_type=code&client_id="
 		+ new string('a', 300)
 		+ "&redirect_uri=https%3a%2f%2flocalhost%2fcallback&scope=data%3aread%20data%3awrite&end=TAIL";
+
+	/// <summary>
+	/// An auto-property, which a path names as the source does and the reader reaches through the
+	/// field the compiler stores it in, since reading the property itself would run its getter.
+	/// </summary>
+	public string Title { get; set; } = "probe";
+
+	/// <summary>An enum set to a member, so a value shows by its name rather than by its type.</summary>
+	public ProbeShape Shape = ProbeShape.Ellipse;
+
+	/// <summary>Two flags together, so a combination is named by the members it is made of.</summary>
+	public ProbeStyle Style = ProbeStyle.Bold | ProbeStyle.Underline;
+
+	/// <summary>A small struct, shown on one line by its fields -- one of them an auto-property.</summary>
+	public ProbeSize Size = new() { Width = 3, Height = 4 };
+
+	/// <summary>A framework collection, shown by its count, which only a getter would otherwise give.</summary>
+	public List<int> Items = [1, 2, 3];
+
+	/// <summary>A nullable holding a value, which shows as the value rather than as the struct carrying it.</summary>
+	public int? Maybe = 5;
+}
+
+internal enum ProbeShape
+{
+	Rectangle,
+	Ellipse,
+}
+
+[Flags]
+internal enum ProbeStyle
+{
+	None = 0,
+	Bold = 1,
+	Italic = 2,
+	Underline = 4,
+}
+
+internal struct ProbeSize
+{
+	public int Width;
+
+	public int Height { get; set; }
 }

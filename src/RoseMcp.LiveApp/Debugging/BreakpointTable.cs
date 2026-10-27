@@ -253,6 +253,11 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 	/// what a module still to load looks like, so it says it binds when one that does arrives.
 	/// </para>
 	/// <para>
+	/// Either way a type nothing loaded declares is checked against the types that are, and the close
+	/// ones are named. Nothing else tells a typo from a module still to come, and a caller who cannot
+	/// tell them apart waits on the typo for as long as the session lasts.
+	/// </para>
+	/// <para>
 	/// Only ever narrows: a detail already set by <see cref="TryBind"/> or <see cref="BindAmong"/> is a
 	/// real finding about a module that matched, and is left alone.
 	/// </para>
@@ -268,8 +273,9 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 
 			if (binding.Location.Assembly is not { } assembly)
 			{
+				var nearby = TypeSuggestions.Clause(TypeSuggestions.For(loadedModulePaths, typeName, assembly: null));
 				binding.Detail = $"no loaded module declares {typeName} ({loadedModulePaths.Count} searched); "
-					+ "it binds when a module that does loads";
+					+ $"it binds when a module that does loads{nearby}";
 				continue;
 			}
 
@@ -277,7 +283,8 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 			{
 				// The module is loaded and TryBind said nothing, so the type is what is missing --
 				// the method-level miss is reported by TryBind itself.
-				binding.Detail = $"no type {typeName} in {assembly}";
+				var nearby = TypeSuggestions.Clause(TypeSuggestions.For(loadedModulePaths, typeName, assembly));
+				binding.Detail = $"no type {typeName} in {assembly}{nearby}";
 				binding.WillNotBind = true;
 				continue;
 			}

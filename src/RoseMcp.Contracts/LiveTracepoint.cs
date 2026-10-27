@@ -4,7 +4,7 @@ namespace RoseMcp.Contracts;
 /// A tracepoint: a breakpoint that logs and auto-continues, never pausing the target. It is the
 /// low-friction default for a turn-based agent, since it cannot freeze the app the way a stopping
 /// breakpoint would. Each hit appears in the debug event stream as a
-/// <see cref="LiveDebugEventKind.BreakpointHit"/> event.
+/// <see cref="LiveDebugEventKind.TracepointHit"/> event.
 /// </summary>
 public sealed record LiveTracepoint : LiveResult
 {

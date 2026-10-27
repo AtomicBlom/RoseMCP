@@ -126,4 +126,32 @@ public sealed class ValuePathTests
 		ValuePath.Local(3).ShouldBe("local:3");
 		ValuePath.Parse(ValuePath.Local(3)).Slot.ShouldBe(3);
 	}
+
+	/// <summary>
+	/// An auto-property is read through the field the compiler stores it in, and an expansion lists that
+	/// field back under the property's name, so the two spellings have to be each other's inverse or a
+	/// path copied out of an expansion would not resolve.
+	/// </summary>
+	[Test]
+	public void An_auto_property_and_its_backing_field_name_each_other()
+	{
+		ValuePath.BackingField("Width").ShouldBe("<Width>k__BackingField");
+		ValuePath.PropertyOf("<Width>k__BackingField").ShouldBe("Width");
+		ValuePath.PropertyOf(ValuePath.BackingField("Label")).ShouldBe("Label");
+	}
+
+	/// <summary>
+	/// Anything that is not a compiler's backing field keeps its own name: an ordinary field, a closure's
+	/// captured variable, and the empty name a backing field would have for nothing.
+	/// </summary>
+	[Test]
+	[Arguments("_size")]
+	[Arguments("Width")]
+	[Arguments("<>4__this")]
+	[Arguments("<>k__BackingField")]
+	[Arguments("<value>P")]
+	public void A_field_that_backs_no_auto_property_names_none(string field)
+	{
+		ValuePath.PropertyOf(field).ShouldBeNull();
+	}
 }

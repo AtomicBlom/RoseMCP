@@ -487,7 +487,8 @@ internal sealed class CorDebugInspector(ILogger logger)
 				current = ResolveField(current, field);
 				if (current is null)
 				{
-					failure = $"'{walked}' has no readable field '{field}' (not a field of that value, or it is null).";
+					failure = $"'{walked}' has no readable field or auto-property '{field}' (it is null, or '{field}' is not "
+						+ "on that value, or it is a property with a body, which would mean running its getter).";
 					return null;
 				}
 
@@ -659,8 +660,15 @@ internal sealed class CorDebugInspector(ILogger logger)
 		return (children, total, children.Count < total);
 	}
 
+	/// <summary>
+	/// One field of an object as a child of it. An auto-property's backing field is listed under the
+	/// property's name, which is what the source calls it and what <see cref="ResolveField"/> reads
+	/// back, so a path copied out of an expansion is one a person would have written.
+	/// </summary>
 	private static LiveVariable DescribeField(CorDebugObjectValue objectValue, CorDebugClass cls, FieldMember field, string basePath)
 	{
+		var name = ValuePath.PropertyOf(field.Name) ?? field.Name;
+
 		try
 		{
 			// GetFieldValue wants the raw ICorDebugClass; the ClrDebug wrapper is not it, and casting
@@ -669,11 +677,11 @@ internal sealed class CorDebugInspector(ILogger logger)
 
 			return new LiveVariable
 			{
-				Name = field.Name,
+				Name = name,
 				Kind = "field",
 				TypeName = read.TypeName,
 				Value = read.Value,
-				Path = ValuePath.Field(basePath, field.Name),
+				Path = ValuePath.Field(basePath, name),
 				HasChildren = read.HasChildren,
 				FullLength = read.FullLength,
 			};
@@ -684,10 +692,10 @@ internal sealed class CorDebugInspector(ILogger logger)
 			// unreadable rather than dropped, so a reader is not left wondering where it went.
 			return new LiveVariable
 			{
-				Name = field.Name,
+				Name = name,
 				Kind = "field",
 				Value = "(unreadable)",
-				Path = ValuePath.Field(basePath, field.Name),
+				Path = ValuePath.Field(basePath, name),
 				HasChildren = false,
 			};
 		}
@@ -802,26 +810,34 @@ internal sealed class CorDebugInspector(ILogger logger)
 
 	/// <summary>
 	/// Reads a field off a value by name: dereference a reference, unwrap a box, then read the field
-	/// directly.
+	/// directly. An auto-property's name reads its backing field.
 	/// <para>
 	/// The type chain is walked rather than the value's own class asked, because a field declared on
 	/// a base is as much a part of the object -- and it is what an expansion lists, so a path taken
 	/// from one has to resolve back here or the two surfaces disagree about what an object holds.
 	/// </para>
+	/// <para>
+	/// The backing field is tried at each level after the name itself, rather than after the whole
+	/// chain, so a property declared on a derived type is found before a field of the same name on a
+	/// base -- the order C# would bind the name in.
+	/// </para>
 	/// </summary>
-	private static CorDebugValue? ResolveField(CorDebugValue value, string fieldName)
+	internal static CorDebugValue? ResolveField(CorDebugValue value, string fieldName)
 	{
 		var unwrapped = Unwrap(value);
 		if (unwrapped is not CorDebugObjectValue objectValue) return null;
 
+		var backing = ValuePath.BackingField(fieldName);
+
 		for (var type = ExactTypeOf(unwrapped); type is not null; type = BaseOf(type))
 		{
-			if (FieldOn(objectValue, type.Class, fieldName) is { } found) return found;
+			var found = FieldOn(objectValue, type.Class, fieldName) ?? FieldOn(objectValue, type.Class, backing);
+			if (found is not null) return found;
 		}
 
 		// A value whose exact type the runtime will not give still has a class, and for anything
 		// without a base that is the whole answer.
-		return FieldOn(objectValue, objectValue.Class, fieldName);
+		return FieldOn(objectValue, objectValue.Class, fieldName) ?? FieldOn(objectValue, objectValue.Class, backing);
 	}
 
 	/// <summary>Reads a field declared on one level of a value's type chain, or null if it is not there.</summary>

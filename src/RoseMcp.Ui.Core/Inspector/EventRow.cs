@@ -127,6 +127,7 @@ public sealed class EventRow
 		LiveDebugEventKind.ExceptionUnhandled => "unhandled",
 		LiveDebugEventKind.LogMessage => "log",
 		LiveDebugEventKind.BreakpointHit => "breakpoint",
+		LiveDebugEventKind.TracepointHit => "tracepoint",
 		LiveDebugEventKind.StepComplete => "step",
 		_ => kind.ToString().ToLowerInvariant(),
 	};

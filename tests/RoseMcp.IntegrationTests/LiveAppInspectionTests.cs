@@ -257,6 +257,10 @@ public sealed class LiveAppInspectionTests
 			fields.Children.ShouldContain(child => child.Name == "Count" && child.Kind == "field");
 			fields.Children.ShouldContain(child => child.Name == "Label" && child.Value == "\"beat\"");
 
+			// An auto-property is listed by its own name rather than its backing field's, with the path
+			// a person would write -- and that path resolves back, through the same field.
+			fields.Children.ShouldContain(child => child.Name == "Title" && child.Path == "arg:0.Title" && child.Value == "\"probe\"");
+
 			var marks = fields.Children.First(child => child.Name == "Marks");
 			marks.Path.ShouldBe("arg:0.Marks");
 			marks.HasChildren.ShouldBeTrue("a non-empty array is expandable");

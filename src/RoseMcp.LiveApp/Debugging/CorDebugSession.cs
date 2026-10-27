@@ -851,7 +851,7 @@ internal sealed class CorDebugSession : IDisposable
 		var suffix = logged?.Text is { Length: > 0 } message ? $": {message}" : string.Empty;
 
 		_buffer.Append(
-			LiveDebugEventKind.BreakpointHit,
+			LiveDebugEventKind.TracepointHit,
 			$"Tracepoint {location} hit #{ordinal} on thread {threadId?.ToString() ?? "?"}{suffix}",
 			threadId: threadId,
 			logged: logged?.Values is { Count: > 0 } values ? values : null);

@@ -52,4 +52,27 @@ internal sealed record TapRegistry(IReadOnlyList<DroppedInTap> Taps, IReadOnlyLi
 
 		return new TapRegistry(taps, folders, refused);
 	}
+
+	/// <summary>
+	/// How long <see cref="Cached"/> keeps a read. A host's self-report asks on every poll while it does not know
+	/// the target's framework, and that question does not need a fresh directory listing each time.
+	/// </summary>
+	private static readonly TimeSpan CacheFor = TimeSpan.FromSeconds(30);
+
+	private static (DateTime ReadUtc, TapRegistry Registry)? _cached;
+
+	/// <summary>
+	/// The taps as read within the last half minute, for a question asked on every poll: what framework the target
+	/// runs. Choosing a session's tap reads afresh with <see cref="Read"/>, so a tap dropped in is never missed by
+	/// the session that needs it.
+	/// </summary>
+	internal static TapRegistry Cached(ILogger logger)
+	{
+		var now = DateTime.UtcNow;
+		if (_cached is { } cached && now - cached.ReadUtc < CacheFor) return cached.Registry;
+
+		var registry = Read(logger);
+		_cached = (now, registry);
+		return registry;
+	}
 }

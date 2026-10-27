@@ -1,6 +1,7 @@
 using System.Diagnostics;
 
 using RoseMcp.Contracts;
+using RoseMcp.Tap.Protocol;
 
 namespace RoseMcp.LiveApp.Xaml;
 
@@ -86,6 +87,35 @@ internal static class XamlStackProbe
 		{
 			return null;
 		}
+	}
+
+	/// <summary>
+	/// The framework a dropped-in tap serves, where that framework's endpoint is listening in the target, or null
+	/// where none is.
+	/// <para>
+	/// Asked of the endpoint rather than the module list, because a managed framework assembly that was not
+	/// compiled ahead of time is mapped by the runtime itself and never appears among a process's modules. A
+	/// listening endpoint is also the stronger answer: it says the app runs that framework and opted into being
+	/// inspected, which is what makes its tree something a window can offer.
+	/// </para>
+	/// </summary>
+	public static XamlStackDetection? DroppedIn(int processId, TapRegistry registry)
+	{
+		foreach (var tap in registry.Taps)
+		{
+			var pipe = EndpointWire.PipeName(tap.Endpoint, processId);
+			if (!TapEndpointClient.Listening(pipe)) continue;
+
+			return new XamlStackDetection
+			{
+				Stack = XamlStack.Tap,
+				Evidence = [pipe],
+				Reason = $"the {tap.Name} diagnostics endpoint is listening in it, on {pipe}",
+				TapName = tap.Name,
+			};
+		}
+
+		return null;
 	}
 
 	/// <summary>

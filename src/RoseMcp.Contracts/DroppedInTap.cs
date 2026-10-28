@@ -7,10 +7,10 @@ namespace RoseMcp.Contracts;
 /// </summary>
 public sealed record DroppedInTap
 {
-	/// <summary>The framework the tap serves, as it reads in an error: <c>SUIsei</c>.</summary>
+	/// <summary>The framework the tap serves, as it reads in an error: <c>Contoso</c>.</summary>
 	public required string Name { get; init; }
 
-	/// <summary>The framework's own assembly, which a target it serves has loaded: <c>SUIsei.dll</c>. Empty where the tap does not say.</summary>
+	/// <summary>The framework's own assembly, which a target it serves has loaded: <c>Contoso.dll</c>. Empty where the tap does not say.</summary>
 	public required string Module { get; init; }
 
 	/// <summary>The pipe the framework's diagnostics endpoint listens on, with <c>{pid}</c> for the target's process id.</summary>

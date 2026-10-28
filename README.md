@@ -91,16 +91,16 @@ A longer version, covering the whole writing surface, is
 
 ## What it does
 
-Fifty-two tools in six families. Every one addresses code by name rather than by line and column, so
+Fifty-six tools in seven families. Every one addresses code by name rather than by line and column, so
 nothing needs a grep first and nothing goes stale when an earlier edit moves a line.
 
-**Reading and navigation**, 9 tools. `rose_outline` for what a type or a file contains,
+**Reading and navigation**, 10 tools. `rose_outline` for what a type or a file contains,
 `rose_find_split_options` for where it could be split and what each piece would take with it,
 `rose_symbol_info` for what a member is and its source, `rose_find_references` for usages grouped by
 the member each sits inside -- those three take several symbols in one call --
-`rose_find_implementations` for the other direction, `rose_search_symbols`, `rose_project_graph`,
-and the two generated-document tools, which are the only way to read
-source-generated code at all.
+`rose_find_implementations` for the other direction, `rose_search_symbols`, `rose_resolve_name` for
+the namespace a name needs, `rose_project_graph`, and the two generated-document tools, which are
+the only way to read source-generated code at all.
 
 **Writing C#**, 13 tools. `rose_add_file` starts a file in the right project, with the namespace its
 folder implies and the imports its code needs. `rose_add_member`, `rose_replace_member`,
@@ -117,9 +117,11 @@ whether what is sitting in `bin` is this code. No dependency was added for any o
 [where the fixers come from](https://github.com/AtomicBlom/RoseMCP/wiki/Code-fixes), and
 [why formatting takes two passes](https://github.com/AtomicBlom/RoseMCP/wiki/Formatting).
 
-**Workspace**, 4 tools. Load state, per-project health, degraded-load detection and the MSBuild
+**Workspace**, 6 tools. Load state, per-project health, degraded-load detection and the MSBuild
 properties in use. `rose_workspace_open` returns at once, so a session can do something else while a
-large solution opens.
+large solution opens. `rose_workspace_acknowledge` stops a degraded reason the session has already
+read from being repeated on every answer -- for that session, or, once the person agrees, for every
+session.
 
 **Live app debugging**, 15 tools, Windows only. Attach to or launch a .NET process, including a
 packaged UWP app, then breakpoints, tracepoints, stepping, frames, variables, threads and expression
@@ -127,7 +129,12 @@ evaluation.
 
 **Live XAML**, 6 tools, Windows only. The running app's visual tree, every element's properties and
 what set each one, click-to-select from inside the app itself, and edits applied to the live element
-objects.
+objects. UWP and WinUI 3 through the taps RoseMCP ships; any other UI framework by shipping a tap of
+its own, dropped into the `taps` folder of the install
+([the contract](https://github.com/AtomicBlom/RoseMcp.Tap)).
+
+**Notes**, 1 tool. `rose_reply` answers a note the person sent the agent from the RoseMCP window, so
+the answer appears under the note where they are reading rather than only in the conversation.
 
 Every result carries a `revision`, so a caller can tell whether two answers describe the same world.
 

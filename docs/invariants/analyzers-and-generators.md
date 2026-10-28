@@ -55,6 +55,14 @@ Read before changing analyzer loading, `RoseMcp.XamlStubs`, or anything handing 
   Roslyn type universe; anything that does not resolve is left out and reported, never faked. Check
   changes against the `.g.i.cs` files a real build leaves in `obj` -- that comparison is what found
   the four things reasoning had missed, and it agrees exactly today.
+  <br>
+  **The markup a project owns is what the SDK's default glob would give it, not every `.xaml` beneath
+  it.** The design-time build reports no XAML items, so `XamlItemReader` globs the project's folder,
+  and it skips what the SDK skips: build output, every folder whose name starts with a dot, and the
+  folders the project's own `DefaultItemExcludes` names. Miss one and another project's views are
+  attached to this one -- an agent's worktrees under `.claude` hold a whole copy of the repository,
+  and a project that carries others in a submodule keeps them out with `External/**` -- and the workspace
+  reports markup that nothing in the project compiles.
 - **Nothing is stubbed where the markup compiler is itself a generator.** Uno Platform writes WinUI
   markup against WinUI's names, but its XAML compiler is a source generator shipped beside `Uno.UI`,
   so it runs in the workspace and its partials are already there. Generators cannot see each other's

@@ -24,6 +24,7 @@ public sealed class InspectorRowTests
 	[Arguments(LiveDebugEventKind.SessionNotice, EventRow.EventTone.Notable)]
 	[Arguments(LiveDebugEventKind.ModuleLoaded, EventRow.EventTone.Neutral)]
 	[Arguments(LiveDebugEventKind.LogMessage, EventRow.EventTone.Neutral)]
+	[Arguments(LiveDebugEventKind.TracepointHit, EventRow.EventTone.Neutral)]
 	public void An_events_tone_separates_the_ones_worth_scanning_for(LiveDebugEventKind kind, EventRow.EventTone tone)
 	{
 		EventRow.ToneOf(kind).ShouldBe(tone);
@@ -72,7 +73,7 @@ public sealed class InspectorRowTests
 		{
 			Sequence = 42,
 			TimestampUtc = new DateTime(2026, 3, 1, 12, 0, 0, DateTimeKind.Utc),
-			Kind = LiveDebugEventKind.BreakpointHit,
+			Kind = LiveDebugEventKind.TracepointHit,
 			Message = "Tracepoint A.B.C hit #3 on thread 7: count=9",
 			ThreadId = 7,
 			Logged = [Variable("count")],
@@ -82,6 +83,28 @@ public sealed class InspectorRowTests
 		row.HasDetail.ShouldBeTrue();
 		row.Variables.ShouldHaveSingleItem().Name.ShouldBe("count");
 		row.DetailHeader.ShouldBe("1 logged value");
+	}
+
+	/// <summary>
+	/// A tracepoint's hit is a line it logged while the target ran on, so the stream files it with what
+	/// was logged and never among the stops: a reader filtering for stops is looking for where the app
+	/// is held, and a hot tracepoint would bury the one stop there is.
+	/// </summary>
+	[Test]
+	public void A_tracepoint_hit_is_filed_with_the_log_and_not_with_the_stops()
+	{
+		var row = StreamRow.Of("s1", new EventRow(new LiveDebugEvent
+		{
+			Sequence = 43,
+			TimestampUtc = new DateTime(2026, 3, 1, 12, 0, 0, DateTimeKind.Utc),
+			Kind = LiveDebugEventKind.TracepointHit,
+			Message = "Tracepoint A.B.C hit #4 on thread 7: count=10",
+			ThreadId = 7,
+		}));
+
+		row.Matches(StreamFilter.Log).ShouldBeTrue();
+		row.Matches(StreamFilter.Stops).ShouldBeFalse();
+		row.Who.ShouldBe("Tracepoint");
 	}
 
 	[Test]

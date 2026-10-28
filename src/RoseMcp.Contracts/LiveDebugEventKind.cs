@@ -30,7 +30,11 @@ public enum LiveDebugEventKind
 	/// <summary>A <c>System.Diagnostics.Debugger.Log</c> message from the debuggee.</summary>
 	LogMessage,
 
-	/// <summary>Execution reached a breakpoint the debugger set (a tracepoint hit, or a stopping hold).</summary>
+	/// <summary>
+	/// Execution reached a stopping breakpoint and the target is held there. Only ever a stop, so
+	/// waiting on this kind is waiting for the next one; a tracepoint's hit is
+	/// <see cref="TracepointHit"/>.
+	/// </summary>
 	BreakpointHit,
 
 	/// <summary>A step (in/over/out) finished and the target is held at the new location.</summary>
@@ -42,4 +46,11 @@ public enum LiveDebugEventKind
 	/// where it happened to be is the whole of the answer.
 	/// </summary>
 	Paused,
+
+	/// <summary>
+	/// Execution reached a tracepoint, which logged its message and let the target run on. A kind of
+	/// its own rather than a <see cref="BreakpointHit"/>, because a reader waiting for a stop and a
+	/// reader reading what was logged want opposite halves of the same callback.
+	/// </summary>
+	TracepointHit,
 }

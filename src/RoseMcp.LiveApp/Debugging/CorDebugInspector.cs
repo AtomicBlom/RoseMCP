@@ -820,7 +820,7 @@ internal sealed class CorDebugInspector(ILogger logger)
 	/// from one has to resolve back here or the two surfaces disagree about what an object holds.
 	/// </para>
 	/// </summary>
-	private static CorDebugValue? ResolveField(CorDebugValue value, string fieldName)
+	internal static CorDebugValue? ResolveField(CorDebugValue value, string fieldName)
 	{
 		var unwrapped = Unwrap(value);
 		if (unwrapped is not CorDebugObjectValue objectValue) return null;

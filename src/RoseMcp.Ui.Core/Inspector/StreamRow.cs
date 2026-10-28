@@ -36,7 +36,7 @@ public enum StreamFilter
 	/// <summary>First-chance and unhandled exceptions.</summary>
 	Exceptions,
 
-	/// <summary>What the app logged.</summary>
+	/// <summary>What the app logged, and what its tracepoints logged.</summary>
 	Log,
 
 	/// <summary>The person's notes and the agents' answers.</summary>
@@ -133,7 +133,7 @@ public sealed class StreamRow : Observable
 	public bool HasDetail => Detail.Length > 0;
 
 	/// <summary>Whether the text is code-like -- a call, a log line -- and set in the mono face.</summary>
-	public bool IsMono => Kind == StreamKind.Call || Event?.Kind == LiveDebugEventKind.LogMessage;
+	public bool IsMono => Kind == StreamKind.Call || Event?.Kind is LiveDebugEventKind.LogMessage or LiveDebugEventKind.TracepointHit;
 
 	/// <summary>The event, for one that came from the app, which carries the frames and values behind its expander.</summary>
 	public EventRow? Event { get; private init; }
@@ -165,7 +165,7 @@ public sealed class StreamRow : Observable
 		StreamFilter.Notes => Kind is StreamKind.Note or StreamKind.Reply,
 		StreamFilter.Stops => Event?.Kind is LiveDebugEventKind.BreakpointHit or LiveDebugEventKind.StepComplete or LiveDebugEventKind.Paused,
 		StreamFilter.Exceptions => Event?.Kind is LiveDebugEventKind.ExceptionFirstChance or LiveDebugEventKind.ExceptionUnhandled,
-		StreamFilter.Log => Event?.Kind == LiveDebugEventKind.LogMessage,
+		StreamFilter.Log => Event?.Kind is LiveDebugEventKind.LogMessage or LiveDebugEventKind.TracepointHit,
 		_ => true,
 	};
 
@@ -241,6 +241,7 @@ public sealed class StreamRow : Observable
 	{
 		LiveDebugEventKind.BreakpointHit or LiveDebugEventKind.StepComplete => "Stopped",
 		LiveDebugEventKind.Paused => "Paused",
+		LiveDebugEventKind.TracepointHit => "Tracepoint",
 		LiveDebugEventKind.ExceptionFirstChance => "Exception",
 		LiveDebugEventKind.ExceptionUnhandled => "Unhandled",
 		LiveDebugEventKind.LogMessage => "Log",

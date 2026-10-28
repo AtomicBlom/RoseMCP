@@ -146,10 +146,10 @@ public sealed class LiveAppDebugTools(
 		UseStructuredContent = true)]
 	[Description(
 		"Debug events captured since a cursor: first-chance and unhandled exceptions, Debugger.Log "
-			+ "messages, module loads, breakpoint hits and step completions. Pass the returned "
+			+ "messages, module loads, TracepointHit and BreakpointHit, and step completions. Pass the returned "
 			+ "nextCursor as 'after' next time to get only what is new; a cursor below "
 			+ "oldestAvailable means the buffer dropped events between them. Filter with 'kinds' -- a "
-			+ "freshly started app produces hundreds of ModuleLoaded events, and asking for LogMessage "
+			+ "started app produces hundreds of ModuleLoaded events, and asking for LogMessage "
 			+ "or ExceptionFirstChance alone is the difference between a readable answer and one that "
 			+ "has to be written to a file. Use waitSeconds with kinds to wait for one thing, such as "
 			+ "BreakpointHit, rather than calling this in a loop. Pass 'sequence' to fetch one event "

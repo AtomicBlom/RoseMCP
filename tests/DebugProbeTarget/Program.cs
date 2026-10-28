@@ -86,8 +86,9 @@ internal sealed class RoseDebugProbeException() : Exception("rose debug probe");
 /// <summary>
 /// A small object graph the evaluation and expansion tests drill into. Mostly public fields, so a
 /// field-access reader can get at them without running a getter; one array, so an indexed path has
-/// something real to index; and one property of each kind, an auto-implemented one a read reaches and a
-/// computed one it refuses.
+/// something real to index; one property of each kind, an auto-implemented one a read reaches and a
+/// computed one it refuses; and one value of each shape a value is shown by what it holds rather than
+/// by its type -- an enum, flags, a small struct, a collection and a nullable.
 /// </summary>
 internal sealed class ProbeState
 {
@@ -121,4 +122,41 @@ internal sealed class ProbeState
 	/// is refused, saying why, rather than reported as missing.
 	/// </summary>
 	public int Twice => Count * 2;
+
+	/// <summary>An enum set to a member, so a value shows by its name rather than by its type.</summary>
+	public ProbeShape Shape = ProbeShape.Ellipse;
+
+	/// <summary>Two flags together, so a combination is named by the members it is made of.</summary>
+	public ProbeStyle Style = ProbeStyle.Bold | ProbeStyle.Underline;
+
+	/// <summary>A small struct, shown on one line by its fields -- one of them an auto-property.</summary>
+	public ProbeSize Size = new() { Width = 3, Height = 4 };
+
+	/// <summary>A framework collection, shown by its count, which only a getter would otherwise give.</summary>
+	public List<int> Items = [1, 2, 3];
+
+	/// <summary>A nullable holding a value, which shows as the value rather than as the struct carrying it.</summary>
+	public int? Maybe = 5;
+}
+
+internal enum ProbeShape
+{
+	Rectangle,
+	Ellipse,
+}
+
+[Flags]
+internal enum ProbeStyle
+{
+	None = 0,
+	Bold = 1,
+	Italic = 2,
+	Underline = 4,
+}
+
+internal struct ProbeSize
+{
+	public int Width;
+
+	public int Height { get; set; }
 }

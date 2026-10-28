@@ -91,10 +91,10 @@ A longer version, covering the whole writing surface, is
 
 ## What it does
 
-Fifty-six tools in seven families. Every one addresses code by name rather than by line and column, so
-nothing needs a grep first and nothing goes stale when an earlier edit moves a line.
+Every tool addresses code by name rather than by line and column, so nothing needs a grep first and
+nothing goes stale when an earlier edit moves a line.
 
-**Reading and navigation**, 10 tools. `rose_outline` for what a type or a file contains,
+**Reading and navigation.** `rose_outline` for what a type or a file contains,
 `rose_find_split_options` for where it could be split and what each piece would take with it,
 `rose_symbol_info` for what a member is and its source, `rose_find_references` for usages grouped by
 the member each sits inside -- those three take several symbols in one call --
@@ -102,7 +102,7 @@ the member each sits inside -- those three take several symbols in one call --
 the namespace a name needs, `rose_project_graph`, and the two generated-document tools, which are
 the only way to read source-generated code at all.
 
-**Writing C#**, 13 tools. `rose_add_file` starts a file in the right project, with the namespace its
+**Writing C#.** `rose_add_file` starts a file in the right project, with the namespace its
 folder implies and the imports its code needs. `rose_add_member`, `rose_replace_member`,
 `rose_delete_member` and `rose_replace_body` change a member. `rose_change_signature` adds, removes
 or retypes a parameter across every override, implementation and call site at once, and
@@ -110,30 +110,30 @@ or retypes a parameter across every override, implementation and call site at on
 refuse code that does not parse, format what they write, work out the imports, and report what the
 edit broke, so there is no build in the edit loop.
 
-**Diagnostics, fixes and formatting**, 5 tools. `rose_diagnostics` from a warm compilation in
+**Diagnostics, fixes and formatting.** `rose_diagnostics` from a warm compilation in
 milliseconds, `rose_list_code_fixes` and `rose_apply_code_fix` through the analyzers the solution
 already carries, `rose_format` against its own `.editorconfig`, and `rose_build_freshness` for
 whether what is sitting in `bin` is this code. No dependency was added for any of it:
 [where the fixers come from](https://github.com/AtomicBlom/RoseMCP/wiki/Code-fixes), and
 [why formatting takes two passes](https://github.com/AtomicBlom/RoseMCP/wiki/Formatting).
 
-**Workspace**, 6 tools. Load state, per-project health, degraded-load detection and the MSBuild
+**Workspace.** Load state, per-project health, degraded-load detection and the MSBuild
 properties in use. `rose_workspace_open` returns at once, so a session can do something else while a
 large solution opens. `rose_workspace_acknowledge` stops a degraded reason the session has already
 read from being repeated on every answer -- for that session, or, once the person agrees, for every
 session.
 
-**Live app debugging**, 15 tools, Windows only. Attach to or launch a .NET process, including a
+**Live app debugging**, Windows only. Attach to or launch a .NET process, including a
 packaged UWP app, then breakpoints, tracepoints, stepping, frames, variables, threads and expression
 evaluation.
 
-**Live XAML**, 6 tools, Windows only. The running app's visual tree, every element's properties and
+**Live XAML**, Windows only. The running app's visual tree, every element's properties and
 what set each one, click-to-select from inside the app itself, and edits applied to the live element
 objects. UWP and WinUI 3 through the taps RoseMCP ships; any other UI framework by shipping a tap of
 its own, dropped into the `taps` folder of the install
 ([the contract](https://github.com/AtomicBlom/RoseMcp.Tap)).
 
-**Notes**, 1 tool. `rose_reply` answers a note the person sent the agent from the RoseMCP window, so
+**Notes.** `rose_reply` answers a note the person sent the agent from the RoseMCP window, so
 the answer appears under the note where they are reading rather than only in the conversation.
 
 Every result carries a `revision`, so a caller can tell whether two answers describe the same world.

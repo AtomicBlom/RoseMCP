@@ -11,14 +11,14 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class TapDiscoveryTests
 {
-	private static readonly DroppedInTap SUIsei = new()
+	private static readonly DroppedInTap Contoso = new()
 	{
-		Name = "SUIsei",
-		Module = "SUIsei.dll",
-		Endpoint = "suisei-diag-{pid}",
-		EntryType = "SUIsei.RoseTap.Tap",
+		Name = "Contoso",
+		Module = "Contoso.dll",
+		Endpoint = "contoso-diag-{pid}",
+		EntryType = "Contoso.RoseTap.Tap",
 		Protocol = 5,
-		AssemblyPath = @"C:\taps\SUIsei.RoseTap.dll",
+		AssemblyPath = @"C:\taps\Contoso.RoseTap.dll",
 	};
 
 	/// <summary>
@@ -34,13 +34,13 @@ public sealed class TapDiscoveryTests
 	public void A_tap_is_read_from_the_attribute_its_assembly_carries()
 	{
 		using var module = CompiledModule.Of(
-			TapSource("""Name = "SUIsei", Module = "SUIsei.dll", Endpoint = "suisei-diag-{pid}", EntryType = "SUIsei.RoseTap.Tap", Protocol = 5"""),
-			"SUIsei.RoseTap",
+			TapSource("""Name = "Contoso", Module = "Contoso.dll", Endpoint = "contoso-diag-{pid}", EntryType = "Contoso.RoseTap.Tap", Protocol = 5"""),
+			"Contoso.RoseTap",
 			withSymbols: false);
 
 		var tap = TapManifest.Read(module.ModulePath).ShouldNotBeNull();
 
-		tap.ShouldBe(SUIsei with { AssemblyPath = Path.GetFullPath(module.ModulePath) });
+		tap.ShouldBe(Contoso with { AssemblyPath = Path.GetFullPath(module.ModulePath) });
 	}
 
 	[Test]
@@ -71,7 +71,7 @@ public sealed class TapDiscoveryTests
 	[Test]
 	public void A_well_formed_tap_is_admitted()
 	{
-		DroppedInTaps.Refuse(SUIsei, []).ShouldBeNull();
+		DroppedInTaps.Refuse(Contoso, []).ShouldBeNull();
 	}
 
 	/// <summary>A stray assembly naming itself after a framework RoseMCP serves never replaces the tap that serves it.</summary>
@@ -82,22 +82,22 @@ public sealed class TapDiscoveryTests
 	[Arguments("Uno", "Windows.UI.Xaml.dll")]
 	public void A_tap_claiming_a_framework_an_in_box_tap_serves_is_refused_naming_both(string name, string module)
 	{
-		var refusal = DroppedInTaps.Refuse(SUIsei with { Name = name, Module = module }, []).ShouldNotBeNull();
+		var refusal = DroppedInTaps.Refuse(Contoso with { Name = name, Module = module }, []).ShouldNotBeNull();
 
 		refusal.ShouldContain("RoseMCP's own");
-		refusal.ShouldContain("SUIsei.RoseTap.dll");
+		refusal.ShouldContain("Contoso.RoseTap.dll");
 	}
 
 	[Test]
 	public void A_tap_whose_endpoint_names_no_process_is_refused()
 	{
-		DroppedInTaps.Refuse(SUIsei with { Endpoint = "suisei-diag" }, []).ShouldNotBeNull().ShouldContain("{pid}");
+		DroppedInTaps.Refuse(Contoso with { Endpoint = "contoso-diag" }, []).ShouldNotBeNull().ShouldContain("{pid}");
 	}
 
 	[Test]
 	public void A_tap_that_does_not_say_how_to_start_it_is_refused_saying_what_is_missing()
 	{
-		DroppedInTaps.Refuse(SUIsei with { EntryType = string.Empty }, []).ShouldNotBeNull().ShouldContain("which type starts it");
+		DroppedInTaps.Refuse(Contoso with { EntryType = string.Empty }, []).ShouldNotBeNull().ShouldContain("which type starts it");
 	}
 
 	/// <summary>
@@ -107,27 +107,27 @@ public sealed class TapDiscoveryTests
 	[Test]
 	public void A_tap_speaking_a_protocol_outside_the_dropped_in_range_is_refused_saying_which_side_to_update()
 	{
-		DroppedInTaps.Refuse(SUIsei with { Protocol = 4 }, []).ShouldNotBeNull().ShouldContain("Rebuild the tap");
-		DroppedInTaps.Refuse(SUIsei with { Protocol = TapProtocolRange.DroppedIn.Maximum + 1 }, []).ShouldNotBeNull().ShouldContain("has to be updated");
+		DroppedInTaps.Refuse(Contoso with { Protocol = 4 }, []).ShouldNotBeNull().ShouldContain("Rebuild the tap");
+		DroppedInTaps.Refuse(Contoso with { Protocol = TapProtocolRange.DroppedIn.Maximum + 1 }, []).ShouldNotBeNull().ShouldContain("has to be updated");
 	}
 
 	[Test]
 	public void The_first_tap_found_for_a_framework_keeps_it()
 	{
-		var second = SUIsei with { AssemblyPath = @"D:\build\SUIsei.RoseTap.dll" };
+		var second = Contoso with { AssemblyPath = @"D:\build\Contoso.RoseTap.dll" };
 
-		var refusal = DroppedInTaps.Refuse(second, [SUIsei]).ShouldNotBeNull();
+		var refusal = DroppedInTaps.Refuse(second, [Contoso]).ShouldNotBeNull();
 
-		refusal.ShouldContain(SUIsei.AssemblyPath);
+		refusal.ShouldContain(Contoso.AssemblyPath);
 		refusal.ShouldContain(second.AssemblyPath);
 	}
 
 	[Test]
 	public void The_tap_whose_endpoint_is_listening_in_the_target_serves_it()
 	{
-		var avalonia = SUIsei with { Name = "Avalonia", Module = "Avalonia.Base.dll", Endpoint = "avalonia-diag-{pid}" };
+		var avalonia = Contoso with { Name = "Avalonia", Module = "Avalonia.Base.dll", Endpoint = "avalonia-diag-{pid}" };
 
-		var (tap, reason) = DroppedInTaps.Choose([SUIsei, avalonia], 4120, [], pipe => pipe == "avalonia-diag-4120", "No in-box tap.", []);
+		var (tap, reason) = DroppedInTaps.Choose([Contoso, avalonia], 4120, [], pipe => pipe == "avalonia-diag-4120", "No in-box tap.", []);
 
 		tap.ShouldBe(avalonia);
 		reason.ShouldBeNull();
@@ -140,10 +140,10 @@ public sealed class TapDiscoveryTests
 	[Test]
 	public void A_target_running_a_tap_framework_with_no_endpoint_listening_is_told_so()
 	{
-		var (tap, reason) = DroppedInTaps.Choose([SUIsei], 4120, ["kernel32.dll", "suisei.dll"], _ => false, "No in-box tap.", []);
+		var (tap, reason) = DroppedInTaps.Choose([Contoso], 4120, ["kernel32.dll", "contoso.dll"], _ => false, "No in-box tap.", []);
 
 		tap.ShouldBeNull();
-		reason.ShouldNotBeNull().ShouldContain("suisei-diag-4120");
+		reason.ShouldNotBeNull().ShouldContain("contoso-diag-4120");
 		reason.ShouldContain("diagnostics switched on");
 	}
 

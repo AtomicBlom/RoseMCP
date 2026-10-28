@@ -94,6 +94,16 @@ public static partial class WorkspaceStatusReporter
 				: (await project.GetSourceGeneratedDocumentsAsync(cancellationToken)).ToArray();
 
 			var xaml = await XamlStubReportReader.ReadAsync(generated, cancellationToken);
+
+			// Markup no dialect was chosen for may still be compiled here, by its framework's own generator, which only
+			// the finished compilation shows. The generators have just run, so this costs no second run.
+			var undialected = xaml is { Dialect: null, UnstubbedClasses.Count: > 0 };
+			if (undialected && await project.GetCompilationAsync(cancellationToken) is { } compilation)
+			{
+				var generatedFiles = generated.Select(document => document.FilePath).OfType<string>().ToArray();
+				xaml = xaml! with { CompiledInWorkspaceBy = XamlCompiledElsewhere.Find(compilation, generatedFiles, xaml.UnstubbedClasses) };
+			}
+
 			if (xaml is not null) xamlReports.Add(new XamlProjectReport(project.Name, xaml));
 
 			// The report is our own plumbing rather than something the project generates, so it is
@@ -151,7 +161,10 @@ public static partial class WorkspaceStatusReporter
 	/// </summary>
 	public static IEnumerable<WorkspaceReason> XamlHealth(IReadOnlyList<XamlProjectReport> reports)
 	{
-		var undialected = reports.Where(report => report.Xaml.Dialect is null && report.Xaml.MarkupFileCount > 0).ToArray();
+		// Markup its framework's own generator compiles in the workspace needs no stand-in, so it leaves no false errors.
+		var undialected = reports
+			.Where(report => report.Xaml.Dialect is null && report.Xaml.MarkupFileCount > 0 && report.Xaml.CompiledInWorkspaceBy is null)
+			.ToArray();
 
 		if (undialected.Length > 0)
 		{

@@ -58,4 +58,11 @@ public sealed record XamlStubReportPayload
 	public IReadOnlyList<string> UnresolvedTypes { get; init; } = [];
 
 	public IReadOnlyList<string> Skipped { get; init; } = [];
+
+	/// <summary>
+	/// The class each markup file names with <c>x:Class</c>, where no dialect was chosen and so nothing was stubbed. The
+	/// worker asks the finished compilation whether another generator compiles them, which this generator cannot ask:
+	/// generators run side by side on the same input and never see each other's output.
+	/// </summary>
+	public IReadOnlyList<string> UnstubbedClasses { get; init; } = [];
 }

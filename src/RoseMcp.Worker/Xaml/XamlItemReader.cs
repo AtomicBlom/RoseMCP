@@ -19,16 +19,24 @@ public static class XamlItemReader
 {
 	private static readonly string[] ItemNames = ["Page", "ApplicationDefinition", "Resource"];
 
+	/// <summary>The SDK's build output folders, which its own excludes name by property and so nothing here can read.</summary>
+	private static readonly string[] BuildOutput = ["bin", "obj"];
+
+	/// <summary>MSBuild globs ignore case on Windows and nowhere else.</summary>
+	private static readonly StringComparison PathComparison =
+		OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
 	public static IReadOnlyList<string> Read(string projectFilePath)
 	{
 		var directory = Path.GetDirectoryName(Path.GetFullPath(projectFilePath));
 		if (directory is null) return [];
 
+		var project = Load(projectFilePath);
 		var found = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
 		var removed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-		ReadProjectItems(projectFilePath, directory, found, removed);
-		Glob(directory, found);
+		if (project is not null) ReadProjectItems(project, directory, found, removed);
+		Glob(directory, directory, [.. BuildOutput, .. ExcludedFolders(project)], found);
 
 		found.ExceptWith(removed);
 
@@ -40,21 +48,11 @@ public static class XamlItemReader
 	/// an SDK-style project opts a file out of the default glob.
 	/// </summary>
 	private static void ReadProjectItems(
-		string projectFilePath,
+		XDocument project,
 		string directory,
 		SortedSet<string> found,
 		HashSet<string> removed)
 	{
-		XDocument project;
-		try
-		{
-			project = XDocument.Load(projectFilePath);
-		}
-		catch (Exception exception) when (exception is System.Xml.XmlException or IOException)
-		{
-			return;
-		}
-
 		foreach (var element in project.Descendants().Where(element => ItemNames.Contains(element.Name.LocalName)))
 		{
 			foreach (var attribute in (string[])["Include", "Update"])
@@ -80,25 +78,76 @@ public static class XamlItemReader
 	}
 
 	/// <summary>
-	/// What the SDK's default items would have picked up. Wildcards in explicit items are left to
-	/// this too, rather than reimplementing MSBuild globbing.
+	/// What the SDK's default items would have picked up: everything under the project's folder except build output, the
+	/// folders the project excludes by name, and every folder whose name starts with a dot. That last is the SDK's own
+	/// <c>**/.*/**</c>, and it matters here more than anywhere: an agent's worktrees sit under <c>.claude</c> and each holds
+	/// a whole copy of the repository, so markup belonging to every other project in it. An excluded folder is not walked
+	/// at all. Wildcards in explicit items are left to this too, rather than reimplementing MSBuild globbing.
 	/// </summary>
-	private static void Glob(string directory, SortedSet<string> found)
+	private static void Glob(string projectDirectory, string directory, IReadOnlyList<string> excluded, SortedSet<string> found)
 	{
-		foreach (var path in Directory.EnumerateFiles(directory, "*.xaml", SearchOption.AllDirectories))
-		{
-			if (IsUnderBuildOutput(path, directory)) continue;
+		foreach (var path in Directory.EnumerateFiles(directory, "*.xaml")) found.Add(Path.GetFullPath(path));
 
-			found.Add(Path.GetFullPath(path));
+		foreach (var folder in Directory.EnumerateDirectories(directory))
+		{
+			if (IsExcluded(projectDirectory, folder, excluded)) continue;
+
+			Glob(projectDirectory, folder, excluded, found);
 		}
 	}
 
-	private static bool IsUnderBuildOutput(string path, string directory)
+	private static bool IsExcluded(string projectDirectory, string folder, IReadOnlyList<string> excluded)
 	{
-		var relative = Path.GetRelativePath(directory, path);
+		if (Path.GetFileName(folder).StartsWith('.')) return true;
 
-		return relative.StartsWith("obj" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-			|| relative.StartsWith("bin" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+		var relative = Path.GetRelativePath(projectDirectory, folder).Replace('\\', '/');
+
+		return excluded.Any(name => relative.Equals(name, PathComparison) || relative.StartsWith(name + "/", PathComparison));
+	}
+
+	/// <summary>
+	/// The folders the project's own <c>DefaultItemExcludes</c> keeps out of its default items, relative to the project
+	/// and with forward slashes: <c>External/**</c> is how a project keeps a submodule's files out of its own. Only a pattern
+	/// naming a folder outright is honoured, and only where no condition decides whether it applies, for the same reason
+	/// a conditioned Remove is not.
+	/// </summary>
+	private static IEnumerable<string> ExcludedFolders(XDocument? project) => project is null
+		? []
+		: project.Descendants()
+			.Where(element => element.Name.LocalName == "DefaultItemExcludes" && !IsConditional(element))
+			.SelectMany(element => element.Value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+			.Select(FolderOf)
+			.OfType<string>();
+
+	/// <summary>The folder a <c>Folder/**</c> pattern names, or null for a pattern with a wildcard or a property anywhere else.</summary>
+	private static string? FolderOf(string pattern)
+	{
+		var path = pattern.Replace('\\', '/');
+		if (path.StartsWith("./", StringComparison.Ordinal)) path = path[2..];
+
+		foreach (var suffix in (string[])["/**/*", "/**"])
+		{
+			if (!path.EndsWith(suffix, StringComparison.Ordinal)) continue;
+
+			var folder = path[..^suffix.Length];
+			var isLiteral = folder.Length > 0 && folder.IndexOfAny(['*', '?', '$', '%', '@']) < 0;
+
+			return isLiteral ? folder : null;
+		}
+
+		return null;
+	}
+
+	private static XDocument? Load(string projectFilePath)
+	{
+		try
+		{
+			return XDocument.Load(projectFilePath);
+		}
+		catch (Exception exception) when (exception is System.Xml.XmlException or IOException)
+		{
+			return null;
+		}
 	}
 
 	/// <summary>Whether this item or any group above it carries a Condition.</summary>

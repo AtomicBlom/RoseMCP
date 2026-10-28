@@ -48,7 +48,9 @@ public sealed class XamlStubGenerator : IIncrementalGenerator
 
 		if (choice.Dialect is null)
 		{
-			Report(context, choice, documents.Length + unreadable, 0, [], Unreadable(unreadable));
+			// The classes go to the worker, which can see whether a generator of the framework's own compiles them.
+			var classes = documents.Select(document => document.ClassName).OfType<string>().Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal);
+			Report(context, choice, documents.Length + unreadable, 0, [], Unreadable(unreadable), [.. classes]);
 			return;
 		}
 
@@ -100,7 +102,8 @@ public sealed class XamlStubGenerator : IIncrementalGenerator
 		int markupFiles,
 		int stubbed,
 		IReadOnlyList<string> unresolved,
-		IReadOnlyList<string> skipped) =>
+		IReadOnlyList<string> skipped,
+		IReadOnlyList<string>? unstubbedClasses = null) =>
 		context.AddSource(
 			XamlStubReportChannel.HintName,
 			XamlStubReportChannel.Render(new XamlStubReportPayload
@@ -112,5 +115,6 @@ public sealed class XamlStubGenerator : IIncrementalGenerator
 				StubbedClassCount = stubbed,
 				UnresolvedTypes = [.. unresolved.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
 				Skipped = skipped,
+				UnstubbedClasses = unstubbedClasses ?? [],
 			}));
 }

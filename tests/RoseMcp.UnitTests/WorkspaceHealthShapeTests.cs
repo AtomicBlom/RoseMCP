@@ -93,6 +93,24 @@ public sealed class WorkspaceHealthShapeTests
 		reasons.ShouldAllBe(reason => reason.Effect == HealthEffect.MayAffectSomeProjects);
 	}
 
+	/// <summary>
+	/// Markup in no dialect a stub stands in for, which its framework's own generator compiles in the workspace, has no
+	/// false errors to warn about, beside a project whose markup nothing compiles.
+	/// </summary>
+	[Test]
+	public void Markup_its_own_generator_compiles_raises_no_dialect_reason()
+	{
+		var reasons = XamlHealth(
+		[
+			new XamlProjectReport("Game.Ui", Xaml(dialect: null, markupFiles: 3, compiledBy: "Views.SourceGen")),
+			new XamlProjectReport("Db.Legacy", Xaml(dialect: null, markupFiles: 4)),
+		]).ToArray();
+
+		var reason = reasons.ShouldHaveSingleItem();
+		reason.Kind.ShouldBe(ReasonKinds.XamlNoDialect);
+		reason.Projects.ShouldBe(["Db.Legacy"]);
+	}
+
 	/// <summary>Two reasons of one kind and project are still told apart, since an id is what a caller sends back.</summary>
 	[Test]
 	public void Ids_are_unique_in_one_answer()
@@ -172,14 +190,19 @@ public sealed class WorkspaceHealthShapeTests
 		DegradedReasons = [],
 	};
 
-	private static XamlStubReport Xaml(string? dialect = "WinUI", int markupFiles = 2, IReadOnlyList<string>? unresolved = null) => new()
-	{
-		Dialect = dialect,
-		DialectReason = dialect is null ? "no XAML framework is referenced" : "references Microsoft.WindowsAppSDK",
-		DialectAmbiguous = false,
-		MarkupFileCount = markupFiles,
-		StubbedClassCount = markupFiles,
-		UnresolvedTypes = unresolved ?? [],
-		Skipped = [],
-	};
+	private static XamlStubReport Xaml(
+		string? dialect = "WinUI",
+		int markupFiles = 2,
+		IReadOnlyList<string>? unresolved = null,
+		string? compiledBy = null) => new()
+		{
+			Dialect = dialect,
+			DialectReason = dialect is null ? "no XAML framework is referenced" : "references Microsoft.WindowsAppSDK",
+			DialectAmbiguous = false,
+			MarkupFileCount = markupFiles,
+			StubbedClassCount = dialect is null ? 0 : markupFiles,
+			UnresolvedTypes = unresolved ?? [],
+			Skipped = [],
+			CompiledInWorkspaceBy = compiledBy,
+		};
 }

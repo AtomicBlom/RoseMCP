@@ -62,6 +62,15 @@ Read before changing analyzer loading, `RoseMcp.XamlStubs`, or anything handing 
   top duplicates every named field -- hundreds of CS0102 and CS0229 in a project that builds clean.
   The signal is which assembly defines the dialect's marker type, not which SDK the project is on:
   Uno's Windows target takes those types from the Windows App SDK, and needs the ordinary treatment.
+  <br>
+  **Markup in no dialect RoseMCP knows is not reported broken where its own generator compiles it.**
+  A framework outside those dialects writes markup in a namespace of its own and compiles it with a generator
+  of its own, so no dialect is chosen and nothing is stubbed -- and none is needed. Saying the
+  code-behind reports errors that are not real would then be the false statement, on every load. The
+  stub generator cannot tell the two apart, for the same reason as above, so it names the classes it
+  left alone and the worker asks the finished compilation: where every one has an
+  `InitializeComponent` a generated file declares, `XamlCompiledElsewhere` names that generator and
+  `xaml-no-dialect` is not raised. One class nothing compiles keeps the reason.
 - **Never hand Roslyn a custom `AnalyzerReference`.** Its serializer switches on the concrete type --
   `AnalyzerFileReference`, `AnalyzerImageReference`, and an interface nested inside an internal class
   -- and throws `Unexpected value` on everything else. It checksums a project's analyzer references

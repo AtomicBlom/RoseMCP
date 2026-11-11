@@ -697,25 +697,46 @@ function Get-PrerequisiteProblem
     #>
     $problems = @()
 
-    # The SDK, not the runtime. The worker runs a design-time build through
-    # Microsoft.CodeAnalysis.Workspaces.MSBuild, which locates MSBuild and the targets out of an SDK
-    # installation -- with the runtime alone every project loads with no references and reports
-    # thousands of errors about System.Object being undefined, which reads as a broken solution
-    # rather than a missing tool.
+    # The major version every RoseMCP process runs on. The publish is framework-dependent, so this
+    # runtime has to be installed, and it also bounds which SDKs the worker can use.
+    $runtimeMajor = 11
+
+    # The runtimes. The server and the tray serve http through ASP.NET Core, so its shared framework
+    # is needed beside the base one; a machine with only the .NET Runtime starts the worker and then
+    # fails to start the server an MCP client launches, which the client reports only as a server
+    # that exited.
+    $runtimes = @()
+    try { $runtimes = @(& dotnet --list-runtimes 2>$null) } catch { }
+
+    $missing = @('Microsoft.NETCore.App', 'Microsoft.AspNetCore.App') | Where-Object {
+        $name = $_
+        -not ($runtimes | Where-Object { $_ -match "^$([regex]::Escape($name)) $runtimeMajor\." })
+    }
+    if ($missing)
+    {
+        $problems += "RoseMCP runs on .NET $runtimeMajor and needs its shared frameworks installed; missing: $($missing -join ', '). The .NET $runtimeMajor SDK includes both, or install the .NET Runtime and the ASP.NET Core Runtime from https://dotnet.microsoft.com/download/dotnet/$runtimeMajor.0"
+    }
+
+    # And an SDK. The worker runs a design-time build through Microsoft.CodeAnalysis.Workspaces.MSBuild,
+    # which locates MSBuild and the targets out of an SDK installation -- with the runtime alone every
+    # project loads with no references and reports thousands of errors about System.Object being
+    # undefined, which reads as a broken solution rather than a missing tool.
+    #
+    # Any SDK no newer than the runtime will do, not only a matching one: the worker loads the SDK's
+    # own MSBuild into its process, which works for an older SDK and never for a newer one. Somebody
+    # whose solutions build with an older SDK needs only the runtime above.
     $sdks = @()
     try { $sdks = @(& dotnet --list-sdks 2>$null) } catch { }
 
+    $usable = $sdks | Where-Object { $_ -match '^(\d+)\.' -and [int]$Matches[1] -le $runtimeMajor }
     if ($sdks.Count -eq 0)
     {
         $problems += 'No .NET SDK was found. RoseMCP needs the SDK, not just the runtime: without it every project loads with no references and reports thousands of errors about System.Object. Install it from https://dotnet.microsoft.com/download'
     }
-    elseif (-not ($sdks | Where-Object { $_ -match '^11\.' }))
+    elseif (-not $usable)
     {
-        # The worker loads the SDK's own MSBuild into its process, so it can only use an SDK whose
-        # major version is no newer than the runtime it runs on. An 11 SDK also brings the 11 runtime
-        # every RoseMCP process needs, since the publish is framework-dependent.
         $found = ($sdks | ForEach-Object { ($_ -split ' ')[0] }) -join ', '
-        $problems += "No .NET 11 SDK was found. RoseMCP runs on .NET 11, and its worker needs an SDK no newer than that to load a solution. Found: $found"
+        $problems += "No .NET SDK RoseMCP can use was found. It runs on .NET $runtimeMajor and can only load an SDK of version $runtimeMajor or older; a newer one needs a RoseMCP built for it. Found: $found"
     }
 
     # The tray and the inspector are unpackaged WinUI 3, so the Windows App Runtime has to be on the

@@ -709,10 +709,13 @@ function Get-PrerequisiteProblem
     {
         $problems += 'No .NET SDK was found. RoseMCP needs the SDK, not just the runtime: without it every project loads with no references and reports thousands of errors about System.Object. Install it from https://dotnet.microsoft.com/download'
     }
-    elseif (-not ($sdks | Where-Object { $_ -match '^10\.' }))
+    elseif (-not ($sdks | Where-Object { $_ -match '^11\.' }))
     {
+        # The worker loads the SDK's own MSBuild into its process, so it can only use an SDK whose
+        # major version is no newer than the runtime it runs on. An 11 SDK also brings the 11 runtime
+        # every RoseMCP process needs, since the publish is framework-dependent.
         $found = ($sdks | ForEach-Object { ($_ -split ' ')[0] }) -join ', '
-        $problems += "No .NET 10 SDK was found. RoseMCP targets net10.0 and its worker needs a matching SDK. Found: $found"
+        $problems += "No .NET 11 SDK was found. RoseMCP runs on .NET 11, and its worker needs an SDK no newer than that to load a solution. Found: $found"
     }
 
     # The tray and the inspector are unpackaged WinUI 3, so the Windows App Runtime has to be on the

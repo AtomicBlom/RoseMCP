@@ -88,7 +88,7 @@ public sealed class RoseServerProcess : IDisposable
 			"RoseMcp.Server",
 			"bin",
 			configuration,
-			"net10.0",
+			"net11.0",
 			OperatingSystem.IsWindows() ? "RoseMcp.Server.exe" : "RoseMcp.Server");
 
 		if (!File.Exists(executable))

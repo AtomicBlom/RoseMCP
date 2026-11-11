@@ -29,18 +29,18 @@ internal static class TestToolchain
 	// there. MSBuild is incremental, so paying for the check once a run costs almost nothing.
 	private static readonly Dictionary<string, string> X64Builds = [];
 
-	internal static void EnsureX64HostBuilt() => EnsureX64Build("src", "RoseMcp.LiveApp", "net10.0-windows", "RoseMcp.LiveApp.exe");
+	internal static void EnsureX64HostBuilt() => EnsureX64Build("src", "RoseMcp.LiveApp", "net11.0-windows", "RoseMcp.LiveApp.exe");
 
-	internal static string EnsureX64ProbeTargetBuilt() => EnsureX64Build("tests", "DebugProbeTarget", "net10.0", "DebugProbeTarget.exe");
+	internal static string EnsureX64ProbeTargetBuilt() => EnsureX64Build("tests", "DebugProbeTarget", "net11.0", "DebugProbeTarget.exe");
 
 	internal static string EnsureX64Build(string area, string project, string targetFramework, string exeName) =>
 		EnsureRidBuild("win-x64", area, project, targetFramework, exeName);
 
 	internal static void EnsureX86HostBuilt() =>
-		EnsureRidBuild("win-x86", "src", "RoseMcp.LiveApp", "net10.0-windows", "RoseMcp.LiveApp.exe");
+		EnsureRidBuild("win-x86", "src", "RoseMcp.LiveApp", "net11.0-windows", "RoseMcp.LiveApp.exe");
 
 	internal static string EnsureX86ProbeTargetBuilt() =>
-		EnsureRidBuild("win-x86", "tests", "DebugProbeTarget", "net10.0", "DebugProbeTarget.exe");
+		EnsureRidBuild("win-x86", "tests", "DebugProbeTarget", "net11.0", "DebugProbeTarget.exe");
 
 	/// <summary>
 	/// One project built for one runtime identifier, once a run.

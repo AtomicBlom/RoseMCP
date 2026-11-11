@@ -257,7 +257,7 @@ A debug session can be driven three ways at once, and all three see the same ses
 
 ## Building from source
 
-Requires the .NET 10 SDK.
+Requires the .NET 11 SDK.
 
 ```
 dotnet build RoseMcp.slnx

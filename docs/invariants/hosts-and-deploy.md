@@ -21,7 +21,7 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   this work named `Microsoft.UI.Xaml.dll` as the WinUI 3 signal, and a real WinUI 3 process does load
   it, so the claim survives inspection and fails on WinUI 2 -- which is why every name in
   `XamlStackModules` was read off a running process rather than reasoned about, and why the rule
-  lives in `Contracts` where a test can reach it: the host is `net10.0-windows` and neither test
+  lives in `Contracts` where a test can reach it: the host is `net11.0-windows` and neither test
   project takes a compile reference on it.
 - **UWP on modern .NET needed nothing, and running one is what established that.** A `UseUwp` app on
   `net10.0-windows` is `Windows.UI.Xaml` in an AppContainer behind an AUMID, so the UWP tap serves it

@@ -99,5 +99,5 @@ opened while nothing is being debugged has something to do rather than an empty 
 
 **Any Roslyn.** It references `RoseMcp.Ui`, `RoseMcp.Ui.Core`, `RoseMcp.Contracts` and the logging
 sink, and nothing that loads a solution. The testable half of it is `RoseMcp.Ui.Core`, which is plain
-`net10.0` and runs in the fast suite; what is left in the WinUI project is the part no test can see
+`net11.0` and runs in the fast suite; what is left in the WinUI project is the part no test can see
 anyway.

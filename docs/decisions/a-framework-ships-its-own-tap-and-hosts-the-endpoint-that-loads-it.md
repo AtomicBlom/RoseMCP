@@ -27,6 +27,18 @@ and nothing stops another process from creating that name first. Whoever serves 
 pipe name and key, and could pose as the tap. `GetNamedPipeServerProcessId` has to name the target
 before anything is sent.
 
+**Why the framework, not RoseMCP, says which folders a tap may come from.** An endpoint started
+without folders loads a tap from any path the app can read. On Windows that grants nothing new, since
+anyone running as the app's user can already debug it; under Linux's Yama `ptrace_scope` or macOS's
+hardened runtime they cannot, and there the endpoint would let them run code in the app. So a framework
+may start its endpoint with the folders taps may be loaded from, judged by where links and junctions
+lead, and every other path is refused. The choice sits with the framework because the endpoint is in
+its app, and nothing a host sends can widen it. RoseMCP sends the path it found the tap at, in one of
+its own tap folders, so a framework that restricts has to name those folders, or a person points a
+RoseMCP tap folder at one the framework names. A request the endpoint cannot serve is refused rather
+than thrown, so nothing a host sends ends the app, and the host passes the refusal on naming the
+endpoint and the tap.
+
 **Why a dropped-in tap is versioned by a range and declares what it serves.** The in-box taps ship with
 the host, so a version mismatch can only be a stale copy, and exact matching refuses it by name. A
 dropped-in tap is released apart from RoseMCP, which is the case the

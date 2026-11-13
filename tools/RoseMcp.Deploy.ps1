@@ -307,18 +307,46 @@ function Test-RelayCurrent
 {
     <#
         Whether the relay installed under $Root is the one this layout would install: its executable is
-        there and its marker names the same protocol. Anything else -- no relay, no marker, another
-        protocol -- is a relay to replace.
+        there, its marker names the same protocol, and it runs on the same .NET major. Anything else --
+        no relay, no marker, another protocol, another major -- is a relay to replace.
+
+        The major because a relay kept across a retarget still needs the runtime it was built for,
+        which the install no longer checks for or offers. It works until somebody removes that runtime
+        as no longer needed, and then every session registered through it fails to start. Its own
+        runtimeconfig says which major it needs, so no second marker is written for it.
     #>
     param([Parameter(Mandatory)][string] $Root)
 
     $relay = (Get-PublishedLayout).relay
-    $marker = Join-LayoutPath (Get-RelayFolder -Root $Root), $relay.marker
+    $folder = Get-RelayFolder -Root $Root
+    $marker = Join-LayoutPath $folder, $relay.marker
 
     if (-not (Test-Path -LiteralPath (Get-RelayExecutable -Root $Root))) { return $false }
     if (-not (Test-Path -LiteralPath $marker)) { return $false }
+    if ((Get-Content -LiteralPath $marker -Raw).Trim() -ne [string] $relay.protocol) { return $false }
 
-    return ((Get-Content -LiteralPath $marker -Raw).Trim() -eq [string] $relay.protocol)
+    return (Get-RuntimeConfigMajor -Path (Join-LayoutPath $folder, "$($relay.executable).runtimeconfig.json")) -eq (Get-RuntimeMajor)
+}
+
+function Get-RuntimeConfigMajor
+{
+    <#
+        The major of Microsoft.NETCore.App a runtimeconfig.json names, or $null when the file is missing,
+        unreadable or names none. Every framework a RoseMCP host references is of one major, and the base
+        framework is the one every host has.
+    #>
+    param([Parameter(Mandatory)][string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+
+    try { $options = (Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json).runtimeOptions }
+    catch { return $null }
+
+    $frameworks = @($options.frameworks) + @($options.framework) | Where-Object { $_ }
+    $base = @($frameworks | Where-Object { $_.name -eq 'Microsoft.NETCore.App' })
+    if ($base.Count -eq 0) { return $null }
+
+    return [int] ([string] $base[0].version).Split('.')[0]
 }
 
 function Get-RelayProcess
@@ -333,15 +361,16 @@ function Stop-Relay
 {
     <#
         Stops the relays running from an install whose relay is being replaced, and returns how many.
-        Their sessions lose their connection, which is why it happens only when the relay protocol
-        changes: a relay speaking the old protocol to a broker speaking the new one would misread it.
+        Their sessions lose their connection, which is why it happens only when the relay protocol or
+        its .NET major changes: a relay speaking the old protocol to a broker speaking the new one would
+        misread it, and one on the old major outlives the runtime it needs.
     #>
     param([Parameter(Mandatory)][string] $Root)
 
     $running = Get-RelayProcess -Root $Root
     if ($running.Count -eq 0) { return 0 }
 
-    Write-Host "  stopping $($running.Count) relay(s) of an older relay protocol (pid $($running.Id -join ', '))"
+    Write-Host "  stopping $($running.Count) relay(s) being replaced (pid $($running.Id -join ', '))"
     Stop-TrackedProcess -Process $running
 
     return $running.Count
@@ -682,10 +711,14 @@ function Start-Tray
     throw "tray started but never answered on port $Port"
 }
 
-# The major version every RoseMCP process runs on. The publish is framework-dependent, so this
-# runtime has to be installed for every architecture an install runs code in, and it also bounds
-# which SDKs the worker can use.
-$script:RuntimeMajor = 11
+function Get-RuntimeMajor
+{
+    <#
+        The .NET major every RoseMCP process runs on, from the published layout, which a unit test
+        holds to the target framework the projects build for.
+    #>
+    return [int] (Get-PublishedLayout).dotnet.major
+}
 
 # This file, for running part of it again in an elevated process. Captured while the file is being
 # dot-sourced, because inside a function $PSCommandPath names the script that called it instead.
@@ -751,8 +784,9 @@ function Test-SharedFramework
     $folder = Join-Path (Get-DotnetRoot -Arch $Arch) "shared\$Framework"
     if (-not (Test-Path -LiteralPath $folder)) { return $false }
 
+    $major = Get-RuntimeMajor
     $releases = @(Get-ChildItem -LiteralPath $folder -Directory |
-            Where-Object { $_.Name -match "^$script:RuntimeMajor\.\d+\.\d+$" })
+            Where-Object { $_.Name -match "^$major\.\d+\.\d+$" })
 
     return $releases.Count -gt 0
 }
@@ -778,6 +812,7 @@ function Get-MissingRuntime
     param([string] $Rid = (Get-HostRuntime))
 
     $native = $Rid -replace '^win-', ''
+    $major = Get-RuntimeMajor
 
     $needed = @(
         @{ Arch = $native; Framework = 'Microsoft.NETCore.App'; Product = 'dotnet-runtime'; Title = '.NET Runtime'; Purpose = 'RoseMCP' }
@@ -797,12 +832,12 @@ function Get-MissingRuntime
         if (Test-SharedFramework -Arch $runtime.Arch -Framework $runtime.Framework) { continue }
 
         [pscustomobject] @{
-            Name = "$($runtime.Title) $script:RuntimeMajor ($($runtime.Arch))"
+            Name = "$($runtime.Title) $major ($($runtime.Arch))"
             Framework = $runtime.Framework
             Arch = $runtime.Arch
             Purpose = $runtime.Purpose
-            Url = "https://aka.ms/dotnet/$script:RuntimeMajor.0/$($runtime.Product)-win-$($runtime.Arch).exe"
-            FileName = "$($runtime.Product)-$script:RuntimeMajor-win-$($runtime.Arch).exe"
+            Url = "https://aka.ms/dotnet/$major.0/$($runtime.Product)-win-$($runtime.Arch).exe"
+            FileName = "$($runtime.Product)-$major-win-$($runtime.Arch).exe"
         }
     }
 }
@@ -937,7 +972,7 @@ function Get-PrerequisiteProblem
     param([string] $Rid = (Get-HostRuntime))
 
     $problems = @()
-    $runtimeMajor = $script:RuntimeMajor
+    $runtimeMajor = Get-RuntimeMajor
 
     foreach ($runtime in Get-MissingRuntime -Rid $Rid)
     {
@@ -1004,8 +1039,8 @@ function Clear-InstallPayload
         read.
 
         -KeepCurrentRelay keeps the relay's folder where the relay in it is the one this layout would
-        install, because its relays are still running and holding it; a relay of another protocol goes
-        with the rest, its relays having been stopped. Without it the folder goes too, and nothing here
+        install, because its relays are still running and holding it; a relay of another protocol or
+        .NET major goes with the rest, its relays having been stopped. Without it the folder goes too, and nothing here
         reads the layout -- removing an install has none.
     #>
     param(

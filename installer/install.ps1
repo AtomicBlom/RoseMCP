@@ -413,7 +413,7 @@ if (-not $Register)
 }
 
 if ($stopped.ServersStopped -gt 0) { Write-Host 'sessions connected to the install''s own server lost their connection: reconnect them with /mcp, or register the relay above' }
-if ($stopped.RelaysStopped -gt 0) { Write-Host 'the relay protocol changed, so the relays running were stopped: reconnect those sessions with /mcp' }
+if ($stopped.RelaysStopped -gt 0) { Write-Host 'the relay''s protocol or .NET version changed, so the relays running were stopped: reconnect those sessions with /mcp' }
 
 if ($trayStarted -and $stopped.RelaysKept -gt 0)
 {

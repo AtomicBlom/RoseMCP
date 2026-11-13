@@ -10,7 +10,7 @@ namespace RoseMcp.Contracts;
 /// protocol however much the tools behind it change, so a relay from an older deploy serves a newer
 /// broker perfectly well -- until this contract changes. Then the deploy, and only then, replaces
 /// the relay and stops the copies running, and their sessions reconnect. See
-/// <c>docs/decisions/a-deploy-replaces-the-relay-only-when-its-protocol-changes.md</c>.
+/// <c>docs/decisions/a-deploy-replaces-the-relay-only-when-its-protocol-or-runtime-changes.md</c>.
 /// </para>
 /// </summary>
 public static class RelayProtocol

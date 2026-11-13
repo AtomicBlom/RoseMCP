@@ -38,7 +38,7 @@ namespace RoseMcp.Server;
 /// instructions mean the client hears nothing at the protocol level, and different ones mean one
 /// <c>notifications/tools/list_changed</c>, after which the client lists the tools again without
 /// reconnecting. Either way the first result after a restart carries one line saying what happened.
-/// See <c>docs/decisions/a-deploy-replaces-the-relay-only-when-its-protocol-changes.md</c>.
+/// See <c>docs/decisions/a-deploy-replaces-the-relay-only-when-its-protocol-or-runtime-changes.md</c>.
 /// </para>
 /// <para>
 /// It also tells the broker whom it serves -- the client's folder, roots, branch, process, name and label,

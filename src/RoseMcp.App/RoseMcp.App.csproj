@@ -28,6 +28,13 @@
          claiming it afterwards is too late: a second launch would already have built a window.
          Program.cs is the entry point instead. -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <!-- Precompiled, because the app starts every time somebody opens a window: it ends with its last
+         one, and the tray's icon or an agent attaching starts it again. Most of what it would otherwise
+         compile at startup is the WinUI projection, which ships as IL only, and every XAML type the
+         first window touches goes through it. The cost is size, and the app's assemblies no longer
+         deduplicate into the package's shared folder. What it saves, and why not Native AOT:
+         docs/decisions/the-app-is-precompiled-rather-than-compiled-ahead-of-time.md. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
 
   <ItemGroup>

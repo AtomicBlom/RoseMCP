@@ -84,6 +84,10 @@ UninstallDisplayIcon={app}\tray\RoseMcp.Tray.exe
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+; Offered only when a runtime is missing. The download and the administrator prompt happen when Next is
+; clicked on the Ready page: see InstallMissingRuntimes.
+Name: "runtimes"; Description: "Download and install the .NET runtimes {#AppName} runs on (asks for administrator rights)"; \
+    GroupDescription: "Prerequisites"; Check: RuntimesMissing
 Name: "startup"; Description: "Start {#AppName} when I sign in"; GroupDescription: "Startup"
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts"; Flags: unchecked
 
@@ -179,15 +183,51 @@ var
     finds one worth keeping, which a new install never does. }
   RelayStale: Boolean;
 
+  DeployScriptExtracted: Boolean;
+
+  { The .NET runtimes this machine lacks, one 'url|file name' line each, asked of the deploy script
+    once: the tasks page and the Ready page both need the answer, and it does not change in between. }
+  MissingRuntimes: TArrayOfString;
+  MissingRuntimesRead: Boolean;
+
+  DownloadPage: TDownloadWizardPage;
+
 function InitializeSetup(): Boolean;
 begin
   RelayStale := True;
   Result := True;
 end;
 
+procedure InitializeWizard;
+begin
+  DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing), SetupMessage(msgPreparingDesc), nil);
+end;
+
 function RelayIsStale: Boolean;
 begin
   Result := RelayStale;
+end;
+
+{ A value as a PowerShell single-quoted string. Paths here come from the user's profile, and a profile
+  folder may contain an apostrophe. }
+function PsQuote(const Value: string): string;
+begin
+  Result := Value;
+  StringChangeEx(Result, '''', '''''', True);
+  Result := '''' + Result + '''';
+end;
+
+{ The deploy script and the layout it reads, extracted to the temporary folder on first use. }
+function DeployScriptPath: string;
+begin
+  if not DeployScriptExtracted then
+  begin
+    ExtractTemporaryFile('RoseMcp.Deploy.ps1');
+    ExtractTemporaryFile('published-layout.json');
+    DeployScriptExtracted := True;
+  end;
+
+  Result := ExpandConstant('{tmp}\RoseMcp.Deploy.ps1');
 end;
 
 { The relay form of the registration, naming the relay this install put down, which is what keeps a
@@ -217,11 +257,121 @@ begin
     SW_HIDE, ewWaitUntilTerminated, ExitCode);
 end;
 
+{ Asks the deploy script which .NET runtimes are missing, once. A script that cannot run leaves the
+  list empty, so nothing is offered, and the report says what is missing instead. }
+procedure ReadMissingRuntimes;
+var
+  ListPath: string;
+  ExitCode, I, Count: Integer;
+  Lines: TArrayOfString;
+begin
+  if MissingRuntimesRead then
+    Exit;
+  MissingRuntimesRead := True;
+
+  ListPath := ExpandConstant('{tmp}\runtimes.txt');
+  if not RunDeployScript(DeployScriptPath,
+    'Get-MissingRuntime | ForEach-Object { $_.Url + ''|'' + $_.FileName } | Set-Content -LiteralPath ' + PsQuote(ListPath),
+    ExitCode) then
+    Exit;
+
+  if not LoadStringsFromFile(ListPath, Lines) then
+    Exit;
+
+  Count := 0;
+  SetArrayLength(MissingRuntimes, GetArrayLength(Lines));
+  for I := 0 to GetArrayLength(Lines) - 1 do
+    if Pos('|', Lines[I]) > 0 then
+    begin
+      Log('Missing runtime: ' + Lines[I]);
+      MissingRuntimes[Count] := Trim(Lines[I]);
+      Count := Count + 1;
+    end;
+  SetArrayLength(MissingRuntimes, Count);
+end;
+
+function RuntimesMissing: Boolean;
+begin
+  ReadMissingRuntimes;
+  Result := GetArrayLength(MissingRuntimes) > 0;
+end;
+
+{ Downloads the runtimes this machine lacks and installs them behind one administrator prompt.
+
+  Every way this can fail still installs RoseMCP. PrepareToInstall reports what is missing afterwards
+  with the same check that found it missing, so a declined prompt or a failed download ends up named
+  rather than quietly skipped. }
+procedure InstallMissingRuntimes;
+var
+  I, Separator, ExitCode: Integer;
+  FileName, Paths, ResultPath: string;
+  Downloaded: Boolean;
+  Results: TArrayOfString;
+begin
+  // A silent install has nobody to answer an administrator prompt, so it would wait rather than
+  // install. Unless setup is elevated already, an unattended run leaves the runtimes to the report.
+  if WizardSilent and not IsAdmin then
+  begin
+    Log('Not installing the .NET runtimes: a silent install that is not elevated cannot ask to be.');
+    Exit;
+  end;
+
+  DownloadPage.Clear;
+  Paths := '';
+  for I := 0 to GetArrayLength(MissingRuntimes) - 1 do
+  begin
+    Separator := Pos('|', MissingRuntimes[I]);
+    FileName := Copy(MissingRuntimes[I], Separator + 1, MaxInt);
+    DownloadPage.Add(Copy(MissingRuntimes[I], 1, Separator - 1), FileName, '');
+
+    if Paths <> '' then
+      Paths := Paths + ', ';
+    Paths := Paths + PsQuote(ExpandConstant('{tmp}\') + FileName);
+  end;
+
+  DownloadPage.Show;
+  try
+    Downloaded := False;
+    try
+      DownloadPage.Download;
+      Downloaded := True;
+    except
+      Log('The .NET runtimes were not downloaded: ' + GetExceptionMessage);
+      if not DownloadPage.AbortedByUser then
+        SuppressibleMsgBox('The .NET runtimes could not be downloaded: ' + GetExceptionMessage + #13#10#13#10 +
+          'RoseMCP will install anyway, and setup will say what is still missing.', mbError, MB_OK, IDOK);
+    end;
+
+    if Downloaded then
+    begin
+      DownloadPage.SetText('Installing the .NET runtimes...',
+        'Windows asks for permission, because they are installed for everyone on this computer.');
+
+      ResultPath := ExpandConstant('{tmp}\runtimes-installed.txt');
+      if RunDeployScript(DeployScriptPath,
+        'Install-Runtime -Path @(' + Paths + ') | Set-Content -LiteralPath ' + PsQuote(ResultPath), ExitCode)
+        and LoadStringsFromFile(ResultPath, Results) then
+        for I := 0 to GetArrayLength(Results) - 1 do
+          Log('Runtime: ' + Results[I]);
+    end;
+  finally
+    DownloadPage.Hide;
+  end;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+
+  if (CurPageID = wpReady) and WizardIsTaskSelected('runtimes') then
+    InstallMissingRuntimes;
+end;
+
 { Prerequisites are reported, never enforced. Somebody installing onto a machine they are about to
-  finish setting up is doing a reasonable thing, and the two things RoseMCP needs and cannot carry --
-  the .NET SDK and the Windows App Runtime -- are both things a developer machine acquires anyway.
-  What matters is that the failure is named here rather than arriving later as thousands of errors
-  about System.Object, which reads as a broken solution rather than a missing tool. }
+  finish setting up is doing a reasonable thing, and what RoseMCP needs beyond the runtimes offered
+  above -- a .NET SDK and the Windows App Runtime -- are both things a developer machine acquires
+  anyway. What matters is that the failure is named here rather than arriving later as thousands of
+  errors about System.Object, which reads as a broken solution rather than a missing tool. }
 procedure ReportPrerequisites(const ScriptPath: string);
 var
   ReportPath, Report: string;
@@ -280,9 +430,7 @@ begin
   Result := '';
   NeedsRestart := False;
 
-  ExtractTemporaryFile('RoseMcp.Deploy.ps1');
-  ExtractTemporaryFile('published-layout.json');
-  ScriptPath := ExpandConstant('{tmp}\RoseMcp.Deploy.ps1');
+  ScriptPath := DeployScriptPath;
   VerdictPath := ExpandConstant('{tmp}\relay.txt');
   Root := ExpandConstant('{app}');
 

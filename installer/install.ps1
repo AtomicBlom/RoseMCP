@@ -4,7 +4,9 @@
 
 .DESCRIPTION
     Ships inside the release archive and installs from beside itself, so the whole procedure is
-    "unzip, run install.ps1" with nothing to download and nothing to choose.
+    "unzip, run install.ps1" with nothing to choose. The one thing it downloads is a .NET runtime
+    the machine lacks, which Microsoft installs machine-wide behind one administrator prompt; see
+    -SkipRuntimes.
 
     One archive carries both architectures. Which one a machine gets is read off the machine rather
     than off the file somebody picked, because picking is the step people get wrong -- an x64 zip on
@@ -60,6 +62,11 @@ param(
 
     # Install the files and stop. Nothing is started, which is what an unattended or imaging run wants.
     [switch] $NoStart,
+
+    # Report a missing .NET runtime instead of downloading and installing it. Installing one asks for
+    # administrator rights unless this shell already has them, and an unattended run that is not
+    # elevated has nobody to answer that prompt.
+    [switch] $SkipRuntimes,
 
     [switch] $Uninstall,
 
@@ -262,7 +269,38 @@ $null = Assert-PackagedRuntime -Stage $Source -Rid $rid
 $version = Get-PackageVersion -PayloadRoot $payload -SharedRoot $shared
 Write-Host "  version $version"
 
-$problems = Get-PrerequisiteProblem
+$missingRuntimes = @(Get-MissingRuntime -Rid $rid)
+if ($missingRuntimes.Count -gt 0 -and -not $SkipRuntimes)
+{
+    $downloads = Join-Path ([IO.Path]::GetTempPath()) "rosemcp-runtimes-$PID"
+    New-Item -ItemType Directory -Force -Path $downloads | Out-Null
+
+    try
+    {
+        $installers = foreach ($runtime in $missingRuntimes)
+        {
+            Write-Host "  downloading the $($runtime.Name)"
+            $installer = Join-Path $downloads $runtime.FileName
+
+            # Without the progress bar, which Windows PowerShell redraws for every block it reads and
+            # which makes a download of this size take minutes rather than seconds.
+            & {
+                $ProgressPreference = 'SilentlyContinue'
+                Invoke-WebRequest -Uri $runtime.Url -OutFile $installer -UseBasicParsing
+            }
+
+            $installer
+        }
+
+        Write-Host '  installing them, which asks for administrator rights'
+        foreach ($line in Install-Runtime -Path $installers) { Write-Host "    $line" }
+    }
+    catch { Write-Warning "  the .NET runtimes were not installed: $($_.Exception.Message)" }
+    finally { Remove-Item -LiteralPath $downloads -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# Asked after the runtimes are installed, so it names only what that did not cover.
+$problems = @(Get-PrerequisiteProblem -Rid $rid)
 foreach ($problem in $problems) { Write-Warning $problem }
 
 $stopped = Stop-Install -Root $Destination -KeepCurrentRelay

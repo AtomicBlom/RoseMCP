@@ -27,8 +27,13 @@ public static class MSBuildRegistration
 	/// Registers the MSBuild of the SDK that <c>dotnet</c> would choose in the solution's directory,
 	/// so a <c>global.json</c> pin is honoured. Only the first call in a process registers anything,
 	/// which matches a worker owning exactly one solution.
+	/// <para>
+	/// The SDK's MSBuild loads into this process, so only an SDK whose major version is no newer than
+	/// the runtime the worker runs on is offered. A machine whose only SDKs are newer finds none at all,
+	/// which is why the error names the runtime rather than only a pin.
+	/// </para>
 	/// </summary>
-	/// <exception cref="InvalidOperationException">No .NET SDK could be found for that directory.</exception>
+	/// <exception cref="InvalidOperationException">No usable .NET SDK could be found for that directory.</exception>
 	public static void Ensure(string solutionPath)
 	{
 		lock (Gate)
@@ -45,8 +50,10 @@ public static class MSBuildRegistration
 				})
 				.FirstOrDefault()
 				?? throw new InvalidOperationException(
-					$"No .NET SDK was found for {directory}, and one is needed to evaluate its projects. "
-						+ "Install the SDK its global.json asks for, or remove the pin.");
+					$"No .NET SDK this worker can use was found for {directory}, and one is needed to evaluate its projects. "
+						+ $"The worker runs on .NET {Environment.Version.Major} and can only load an SDK of that major version or older; "
+						+ "an SDK newer than that needs a RoseMCP built for it. If a global.json in or above the directory pins "
+						+ "an SDK, install that one or remove the pin. 'dotnet --list-sdks' shows what is installed.");
 
 			MSBuildLocator.RegisterInstance(instance);
 		}

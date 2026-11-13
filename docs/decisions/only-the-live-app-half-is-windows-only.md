@@ -1,8 +1,8 @@
 # Only the live-app half is Windows-only
 
-**Decision.** The projects that need Windows target `net10.0-windows`: the live-app host, the tray, the
+**Decision.** The projects that need Windows target `net11.0-windows`: the live-app host, the tray, the
 inspector and `RoseMcp.Ui`. Everything a Roslyn session needs -- `RoseMcp.Contracts`, `.Solutions`,
-`.Broker`, `.Worker`, `.Server`, `.XamlDiff` and `.Symbols` -- stays plain `net10.0`. The broker starts
+`.Broker`, `.Worker`, `.Server`, `.XamlDiff` and `.Symbols` -- stays plain `net11.0`. The broker starts
 the host as a separate process and never references it, and where the host cannot exist the debug and
 XAML tools are not advertised at all.
 

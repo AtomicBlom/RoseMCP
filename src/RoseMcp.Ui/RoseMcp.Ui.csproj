@@ -4,13 +4,13 @@
        handler. Referenced by every RoseMCP desktop app, so they are recognisably one product rather
        than two that happen to share an icon.
 
-       Everything testable lives next door in RoseMcp.Ui.Core, which is plain net10.0. The split is
-       not tidiness: a net10.0 test project cannot reference a net10.0-windows assembly, so anything
+       Everything testable lives next door in RoseMcp.Ui.Core, which is plain net11.0. The split is
+       not tidiness: a net11.0 test project cannot reference a net11.0-windows assembly, so anything
        put here is code no unit test can reach. -->
 
   <PropertyGroup>
-    <!-- Overrides the repo-wide net10.0, as the tray does, and for the same reason. -->
-    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <!-- Overrides the repo-wide net11.0, as the tray does, and for the same reason. -->
+    <TargetFramework>net11.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <Platforms>x64;ARM64</Platforms>
@@ -28,7 +28,6 @@
          dependency at all. -->
     <PackageReference Include="Microsoft.Windows.AI.MachineLearning" ExcludeAssets="all" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 
   <ItemGroup>

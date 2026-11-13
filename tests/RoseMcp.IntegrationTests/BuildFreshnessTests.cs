@@ -89,6 +89,38 @@ public sealed class BuildFreshnessTests
 		touched.NewestSourcePath.ShouldEndWith("Core.csproj", Case.Insensitive);
 	}
 
+	/// <summary>
+	/// What a build writes into the intermediate folder and then compiles is not a source. The
+	/// design-time build every load runs writes it again without writing the output, so counting it
+	/// calls a project stale straight after a load, with nothing edited.
+	/// </summary>
+	[Test]
+	public async Task Leaves_out_what_the_build_writes_and_compiles()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		fixture.Build("Simple", "Core", "Core.csproj");
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		(await FreshnessAsync(session, "Core")).Stale.ShouldBeFalse();
+
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var core = snapshot.Solution.Projects.Single(project => project.Name == "Core");
+		var assemblyInfo = core.Documents
+			.Select(document => document.FilePath)
+			.OfType<string>()
+			.Single(path => path.EndsWith(".AssemblyInfo.cs", StringComparison.OrdinalIgnoreCase));
+
+		// Rewritten well after the build, the way a design-time build rewrites it.
+		File.SetLastWriteTimeUtc(assemblyInfo, DateTime.UtcNow.AddMinutes(1));
+
+		var rewritten = await FreshnessAsync(session, "Core");
+
+		rewritten.Stale.ShouldBeFalse("the file is the build's own, not a source somebody edited");
+		rewritten.SourcesNewerThanOutput.ShouldBe(0);
+		rewritten.NewestSourcePath.ShouldNotBeNull().ShouldNotEndWith(".AssemblyInfo.cs", Case.Insensitive);
+	}
+
 	/// <summary>Naming one project answers about that one and not the rest.</summary>
 	[Test]
 	public async Task Answers_about_one_project_when_told_which()

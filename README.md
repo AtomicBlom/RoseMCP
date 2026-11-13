@@ -40,6 +40,14 @@ One archive covers x64 and ARM64: it reads the machine and lays down only what t
 execute, so there is nothing to choose when downloading. It installs over a running instance, keeps
 `settings.json` and `Logs/`, and adds an Add/Remove Programs entry.
 
+It runs on the [.NET 11 Runtime and ASP.NET Core 11 Runtime](https://dotnet.microsoft.com/download/dotnet/11.0),
+plus the .NET 11 Runtime of each other architecture it debugs: x86 everywhere, and x64 as well on ARM64.
+Both installers download and install whichever of those are missing, behind one administrator prompt
+(`install.ps1 -SkipRuntimes` only reports them). It also needs the
+[Windows App Runtime](https://aka.ms/windowsappsdk/stable) and a .NET SDK to load solutions with -- any
+version up to 11, so the SDK your solutions already build with will do. The installer names whatever is
+still missing rather than refusing.
+
 Then register RoseMCP with your agent through the relay the install puts down -- the tray shows this
 command too, with your install's path in it:
 
@@ -257,7 +265,7 @@ A debug session can be driven three ways at once, and all three see the same ses
 
 ## Building from source
 
-Requires the .NET 10 SDK.
+Requires the .NET 11 SDK.
 
 ```
 dotnet build RoseMcp.slnx

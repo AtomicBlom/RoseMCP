@@ -11,8 +11,8 @@
     <!-- What Task Manager and the taskbar call the process: the product, not the assembly. -->
     <AssemblyTitle>RoseMCP</AssemblyTitle>
     <Product>RoseMCP</Product>
-    <!-- Overrides the repo-wide net10.0. WinUI needs a Windows target framework. -->
-    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <!-- Overrides the repo-wide net11.0. WinUI needs a Windows target framework. -->
+    <TargetFramework>net11.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <RuntimeIdentifier Condition=" '$(RuntimeIdentifier)' == '' ">win-x64</RuntimeIdentifier>
@@ -28,6 +28,13 @@
          claiming it afterwards is too late: a second launch would already have built a window.
          Program.cs is the entry point instead. -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <!-- Precompiled, because the app starts every time somebody opens a window: it ends with its last
+         one, and the tray's icon or an agent attaching starts it again. Most of what it would otherwise
+         compile at startup is the WinUI projection, which ships as IL only, and every XAML type the
+         first window touches goes through it. The cost is size, and the app's assemblies no longer
+         deduplicate into the package's shared folder. What it saves, and why not Native AOT:
+         docs/decisions/the-app-is-precompiled-rather-than-compiled-ahead-of-time.md. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
 
   <ItemGroup>

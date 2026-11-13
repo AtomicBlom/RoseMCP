@@ -31,12 +31,12 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 | `RoseMcp.Worker` | Owns exactly one `MSBuildWorkspace`. All Roslyn work happens here. |
 | `RoseMcp.Patterns` | Structural search and replace: a rule's find bound in a project's own compilation and matched on the operation tree. References `Microsoft.CodeAnalysis.CSharp` and nothing from Workspaces, so it can run wherever a `Compilation` does, an analyzer included. See [the decision](docs/decisions/code-is-rewritten-by-what-it-binds-to.md). |
 | `RoseMcp.XamlStubs` | The XAML stub generator, loaded by the worker as an analyzer assembly rather than referenced as a library. |
-| `RoseMcp.XamlDiff` | Takes markup apart for the live-edit path. Plain `net10.0`, so a test can see inside it. |
+| `RoseMcp.XamlDiff` | Takes markup apart for the live-edit path. Plain `net11.0`, so a test can see inside it. |
 | `RoseMcp.LiveApp` | The live-app host: one ICorDebug session and one XAML diagnostics session, for one debugged process. |
 | `RoseMcp.Xaml.Tap` | The native in-app provider, shared between frameworks: the tap, the overlay, the pipe. Headers only, in four tiers by what each names -- see [tap-tiers.md](docs/invariants/tap-tiers.md). Only tier 3 -- `tap_render.h`, the overlay and the toolbar's pieces -- is compiled per framework; the COM object names no projection, and `TapTierTests` fails if it does. |
 | `RoseMcp.Xaml.Uwp.Tap`, `RoseMcp.Xaml.WinUi.Tap` | The two bindings of that provider, one per XAML framework. Which one serves a target is decided by the framework the target runs. |
 | `external/RoseMcp.Tap` | The tap contract, a git submodule of its own (MIT): `Protocol/` -- framing, escaping, the greeting and its capabilities, reply rows, the endpoint request and the `RoseMcpTap` attribute -- compiled into `RoseMcp.Contracts` and into every tap a framework ships; `Endpoint/` is the pipe listener and loader a framework hosts so its tap can be loaded into a running app, and RoseMCP never compiles it outside a test. See [the decision](docs/decisions/a-framework-ships-its-own-tap-and-hosts-the-endpoint-that-loads-it.md). |
-| `RoseMcp.Ui.Core` | The half of both windows that is not WinUI: rows, formatting, the poll loop, the in-place merge, and `OperatorClient`. Plain `net10.0`, so it runs in the fast suite. |
+| `RoseMcp.Ui.Core` | The half of both windows that is not WinUI: rows, formatting, the poll loop, the in-place merge, and `OperatorClient`. Plain `net11.0`, so it runs in the fast suite. |
 | `RoseMcp.Ui` | WinUI class library. Themes, window chrome, the crash handler and the icon assets, shared so a second window is the same product rather than a lookalike. |
 | `RoseMcp.Tray` | WinUI 3 tray app for http mode. Hosts the broker in-process, so its window reads the live `WorkspaceManager` rather than a pushed copy. |
 | `RoseMcp.App` | The RoseMCP app, WinUI 3, one per broker: the RoseMCP window, organised by agent, and an Inspector window per debugged process. A **client** of the broker over the http operator API, owning no session of its own, because a process has one debugger. See [the decision](docs/decisions/one-rosemcp-app-per-broker-holds-every-window.md) and [why an Inspector is a client](docs/decisions/the-inspector-is-a-client-of-the-broker.md). |
@@ -45,7 +45,7 @@ Logic goes in `Contracts` only when a test needs it and the host that owns it ca
 `XamlStackModules`, `ToolArgumentShape`, `PathArguments`, `XamlProviderPath`, `ValuePath`,
 `SymbolLocation`, `HostVersion`, `BuildIdentity`, `BreakpointCondition`, `LogMessageTemplate`, `XamlRequestKind`,
 `SandboxSweep`, `XamlWire`, `TapProtocolRange`, `DroppedInTaps`, `ToolJson` and `ToolFailure` are the whole list, each a pure function over strings or
-JSON -- or, for `ToolFailure`, over the exception a boundary caught -- with the host's own facts passed in. Three of the launchable hosts are `net10.0-windows` or reachable only as a
+JSON -- or, for `ToolFailure`, over the exception a boundary caught -- with the host's own facts passed in. Three of the launchable hosts are `net11.0-windows` or reachable only as a
 child process, so a rule living beside its host is a rule the unit suite cannot see -- and one kept
 `internal` there is a rule no test can see at all. It is not a licence for behaviour: anything holding
 state, touching Roslyn, or knowing what a tool does belongs in the host.
@@ -198,9 +198,9 @@ generator and the project file in turn. The banner-suppressing equivalent is `--
 -- and that is how you run just the fast half:
 
 ```
-./tests/RoseMcp.UnitTests/bin/Debug/net10.0/RoseMcp.UnitTests.exe
-./tests/RoseMcp.IntegrationTests.Windows/bin/Debug/net10.0-windows/RoseMcp.IntegrationTests.Windows.exe
-./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe --treenode-filter '/*/*/RenameTests/*'
+./tests/RoseMcp.UnitTests/bin/Debug/net11.0/RoseMcp.UnitTests.exe
+./tests/RoseMcp.IntegrationTests.Windows/bin/Debug/net11.0-windows/RoseMcp.IntegrationTests.Windows.exe
+./tests/RoseMcp.IntegrationTests/bin/Debug/net11.0/RoseMcp.IntegrationTests.exe --treenode-filter '/*/*/RenameTests/*'
 ```
 
 **Only one integration suite runs on a machine at a time.** It registers appx packages under a
@@ -213,7 +213,7 @@ fails while a suite runs for the same reason -- it holds the assemblies the buil
 for the holder either way.
 
 **A failing integration test hands you its logs.** Every Rose process the suite starts logs under
-`tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/TestResults/logs/<run>` rather than the machine's
+`tests/RoseMcp.IntegrationTests/bin/Debug/net11.0/TestResults/logs/<run>` rather than the machine's
 own folder (`ROSEMCP_LOG_ROOT`), nothing prunes it during the run, and a test that fails, times out
 or is cancelled lists and attaches every log written while it ran -- the tap logs of live sandboxes
 included. CI uploads the lot as `integration-evidence`, or `probe-app-evidence` from the job that

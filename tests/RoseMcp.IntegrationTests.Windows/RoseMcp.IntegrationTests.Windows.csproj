@@ -1,10 +1,10 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <!-- The one test project that takes a compile reference on RoseMcp.LiveApp, which is
-         net10.0-windows. RoseMcp.IntegrationTests stays net10.0 so nothing forecloses running it
+         net11.0-windows. RoseMcp.IntegrationTests stays net11.0 so nothing forecloses running it
          off Windows, and the Windows-only half lives here rather than retargeting that one. -->
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net11.0-windows</TargetFramework>
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
@@ -31,7 +31,7 @@
   <ItemGroup>
     <Compile Include="..\..\external\RoseMcp.Tap\Endpoint\*.cs" Link="Tap\%(Filename)%(Extension)" />
     <ProjectReference Include="..\RoseMcp.TestTap\RoseMcp.TestTap.csproj" ReferenceOutputAssembly="false" />
-    <AssemblyMetadata Include="TestTapPath" Value="$(MSBuildThisFileDirectory)..\RoseMcp.TestTap\bin\$(Configuration)\net10.0\RoseMcp.TestTap.dll" />
+    <AssemblyMetadata Include="TestTapPath" Value="$(MSBuildThisFileDirectory)..\RoseMcp.TestTap\bin\$(Configuration)\net11.0\RoseMcp.TestTap.dll" />
   </ItemGroup>
 
   <ItemGroup>

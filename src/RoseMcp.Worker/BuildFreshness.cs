@@ -124,19 +124,46 @@ public static class BuildFreshness
 	}
 
 	/// <summary>
-	/// Every file on disk that feeds the compilation. Source-generated documents are not among them:
-	/// they exist only inside the compilation and have no timestamp to compare.
+	/// Every file on disk that feeds the compilation and that a build does not write itself.
+	/// Source-generated documents are not among them: they exist only inside the compilation and have
+	/// no timestamp to compare.
+	/// <para>
+	/// Nor is anything in the project's intermediate folder. A build writes the assembly attributes,
+	/// the global usings and the generated .editorconfig there and then compiles them, and the
+	/// design-time build every load runs writes them too, without writing the output -- so counted as
+	/// sources they make projects read as stale straight after a load, with no edit anywhere. They are
+	/// derived from the project file and what it imports, and the project file is counted.
+	/// </para>
 	/// </summary>
 	private static IEnumerable<string> Sources(Project project)
 	{
+		var intermediate = IntermediateFolder(project);
+
 		IEnumerable<TextDocument> documents =
 			[.. project.Documents, .. project.AdditionalDocuments, .. project.AnalyzerConfigDocuments];
 
 		foreach (var document in documents)
 		{
-			if (document.FilePath is { Length: > 0 } path) yield return path;
+			if (document.FilePath is not { Length: > 0 } path) continue;
+
+			var writtenByTheBuild = intermediate is not null
+				&& path.StartsWith(intermediate, StringComparison.OrdinalIgnoreCase);
+			if (!writtenByTheBuild) yield return path;
 		}
 
 		if (project.FilePath is { Length: > 0 } file) yield return file;
+	}
+
+	/// <summary>
+	/// The folder the compiler writes the intermediate assembly to, such as <c>obj\Debug\net11.0\</c>,
+	/// with a trailing separator so a sibling folder sharing its name as a prefix does not match. Null
+	/// when the workspace does not say, in which case nothing is left out.
+	/// </summary>
+	private static string? IntermediateFolder(Project project)
+	{
+		if (project.CompilationOutputInfo.AssemblyPath is not { Length: > 0 } assembly) return null;
+		if (Path.GetDirectoryName(Path.GetFullPath(assembly)) is not { Length: > 0 } folder) return null;
+
+		return Path.EndsInDirectorySeparator(folder) ? folder : folder + Path.DirectorySeparatorChar;
 	}
 }

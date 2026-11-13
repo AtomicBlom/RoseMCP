@@ -1,11 +1,11 @@
-# A deploy replaces the relay only when its protocol changes
+# A deploy replaces the relay only when its protocol or runtime changes
 
 **Decision.** The stdio relay a client registers is installed in a folder of its own, `relay/` under
 the install root, holding a second publish of `RoseMcp.Server` and a marker naming the relay protocol
 it speaks (`RelayProtocol.Version`, mirrored in `tools/published-layout.json`). A promote, the zip's
 `install.ps1` and the Inno installer leave that folder, and every relay running from it, alone while
-the marker names the protocol they would install; a different protocol is the only thing that stops
-those relays and replaces the folder. The broker still restarts on every deploy. The relay notices
+the marker names the protocol they would install and the relay runs on the .NET major they would; a
+different protocol or major is the only thing that stops those relays and replaces the folder. The broker still restarts on every deploy. The relay notices
 the broker going over a request the broker holds open, reconnects to the new one by itself, and
 compares a hash of the new broker's tool definitions and server instructions with what its client
 last listed: the same means the client hears nothing at the protocol level, different means one
@@ -44,6 +44,15 @@ perfectly well until this changes. Raise `RelayProtocol.Version` and the layout'
 -- a test holds them equal -- with any change an older relay would misread, and with any change to
 what the relay itself does, since an installed relay that is never replaced never does it. A relay that meets a broker
 speaking another protocol says so in the line and in its log, since no reconnect can mend it.
+
+**Why the .NET major too.** The relay is framework-dependent, so it needs the runtime it was built
+for, and a relay kept across a retarget keeps needing the old one. Nothing else in the install does:
+the installers check for and offer only the new major, so the old runtime looks like something left
+over, and the day somebody removes it every session registered through the relay fails to start, a
+long way from the deploy that caused it. Replacing the relay costs each session one `/mcp`, once per
+.NET major. The relay's own runtimeconfig names the major it needs, so it is compared with the
+layout's `dotnet.major` rather than written into a second marker; a test holds that number to the
+target framework the projects build for.
 
 **Noticing the broker go.** The relay holds `GET /admin/relays/watch` open. The broker writes one
 line, which instance it is, and nothing more until it stops; a killed tray -- which is what a deploy

@@ -6,7 +6,7 @@ namespace RoseMcp.Contracts;
 /// <para>
 /// Here rather than beside the host, and taking its directories rather than reading
 /// <c>AppContext.BaseDirectory</c>, because it is the one resolver in the install layout no test
-/// could reach: the host is <c>net10.0-windows</c> and neither test project takes a compile
+/// could reach: the host is <c>net11.0-windows</c> and neither test project takes a compile
 /// reference on it. Deciding on a path and an existence check is exactly the kind of thing the
 /// layout tests exist for, and exactly the kind of thing that is wrong only on an install.
 /// </para>

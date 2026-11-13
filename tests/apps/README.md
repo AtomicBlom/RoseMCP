@@ -23,7 +23,7 @@ mechanism are built around.
 
 These are foreign project types with their own frameworks and toolchains. The `Directory.Build.props`
 and `Directory.Packages.props` here shadow the repository-root ones, so the apps are **not** forced
-into `net10.0`, warnings-as-errors, or central package management. They are also **not** in
+into `net11.0`, warnings-as-errors, or central package management. They are also **not** in
 `RoseMcp.slnx`: classic UWP is an old-style MSBuild project that `dotnet build` cannot build, so it
 would break a solution-wide `dotnet build`.
 

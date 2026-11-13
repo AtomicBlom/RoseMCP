@@ -21,7 +21,7 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   this work named `Microsoft.UI.Xaml.dll` as the WinUI 3 signal, and a real WinUI 3 process does load
   it, so the claim survives inspection and fails on WinUI 2 -- which is why every name in
   `XamlStackModules` was read off a running process rather than reasoned about, and why the rule
-  lives in `Contracts` where a test can reach it: the host is `net10.0-windows` and neither test
+  lives in `Contracts` where a test can reach it: the host is `net11.0-windows` and neither test
   project takes a compile reference on it.
 - **UWP on modern .NET needed nothing, and running one is what established that.** A `UseUwp` app on
   `net10.0-windows` is `Windows.UI.Xaml` in an AppContainer behind an AUMID, so the UWP tap serves it
@@ -83,16 +83,22 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   for rather than defaulting to one.
 - **`promote` builds the whole tree before it stops anything.** Every publish, and every native
   provider, goes into `artifacts/promote/<rid>` while the running instance keeps serving; only then
-  are the RoseMCP app, tray and stdio servers stopped, the stage copied over the install, and the tray
-  restarted. The relays are the exception, below. Stopping first means Rose is gone for the length of a build, and a build that fails
+  are the RoseMCP app, tray and stdio servers stopped, the old payload cleared, the stage copied in,
+  and the tray restarted. The relays are the exception, below. Stopping first means Rose is gone for the length of a build, and a build that fails
   partway leaves nothing running and a half-written install that may not start. Keep anything that
   can fail -- a publish, a provider build, a layout check -- ahead of the first `Stop-*` call; after
-  it, the only work is a copy.
+  it, the only work is a clear and a copy.
+- **Every installer clears the old payload before laying down the new one**, a promote included,
+  with `Clear-InstallPayload`. A fresh stage is not enough: `publish -o` and a copy never remove what
+  they do not write, so a file or a whole folder that has left the layout stays in the install
+  through every deploy, and is loaded by -- or as a folder of its own runs as -- a build that never
+  shipped it.
 - **The relay's folder is the one part of an install a deploy leaves running, and only a change of
-  relay protocol replaces it.** Every installer -- a promote, `install.ps1`, the Inno script -- copies a
+  relay protocol or .NET major replaces it.** Every installer -- a promote, `install.ps1`, the Inno script -- copies a
   payload with `Copy-InstallPayload` or an `Excludes` of the relay folder, never over it, and lays the
   relay down with `Install-Relay` only where `Test-RelayCurrent` says the installed one is not this
-  one: its executable missing, or its marker naming another protocol. Stopping and clearing take
+  one: its executable missing, its marker naming another protocol, or its runtimeconfig another .NET
+  major than the layout's `dotnet.major`. Stopping and clearing take
   `-KeepCurrentRelay`, which leaves a current relay's folder and processes alone and stops the rest of
   the install's servers with `Get-InstalledProcess -Except`; a stale relay is stopped and counted on
   its own, because its session needs `/mcp` for a different reason. The marker is written when the
@@ -106,8 +112,8 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   (`relayProcesses`, which each relay sends with its watch) against `Get-RelayProcess`, never the
   broker's bare count, which takes in every relay on the port -- a build output's, another
   install's -- and reads "2 of 2" too early or "3 of 2". Sessions it had to stop -- registered with the root's
-  server, relaying to a child broker, or on a relay of another protocol -- it names as needing `/mcp`.
-  See [the decision](../decisions/a-deploy-replaces-the-relay-only-when-its-protocol-changes.md).
+  server, relaying to a child broker, or on a relay of another protocol or major -- it names as needing `/mcp`.
+  See [the decision](../decisions/a-deploy-replaces-the-relay-only-when-its-protocol-or-runtime-changes.md).
 - **Where anything sits in an install is written once, in `tools/published-layout.json`, and every
   other party reads that file or is tested against it.** Five parties have to agree: `deploy.ps1`
   publishes the layout, `build-installer.ps1` checks a stage of it, `install.ps1` and `rosemcp.iss`

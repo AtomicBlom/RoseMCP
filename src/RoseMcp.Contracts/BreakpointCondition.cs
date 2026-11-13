@@ -9,7 +9,7 @@ namespace RoseMcp.Contracts;
 /// no func-eval; full expression conditions wait for eval. A condition whose variable is not present
 /// evaluates false, so the breakpoint simply does not fire.
 /// <para>
-/// Here rather than beside the host that evaluates it, because the host is <c>net10.0-windows</c> and
+/// Here rather than beside the host that evaluates it, because the host is <c>net11.0-windows</c> and
 /// neither test project takes a compile reference on it -- the integration project launches it as a
 /// child process. A gate that silently answers false is exactly the kind of thing that fails by
 /// stopping nowhere, or on every hit, and an operator table where a one-character match shadows a

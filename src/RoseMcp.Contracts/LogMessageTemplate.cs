@@ -74,7 +74,7 @@ public sealed record LogMessageRender(string Text, IReadOnlyList<LiveVariable> V
 /// reads as the value having been empty.
 /// </para>
 /// <para>
-/// Here rather than beside the host that renders it, because the host is <c>net10.0-windows</c> and
+/// Here rather than beside the host that renders it, because the host is <c>net11.0-windows</c> and
 /// neither test project takes a compile reference on it. Brace escaping and the boundary between a
 /// literal and a placeholder are pure string work, and getting either wrong produces a plausible
 /// message rather than a failure -- the worst outcome for something whose whole job is to report

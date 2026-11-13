@@ -13,7 +13,7 @@ can be written against another by changing only the app it drives.
 **Why outside the solution.** They are foreign project types. The classic UWP app is an old-style
 MSBuild project that `dotnet build` cannot build at all, and the others need toolchains that somebody
 working on the Roslyn half should not have to install. The shadowing props keep them off the
-repository's defaults -- `net10.0`, warnings as errors, central package management -- which not all of
+repository's defaults -- `net11.0`, warnings as errors, central package management -- which not all of
 them can follow.
 
 **Why the classic UWP app is registered from its staged layout.** A classic UWP CoreCLR build writes

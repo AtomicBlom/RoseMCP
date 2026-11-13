@@ -14,7 +14,7 @@ namespace RoseMcp.Contracts;
 /// </para>
 /// <para>
 /// Here rather than beside the debugger for the reason <see cref="ValuePath"/> is: the host that
-/// owns it is <c>net10.0-windows</c> and neither test project takes a compile reference on it, so a
+/// owns it is <c>net11.0-windows</c> and neither test project takes a compile reference on it, so a
 /// grammar living there is a grammar no test can see. Every failure this can have is a breakpoint
 /// somewhere other than where it was asked for, reported as a success.
 /// </para>

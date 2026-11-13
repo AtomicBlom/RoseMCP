@@ -1,7 +1,7 @@
 name: CI
 
 # Build, check formatting, and run the tests on every pull request and on main. The solution has
-# net10.0-windows projects (the live-app host, the tray), so this must run on Windows.
+# net11.0-windows projects (the live-app host, the tray), so this must run on Windows.
 #
 # The integration suite is split from the unit one by what it needs rather than by what it is, and
 # the live-app half is split again on the same principle: a test that drives a real debugger session
@@ -125,7 +125,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
 
       # setup-dotnet's own cache wants a packages.lock.json, which this repository does not use.
       # Central package management puts every direct version in one file, so hashing that is close
@@ -198,7 +198,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
 
       # A hosted runner carries no x86 runtime, and one test needs one: Attaches_to_an_x86_target
       # builds an x86 debug host and an x86 target, both framework-dependent, so without it the
@@ -275,7 +275,7 @@ jobs:
       - name: Integration tests, excluding the ones that need a probe app
         timeout-minutes: 35
         run: >-
-          ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe
+          ./tests/RoseMcp.IntegrationTests/bin/Debug/net11.0/RoseMcp.IntegrationTests.exe
           --maximum-parallel-tests 3
           --treenode-filter '/*/*/*/*[Category!=ProbeApp]'
           --output Detailed
@@ -283,14 +283,14 @@ jobs:
           --timeout 32m
 
       # The Windows-only half, which is its own project because it takes a compile reference on
-      # RoseMcp.LiveApp (net10.0-windows). Keeping that out of the project above is what leaves the
+      # RoseMcp.LiveApp (net11.0-windows). Keeping that out of the project above is what leaves the
       # door open to running the rest off Windows.
       #
       # Run whatever the step above did. Skipped after a failure there, a break in this half is
       # invisible until the other is fixed, and one failure is read as the only one.
       - name: Integration tests that need Windows
         if: ${{ !cancelled() }}
-        run: ./tests/RoseMcp.IntegrationTests.Windows/bin/Debug/net10.0-windows/RoseMcp.IntegrationTests.Windows.exe
+        run: ./tests/RoseMcp.IntegrationTests.Windows/bin/Debug/net11.0-windows/RoseMcp.IntegrationTests.Windows.exe
 
       # A failed or cancelled run keeps its evidence. Every Rose process the suite starts logs into
       # its own directory under TestResults, which nothing prunes during the run, and a failing test
@@ -303,8 +303,8 @@ jobs:
         with:
           name: integration-evidence
           path: |
-            tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/TestResults/
-            tests/RoseMcp.IntegrationTests.Windows/bin/Debug/net10.0-windows/TestResults/
+            tests/RoseMcp.IntegrationTests/bin/Debug/net11.0/TestResults/
+            tests/RoseMcp.IntegrationTests.Windows/bin/Debug/net11.0-windows/TestResults/
           retention-days: 14
           if-no-files-found: ignore
 
@@ -347,7 +347,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
 
       # Registering a loose AppX layout, which is how every probe is installed, needs developer mode.
       # Set the way the Settings page sets it, then read back, because a write that did not take is
@@ -567,7 +567,7 @@ jobs:
       - name: Integration tests that need a probe app
         timeout-minutes: 30
         run: >-
-          ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe
+          ./tests/RoseMcp.IntegrationTests/bin/Debug/net11.0/RoseMcp.IntegrationTests.exe
           --maximum-parallel-tests 3
           --treenode-filter '/*/*/*/*[Category=ProbeApp]'
           --output Detailed
@@ -582,7 +582,7 @@ jobs:
         if: ${{ failure() || cancelled() }}
         shell: pwsh
         run: |
-          $out = 'tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/TestResults'
+          $out = 'tests/RoseMcp.IntegrationTests/bin/Debug/net11.0/TestResults'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
 
           # The job's own limit, so this reaches back to its first registration and no further.
@@ -609,7 +609,7 @@ jobs:
         with:
           name: probe-app-evidence
           path: |
-            tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/TestResults/
+            tests/RoseMcp.IntegrationTests/bin/Debug/net11.0/TestResults/
           retention-days: 14
           if-no-files-found: ignore
 
@@ -646,7 +646,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
 
       # x86 and x64 come with the C++ workload; ARM64 is a separate component. Added rather than
       # assumed, so it cannot vanish when windows-latest moves. This mirrors release.yml, which needs
@@ -711,7 +711,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
 
       - name: Cache NuGet packages
         uses: actions/cache@v6

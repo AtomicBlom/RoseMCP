@@ -216,18 +216,29 @@ jobs:
           $installDir = Join-Path $env:RUNNER_TEMP 'dotnet-x86'
           $installer = Join-Path $env:RUNNER_TEMP 'dotnet-install.ps1'
 
-          Invoke-WebRequest -UseBasicParsing 'https://dot.net/v1/dotnet-install.ps1' -OutFile $installer
-          & $installer -Architecture x86 -Runtime dotnet -Channel 10.0 -InstallDir $installDir
+          # The channel is read from the TargetFramework in Directory.Build.props, which the x86 target
+          # inherits and the debug host matches, rather than written here: a runtime of any other major
+          # cannot start either of them, and a version written here is one more place a change of
+          # framework has to remember.
+          $targetFramework = @(([xml] (Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.TargetFramework | Where-Object { $_ })[0]
+          if ($targetFramework -notmatch '^net(\d+)\.0$') { throw "Directory.Build.props targets '$targetFramework', which names no .NET channel." }
+          $major = $Matches[1]
 
-          # Asserted rather than assumed: an install that quietly produced nothing would surface as an
-          # x86 attach test failing several minutes later, for a reason that has nothing to do with
-          # what it tests. Running it is the check, because a dotnet.exe of the wrong architecture is
-          # on disk exactly like a right one.
+          Invoke-WebRequest -UseBasicParsing 'https://dot.net/v1/dotnet-install.ps1' -OutFile $installer
+          & $installer -Architecture x86 -Runtime dotnet -Channel "$major.0" -InstallDir $installDir
+
+          # Asserted rather than assumed: an install that quietly produced nothing, or a runtime of a
+          # major the target cannot use, would surface as an x86 attach test failing several minutes
+          # later, for a reason that has nothing to do with what it tests. Running it is the check,
+          # because a dotnet.exe of the wrong architecture is on disk exactly like a right one.
           $x86Dotnet = Join-Path $installDir 'dotnet.exe'
           if (-not (Test-Path $x86Dotnet)) { throw "No dotnet.exe under $installDir after the install." }
 
-          & $x86Dotnet --list-runtimes
+          $runtimes = @(& $x86Dotnet --list-runtimes)
           if ($LASTEXITCODE -ne 0) { throw "The x86 runtime in $installDir does not run." }
+
+          $runtimes
+          if (-not ($runtimes -match "^Microsoft\.NETCore\.App $major\.")) { throw "The x86 install in $installDir has no .NET $major runtime." }
 
           "DOTNET_ROOT_X86=$installDir" >> $env:GITHUB_ENV
 

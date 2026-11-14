@@ -10,8 +10,31 @@
   <!-- The tap protocol, from the contract repository both RoseMCP and every tap compile in as source:
        external/RoseMcp.Tap, a git submodule. Protocol/ only; the endpoint is compiled by the frameworks
        that host it, never by RoseMCP. -->
+  <PropertyGroup>
+    <TapProtocolDirectory>..\..\external\RoseMcp.Tap\Protocol</TapProtocolDirectory>
+  </PropertyGroup>
+
   <ItemGroup>
-    <Compile Include="..\..\external\RoseMcp.Tap\Protocol\*.cs" Link="Tap\%(Filename)%(Extension)" />
+    <Compile Include="$(TapProtocolDirectory)\*.cs" Link="Tap\%(Filename)%(Extension)" />
   </ItemGroup>
+
+  <!-- A clone, a new worktree, or a pull that adds the submodule leaves its folder empty until the
+       submodule is initialised, and the wildcard above then matches nothing. What the build reports
+       for that is a CS0234 about the namespace RoseMcp.Tap at every use, which names neither the
+       submodule nor the command that fetches it, so this names both before the compiler runs. XML
+       comments cannot hold a double hyphen, so the command itself is only in the message.
+
+       A warning rather than an error in a design-time build. An error ends the build before
+       CoreCompile, which is the target that hands an IDE, or Rose, the compiler command line it loads
+       the project from, so the load would lose far more than the protocol's files; a warning lets it
+       go on and puts the reason in its diagnostics. -->
+  <Target Name="RequireTapSubmodule" BeforeTargets="CoreCompile" Condition="!Exists('$(TapProtocolDirectory)')">
+    <PropertyGroup>
+      <TapSubmoduleMissing>The tap protocol is missing: external/RoseMcp.Tap is a git submodule that has not been checked out, and RoseMcp.Contracts compiles its Protocol folder in. Run `git submodule update --init` from the repository root.</TapSubmoduleMissing>
+    </PropertyGroup>
+
+    <Error Condition="'$(DesignTimeBuild)' != 'true'" Text="$(TapSubmoduleMissing)" />
+    <Warning Condition="'$(DesignTimeBuild)' == 'true'" Text="$(TapSubmoduleMissing)" />
+  </Target>
 
 </Project>

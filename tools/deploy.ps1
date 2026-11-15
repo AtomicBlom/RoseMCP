@@ -117,6 +117,55 @@ if (-not $Destination)
 
 $Destination = $Destination.Replace('\', '/')
 
+function Invoke-Native
+{
+    <#
+        Runs a native command and returns its exit code with everything it wrote, stdout and stderr
+        together, so a caller can say why it failed instead of only that it did. A deploy that reports
+        an exit code alone sends whoever ran it off to repeat the command by hand to learn the reason.
+
+        $ErrorActionPreference is relaxed in this function's scope only. Under 'Stop', Windows
+        PowerShell 5.1 turns the first line a native command writes to a redirected stderr into a
+        terminating error, which would end the deploy on a progress message rather than on a failure.
+        A stderr line arrives as an ErrorRecord, read by its message: an empty one stringifies as its
+        exception's type name.
+    #>
+    param([Parameter(Mandatory)][string] $Command, [string[]] $Arguments)
+
+    $ErrorActionPreference = 'Continue'
+    $output = @(& $Command @Arguments 2>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" }
+        })
+
+    return [PSCustomObject]@{ ExitCode = $LASTEXITCODE; Output = $output }
+}
+
+function Get-FailureReason
+{
+    <#
+        The lines of a failed command's output that say why it failed, indented to sit under the
+        message that carries them.
+
+        The error lines when there are any -- MSBuild's, the compiler's, NuGet's, all of which read
+        "<origin>: error <code>: <text>" -- each once, because MSBuild prints every error again in its
+        closing summary. Otherwise the last lines, which is where a command that failed before MSBuild
+        started, or a build script refusing to run, says why. Capped, because a project that does not
+        compile can report hundreds of errors and the first few are the ones that name the cause.
+    #>
+    param([string[]] $Output, [int] $MaxLines = 15)
+
+    $lines = @($Output | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($lines.Count -eq 0) { return '    (it wrote nothing)' }
+
+    $errors = @($lines | Where-Object { $_ -match ':\s+error(\s+\w+)?\s*:' } | Select-Object -Unique)
+    $reason = if ($errors.Count -gt 0) { $errors } else { @($lines | Select-Object -Last $MaxLines) }
+
+    $shown = @($reason | Select-Object -First $MaxLines)
+    if ($reason.Count -gt $shown.Count) { $shown += "... and $($reason.Count - $shown.Count) more" }
+
+    return ($shown | ForEach-Object { "    $_" }) -join [Environment]::NewLine
+}
+
 function Invoke-Dotnet
 {
     <#
@@ -124,13 +173,19 @@ function Invoke-Dotnet
         than remembered at each of the five call sites. Only the tray reads the flag; stamping it on
         everything published in the same run keeps "did this come out of the release pipeline" a
         property of the build rather than of one project.
+
+        A publish's output is kept rather than shown, because a successful one is pages of noise; a
+        failed one throws with the lines that say why.
     #>
     param([string[]] $Arguments, [string] $What)
 
     if ($UpdateCheck) { $Arguments += '-p:RoseMcpUpdateCheck=true' }
 
-    & dotnet @Arguments | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "$What failed (dotnet exited $LASTEXITCODE)" }
+    $run = Invoke-Native -Command 'dotnet' -Arguments $Arguments
+    if ($run.ExitCode -ne 0)
+    {
+        throw "$What failed (dotnet exited $($run.ExitCode)):$([Environment]::NewLine)$(Get-FailureReason $run.Output)"
+    }
 }
 
 function Publish-Tree
@@ -379,8 +434,7 @@ function Copy-XamlProvider
     $dll = "$repo/src/$Project/bin/$platform/Release/$File"
 
     Write-Host "  building $Project ($platform)"
-    & pwsh -NoProfile -File $build -Platform $platform -Configuration Release *> $null
-    $exitCode = $LASTEXITCODE
+    $run = Invoke-Native -Command 'pwsh' -Arguments @('-NoProfile', '-File', $build, '-Platform', $platform, '-Configuration', 'Release')
 
     # Clear it deliberately. A warned-and-continued failure otherwise leaves $LASTEXITCODE set, and
     # nothing after this point is a native command that would replace it -- so the script inherits the
@@ -389,10 +443,13 @@ function Copy-XamlProvider
     # anything automating it believes the deploy.
     $global:LASTEXITCODE = 0
 
-    if ($exitCode -ne 0 -or -not (Test-Path $dll))
+    if ($run.ExitCode -ne 0 -or -not (Test-Path $dll))
     {
+        # The reason as well, because the usual one -- no MSVC toolset for this architecture -- is
+        # something the person deploying can fix, and build.ps1 names what it looked for and where.
         $message = "$Project could not be built for $platform; XAML inspection and live editing will " +
-            "be unavailable for $Rid targets."
+            "be unavailable for $Rid targets. build.ps1 said:$([Environment]::NewLine)" +
+            (Get-FailureReason $run.Output)
 
         if ($Required) { throw $message }
 

@@ -101,7 +101,7 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   instance id, not its build, says whether it restarted. The watch and the reconnect loop are
   `Detached`, bounded by the relay's lifetime, and disposing the relay cancels them and waits for them
   before closing the connection -- which, for a child broker, ends the child and its workers. See
-  [the decision](../decisions/a-deploy-replaces-the-relay-only-when-its-protocol-changes.md).
+  [the decision](../decisions/a-deploy-replaces-the-relay-only-when-its-protocol-or-runtime-changes.md).
 - **The relay contributes a fact, never a conclusion.** It used to resolve that directory to a
   solution and write the answer into the `workspace` argument, which failed three ways at once. It
   matched the argument by name, and `rose_workspace_open` alone called its own `path` -- so an

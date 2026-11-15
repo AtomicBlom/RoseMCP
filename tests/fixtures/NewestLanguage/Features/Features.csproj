@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- No LangVersion: the SDK's default for the framework is the point. net11.0 defaults to C# 15,
+       which a Roslyn older than the SDK's own compiler reads as C# 14. -->
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+</Project>

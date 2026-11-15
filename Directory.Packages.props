@@ -11,9 +11,12 @@
   </ItemGroup>
 
   <ItemGroup Label="Roslyn">
-    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
-    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.9.0" />
-    <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="5.9.0" />
+    <!-- The compiler the .NET 11.0.100 SDK ships, from the dotnet-tools feed. At least as new as the
+         newest SDK RoseMCP supports, or that SDK's default C# version reads as the one before it:
+         docs/decisions/the-worker-compiles-with-the-sdks-own-roslyn.md. -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.12.0-1.26529.118" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.12.0-1.26529.118" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="5.12.0-1.26529.118" />
   </ItemGroup>
 
   <ItemGroup Label="MSBuild evaluation (worker)">
@@ -21,13 +24,13 @@
          found at run time by the locator, so every reference to the first two sets
          ExcludeAssets="runtime". Framework matches the version Roslyn's MSBuild workspace already
          depends on. -->
-    <PackageVersion Include="Microsoft.Build" Version="17.11.48" />
-    <PackageVersion Include="Microsoft.Build.Framework" Version="17.11.48" />
+    <PackageVersion Include="Microsoft.Build" Version="18.7.1" />
+    <PackageVersion Include="Microsoft.Build.Framework" Version="18.7.1" />
     <PackageVersion Include="Microsoft.Build.Locator" Version="1.6.1" />
   </ItemGroup>
 
   <ItemGroup Label="Hosting">
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="11.0.0" />
   </ItemGroup>
 
   <ItemGroup Label="Debugging (live-app host)">
@@ -56,7 +59,6 @@
   </ItemGroup>
 
   <ItemGroup Label="Logging">
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
     <PackageVersion Include="Serilog" Version="4.3.1" />
     <PackageVersion Include="Serilog.Extensions.Logging" Version="10.0.0" />
     <PackageVersion Include="Serilog.Sinks.File" Version="7.0.0" />

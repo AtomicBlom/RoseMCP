@@ -92,7 +92,7 @@ public sealed partial class ActivityView : UserControl
 	/// <summary>Narrows the list to one agent's calls, by the key they carry: what "more in Activity" on a card asks for.</summary>
 	public void ShowAgent(string key, string label)
 	{
-		if (!_agents.Any(choice => choice.Value == key)) _agents = [.. _agents, new FilterChoice(label, key)];
+		if (!_agents.Any(choice => choice.Value == key)) _agents = (FilterChoice[])[.. _agents, new FilterChoice(label, key)];
 
 		Fill(AgentChoice, _agents, key);
 		Ask();
@@ -229,6 +229,6 @@ public sealed partial class ActivityView : UserControl
 	{
 		if (chosen is null || fresh.Any(choice => choice.Value == chosen)) return fresh;
 
-		return before.FirstOrDefault(choice => choice.Value == chosen) is { } kept ? [.. fresh, kept] : fresh;
+		return before.FirstOrDefault(choice => choice.Value == chosen) is { } kept ? (FilterChoice[])[.. fresh, kept] : fresh;
 	}
 }

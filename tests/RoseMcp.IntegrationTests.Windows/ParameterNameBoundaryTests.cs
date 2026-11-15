@@ -14,7 +14,7 @@ namespace RoseMcp.IntegrationTests.Windows;
 /// <summary>
 /// No refusal at the live-app host's boundary carries a CLR parameter name, whoever threw it. The broker's
 /// and the worker's boundaries are held the same way in the unit suite; this host is
-/// <c>net10.0-windows</c>, so only this project can drive its filter.
+/// <c>net11.0-windows</c>, so only this project can drive its filter.
 /// </summary>
 public sealed class ParameterNameBoundaryTests
 {

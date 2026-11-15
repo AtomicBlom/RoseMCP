@@ -307,18 +307,46 @@ function Test-RelayCurrent
 {
     <#
         Whether the relay installed under $Root is the one this layout would install: its executable is
-        there and its marker names the same protocol. Anything else -- no relay, no marker, another
-        protocol -- is a relay to replace.
+        there, its marker names the same protocol, and it runs on the same .NET major. Anything else --
+        no relay, no marker, another protocol, another major -- is a relay to replace.
+
+        The major because a relay kept across a retarget still needs the runtime it was built for,
+        which the install no longer checks for or offers. It works until somebody removes that runtime
+        as no longer needed, and then every session registered through it fails to start. Its own
+        runtimeconfig says which major it needs, so no second marker is written for it.
     #>
     param([Parameter(Mandatory)][string] $Root)
 
     $relay = (Get-PublishedLayout).relay
-    $marker = Join-LayoutPath (Get-RelayFolder -Root $Root), $relay.marker
+    $folder = Get-RelayFolder -Root $Root
+    $marker = Join-LayoutPath $folder, $relay.marker
 
     if (-not (Test-Path -LiteralPath (Get-RelayExecutable -Root $Root))) { return $false }
     if (-not (Test-Path -LiteralPath $marker)) { return $false }
+    if ((Get-Content -LiteralPath $marker -Raw).Trim() -ne [string] $relay.protocol) { return $false }
 
-    return ((Get-Content -LiteralPath $marker -Raw).Trim() -eq [string] $relay.protocol)
+    return (Get-RuntimeConfigMajor -Path (Join-LayoutPath $folder, "$($relay.executable).runtimeconfig.json")) -eq (Get-RuntimeMajor)
+}
+
+function Get-RuntimeConfigMajor
+{
+    <#
+        The major of Microsoft.NETCore.App a runtimeconfig.json names, or $null when the file is missing,
+        unreadable or names none. Every framework a RoseMCP host references is of one major, and the base
+        framework is the one every host has.
+    #>
+    param([Parameter(Mandatory)][string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+
+    try { $options = (Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json).runtimeOptions }
+    catch { return $null }
+
+    $frameworks = @($options.frameworks) + @($options.framework) | Where-Object { $_ }
+    $base = @($frameworks | Where-Object { $_.name -eq 'Microsoft.NETCore.App' })
+    if ($base.Count -eq 0) { return $null }
+
+    return [int] ([string] $base[0].version).Split('.')[0]
 }
 
 function Get-RelayProcess
@@ -333,15 +361,16 @@ function Stop-Relay
 {
     <#
         Stops the relays running from an install whose relay is being replaced, and returns how many.
-        Their sessions lose their connection, which is why it happens only when the relay protocol
-        changes: a relay speaking the old protocol to a broker speaking the new one would misread it.
+        Their sessions lose their connection, which is why it happens only when the relay protocol or
+        its .NET major changes: a relay speaking the old protocol to a broker speaking the new one would
+        misread it, and one on the old major outlives the runtime it needs.
     #>
     param([Parameter(Mandatory)][string] $Root)
 
     $running = Get-RelayProcess -Root $Root
     if ($running.Count -eq 0) { return 0 }
 
-    Write-Host "  stopping $($running.Count) relay(s) of an older relay protocol (pid $($running.Id -join ', '))"
+    Write-Host "  stopping $($running.Count) relay(s) being replaced (pid $($running.Id -join ', '))"
     Stop-TrackedProcess -Process $running
 
     return $running.Count
@@ -682,11 +711,254 @@ function Start-Tray
     throw "tray started but never answered on port $Port"
 }
 
+function Get-RuntimeMajor
+{
+    <#
+        The .NET major every RoseMCP process runs on, from the published layout, which a unit test
+        holds to the target framework the projects build for.
+    #>
+    return [int] (Get-PublishedLayout).dotnet.major
+}
+
+# This file, for running part of it again in an elevated process. Captured while the file is being
+# dot-sourced, because inside a function $PSCommandPath names the script that called it instead.
+$script:DeployScriptPath = $PSCommandPath
+
+function Get-DotnetRoot
+{
+    <#
+        Where an apphost of architecture $Arch finds the .NET runtime: the DOTNET_ROOT variable for that
+        architecture or the general one, then the install location the .NET installer registered for
+        that architecture, then that architecture's default folder.
+
+        Not `dotnet --list-runtimes`, which answers for whichever dotnet is first on PATH. That is only
+        ever one architecture, and need not be the one an apphost finds, because an apphost never reads
+        PATH.
+    #>
+    param([Parameter(Mandatory)][ValidateSet('x86', 'x64', 'arm64')][string] $Arch)
+
+    foreach ($variable in "DOTNET_ROOT_$($Arch.ToUpperInvariant())", 'DOTNET_ROOT')
+    {
+        $value = [Environment]::GetEnvironmentVariable($variable)
+        if ($value) { return $value }
+    }
+
+    # The 32-bit view whatever this shell is, because that is where every architecture's installer
+    # writes it. A 32-bit shell sees that view at SOFTWARE and a 64-bit one at WOW6432Node, so asking
+    # for the view by name is the one spelling that works in both.
+    try
+    {
+        $hive = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry32')
+        $key = $hive.OpenSubKey("SOFTWARE\dotnet\Setup\InstalledVersions\$Arch")
+        if ($key)
+        {
+            $location = [string] $key.GetValue('InstallLocation')
+            if ($location) { return $location }
+        }
+    }
+    catch { }
+
+    # ProgramW6432 is the 64-bit Program Files whatever this shell's own architecture is.
+    $programFiles = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
+    $native = (Get-HostRuntime) -replace '^win-', ''
+
+    if ($Arch -eq 'x86') { return Join-Path ${env:ProgramFiles(x86)} 'dotnet' }
+    if ($Arch -eq $native) { return Join-Path $programFiles 'dotnet' }
+
+    return Join-Path $programFiles "dotnet\$Arch"
+}
+
+function Test-SharedFramework
+{
+    <#
+        Whether $Framework is installed for $Arch at the major version RoseMCP runs on.
+
+        Only a release counts. Every runtimeconfig RoseMCP publishes names the major's .0 release, and a
+        preview or release candidate sorts below it, so it does not satisfy one.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $Arch,
+        [Parameter(Mandatory)][string] $Framework
+    )
+
+    $folder = Join-Path (Get-DotnetRoot -Arch $Arch) "shared\$Framework"
+    if (-not (Test-Path -LiteralPath $folder)) { return $false }
+
+    $major = Get-RuntimeMajor
+    $releases = @(Get-ChildItem -LiteralPath $folder -Directory |
+            Where-Object { $_.Name -match "^$major\.\d+\.\d+$" })
+
+    return $releases.Count -gt 0
+}
+
+function Get-MissingRuntime
+{
+    <#
+        The .NET runtimes an install for $Rid runs on that this machine lacks, each with the installer
+        that provides it. Empty when there are none.
+
+        Every architecture the install runs code in, not only the machine's own. The broker and the
+        tray run natively and serve http, so they need the ASP.NET Core runtime beside the base one; a
+        machine with only the base runtime starts the worker and then fails to start the server an MCP
+        client launches, which the client reports only as a server that exited. The live-app hosts
+        match the process being debugged rather than the machine, so an x64 machine also runs an x86
+        host -- the default platform of a new UWP app -- and an ARM64 machine x86 and x64 ones. Each
+        of those needs the base runtime of its own architecture, and without it debugging an app of
+        that architecture fails while everything else works.
+
+        The links are Microsoft's for the newest release of the major version, so an installer fetches
+        whatever patch is current when it runs rather than the one current when it was built.
+    #>
+    param([string] $Rid = (Get-HostRuntime))
+
+    $native = $Rid -replace '^win-', ''
+    $major = Get-RuntimeMajor
+
+    $needed = @(
+        @{ Arch = $native; Framework = 'Microsoft.NETCore.App'; Product = 'dotnet-runtime'; Title = '.NET Runtime'; Purpose = 'RoseMCP' }
+        @{ Arch = $native; Framework = 'Microsoft.AspNetCore.App'; Product = 'aspnetcore-runtime'; Title = 'ASP.NET Core Runtime'; Purpose = 'RoseMCP' }
+    )
+
+    foreach ($hostRid in Get-LiveAppRuntimes -Rid $Rid)
+    {
+        $arch = $hostRid -replace '^win-', ''
+        if ($arch -eq $native) { continue }
+
+        $needed += @{ Arch = $arch; Framework = 'Microsoft.NETCore.App'; Product = 'dotnet-runtime'; Title = '.NET Runtime'; Purpose = "debugging $arch apps" }
+    }
+
+    foreach ($runtime in $needed)
+    {
+        if (Test-SharedFramework -Arch $runtime.Arch -Framework $runtime.Framework) { continue }
+
+        [pscustomobject] @{
+            Name = "$($runtime.Title) $major ($($runtime.Arch))"
+            Framework = $runtime.Framework
+            Arch = $runtime.Arch
+            Purpose = $runtime.Purpose
+            Url = "https://aka.ms/dotnet/$major.0/$($runtime.Product)-win-$($runtime.Arch).exe"
+            FileName = "$($runtime.Product)-$major-win-$($runtime.Arch).exe"
+        }
+    }
+}
+
+function Install-Runtime
+{
+    <#
+        Runs downloaded .NET runtime installers behind one administrator prompt, and returns a line per
+        installer saying what became of it.
+
+        Machine-wide, because that is the only install Microsoft makes that an apphost finds by itself.
+        A per-user copy needs DOTNET_ROOT set in every environment the tray, a relay and a debug host
+        are started from, which an installer cannot reach. Everything RoseMCP installs of its own stays
+        per-user.
+
+        One prompt for the lot: a shell that is not elevated starts one elevated shell to run them all,
+        rather than letting each installer ask for itself.
+
+        Nothing throws for a runtime that did not install. Callers ask Get-PrerequisiteProblem
+        afterwards, which names whatever is still missing whether the cause was a declined prompt, a
+        failed installer or anything else.
+    #>
+    param([Parameter(Mandatory)][string[]] $Path)
+
+    $identity = [Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
+    $elevated = $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($elevated) { return Invoke-RuntimeInstaller -Path $Path }
+
+    $resultPath = Join-Path ([IO.Path]::GetTempPath()) "rosemcp-runtimes-$PID.txt"
+    $command = Get-RuntimeInstallerCommand -Path $Path -ResultPath $resultPath
+
+    # Encoded, because Start-Process joins an argument list with spaces and quotes none of it, and the
+    # command holds paths that may contain spaces.
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+    $shell = (Get-Process -Id $PID).Path
+
+    try
+    {
+        $process = Start-Process -FilePath $shell -Verb RunAs -Wait -PassThru -WindowStyle Hidden `
+            -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded
+    }
+    catch
+    {
+        return @($Path | ForEach-Object { "$(Split-Path $_ -Leaf): not installed, because the administrator prompt was declined" })
+    }
+
+    if (-not (Test-Path -LiteralPath $resultPath))
+    {
+        return @("the elevated installer exited $($process.ExitCode) without saying what it did")
+    }
+
+    $lines = @(Get-Content -LiteralPath $resultPath)
+    Remove-Item -LiteralPath $resultPath -Force -ErrorAction SilentlyContinue
+
+    return $lines
+}
+
+function Get-RuntimeInstallerCommand
+{
+    <#
+        The command the elevated shell runs: this file dot-sourced, then Invoke-RuntimeInstaller with
+        its results written to $ResultPath, since an elevated process's output cannot be read by the
+        process that started it.
+    #>
+    param(
+        [Parameter(Mandatory)][string[]] $Path,
+        [Parameter(Mandatory)][string] $ResultPath
+    )
+
+    $quote = { param($value) "'" + $value.Replace("'", "''") + "'" }
+    $paths = ($Path | ForEach-Object { & $quote $_ }) -join ', '
+
+    return ". $(& $quote $script:DeployScriptPath); " +
+        "Invoke-RuntimeInstaller -Path @($paths) | Set-Content -LiteralPath $(& $quote $ResultPath)"
+}
+
+function Invoke-RuntimeInstaller
+{
+    <#
+        Runs each installer quietly, in this process's own elevation, and returns a line per installer.
+
+        Each is checked for a valid Microsoft signature immediately before it runs. They were downloaded
+        into a folder the user can write to, and this is the point at which whatever is there runs as
+        administrator.
+    #>
+    param([Parameter(Mandatory)][string[]] $Path)
+
+    foreach ($installer in $Path)
+    {
+        $name = Split-Path $installer -Leaf
+
+        if (-not (Test-Path -LiteralPath $installer))
+        {
+            "${name}: not installed, because it was never downloaded"
+            continue
+        }
+
+        $signature = Get-AuthenticodeSignature -LiteralPath $installer
+        $isMicrosoft = $signature.Status -eq 'Valid' -and
+            $signature.SignerCertificate.Subject -match '(^|, )O=Microsoft Corporation(,|$)'
+        if (-not $isMicrosoft)
+        {
+            "${name}: not run, because it is not signed by Microsoft ($($signature.Status))"
+            continue
+        }
+
+        $process = Start-Process -FilePath $installer -ArgumentList '/install', '/quiet', '/norestart' -Wait -PassThru
+        switch ($process.ExitCode)
+        {
+            0 { "${name}: installed" }
+            3010 { "${name}: installed; Windows needs a restart to finish" }
+            default { "${name}: the installer exited $($process.ExitCode)" }
+        }
+    }
+}
+
 function Get-PrerequisiteProblem
 {
     <#
-        What an install needs that it cannot carry, as a list of problems -- empty when there are
-        none.
+        What an install for $Rid needs that it cannot carry, as a list of problems -- empty when there
+        are none.
 
         Strings rather than warnings, because the two installers surface them differently: install.ps1
         writes them to the console, and the Inno installer reads them back out of a redirected file to
@@ -694,25 +966,39 @@ function Get-PrerequisiteProblem
 
         Nothing here is fatal. Somebody installing onto a machine they are about to finish setting up
         is doing a reasonable thing, and an installer that refuses is wrong more often than they are.
+        Both installers offer to install the .NET runtimes first, and ask this afterwards, so what it
+        names is whatever that did not cover.
     #>
-    $problems = @()
+    param([string] $Rid = (Get-HostRuntime))
 
-    # The SDK, not the runtime. The worker runs a design-time build through
-    # Microsoft.CodeAnalysis.Workspaces.MSBuild, which locates MSBuild and the targets out of an SDK
-    # installation -- with the runtime alone every project loads with no references and reports
-    # thousands of errors about System.Object being undefined, which reads as a broken solution
-    # rather than a missing tool.
+    $problems = @()
+    $runtimeMajor = Get-RuntimeMajor
+
+    foreach ($runtime in Get-MissingRuntime -Rid $Rid)
+    {
+        $problems += "The $($runtime.Name) is not installed, and $($runtime.Purpose) needs it. Install it from $($runtime.Url)"
+    }
+
+    # And an SDK. The worker runs a design-time build through Microsoft.CodeAnalysis.Workspaces.MSBuild,
+    # which locates MSBuild and the targets out of an SDK installation -- with the runtime alone every
+    # project loads with no references and reports thousands of errors about System.Object being
+    # undefined, which reads as a broken solution rather than a missing tool.
+    #
+    # Any SDK no newer than the runtime will do, not only a matching one: the worker loads the SDK's
+    # own MSBuild into its process, which works for an older SDK and never for a newer one. Somebody
+    # whose solutions build with an older SDK needs only the runtime above.
     $sdks = @()
     try { $sdks = @(& dotnet --list-sdks 2>$null) } catch { }
 
+    $usable = $sdks | Where-Object { $_ -match '^(\d+)\.' -and [int]$Matches[1] -le $runtimeMajor }
     if ($sdks.Count -eq 0)
     {
         $problems += 'No .NET SDK was found. RoseMCP needs the SDK, not just the runtime: without it every project loads with no references and reports thousands of errors about System.Object. Install it from https://dotnet.microsoft.com/download'
     }
-    elseif (-not ($sdks | Where-Object { $_ -match '^10\.' }))
+    elseif (-not $usable)
     {
         $found = ($sdks | ForEach-Object { ($_ -split ' ')[0] }) -join ', '
-        $problems += "No .NET 10 SDK was found. RoseMCP targets net10.0 and its worker needs a matching SDK. Found: $found"
+        $problems += "No .NET SDK RoseMCP can use was found. It runs on .NET $runtimeMajor and can only load an SDK of version $runtimeMajor or older; a newer one needs a RoseMCP built for it. Found: $found"
     }
 
     # The tray and the inspector are unpackaged WinUI 3, so the Windows App Runtime has to be on the
@@ -753,8 +1039,8 @@ function Clear-InstallPayload
         read.
 
         -KeepCurrentRelay keeps the relay's folder where the relay in it is the one this layout would
-        install, because its relays are still running and holding it; a relay of another protocol goes
-        with the rest, its relays having been stopped. Without it the folder goes too, and nothing here
+        install, because its relays are still running and holding it; a relay of another protocol or
+        .NET major goes with the rest, its relays having been stopped. Without it the folder goes too, and nothing here
         reads the layout -- removing an install has none.
     #>
     param(

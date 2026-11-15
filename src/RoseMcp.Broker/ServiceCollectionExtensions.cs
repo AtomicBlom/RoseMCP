@@ -193,7 +193,7 @@ public static class ServiceCollectionExtensions
 		// genuinely cannot open one, and saying so beats a tool argument that silently does nothing.
 		services.TryAddSingleton<IInspectorPresenter>(NoInspector.WithoutAnEndpoint);
 
-		// The live-app debugger is ICorDebug and dbgshim, and RoseMcp.LiveApp is net10.0-windows, so
+		// The live-app debugger is ICorDebug and dbgshim, and RoseMcp.LiveApp is net11.0-windows, so
 		// none of it is there on a Linux build. The launch sites already know that, but registration
 		// did not, and a declared tool that cannot run is worse than an absent one: the caller only
 		// finds out at the call, having already chosen the approach the tool implied was available.

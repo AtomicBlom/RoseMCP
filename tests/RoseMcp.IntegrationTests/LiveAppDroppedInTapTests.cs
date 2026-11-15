@@ -24,7 +24,7 @@ public sealed class LiveAppDroppedInTapTests
 	/// </summary>
 	private static void NameTheTestTapFolder()
 	{
-		var folder = Path.Combine(RepositoryRoot(), "tests", "RoseMcp.TestTap", "bin", Configuration(), "net10.0");
+		var folder = Path.Combine(RepositoryRoot(), "tests", "RoseMcp.TestTap", "bin", Configuration(), "net11.0");
 		File.Exists(Path.Combine(folder, "RoseMcp.TestTap.dll")).ShouldBeTrue($"The test tap was not built into {folder}.");
 
 		var named = Environment.GetEnvironmentVariable(TapFolders.Variable);
@@ -35,7 +35,7 @@ public sealed class LiveAppDroppedInTapTests
 
 	private static string TapProbeTargetPath()
 	{
-		var exe = Path.Combine(RepositoryRoot(), "tests", "TapProbeTarget", "bin", Configuration(), "net10.0", "TapProbeTarget.exe");
+		var exe = Path.Combine(RepositoryRoot(), "tests", "TapProbeTarget", "bin", Configuration(), "net11.0", "TapProbeTarget.exe");
 		if (!File.Exists(exe)) throw new FileNotFoundException("The tap probe target was not built.", exe);
 
 		return exe;

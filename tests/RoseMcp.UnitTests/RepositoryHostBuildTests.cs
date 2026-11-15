@@ -35,7 +35,7 @@ public sealed class RepositoryHostBuildTests : IDisposable
 
 	/// <summary>Where the broker's own build output sits, which is what says which repository and configuration this is.</summary>
 	private string BrokerDirectory =>
-		Path.Combine(_root, "src", "RoseMcp.Broker", "bin", "Debug", "net10.0");
+		Path.Combine(_root, "src", "RoseMcp.Broker", "bin", "Debug", "net11.0");
 
 	[Test]
 	public void An_ordinary_build_wins_over_an_earlier_per_rid_one()
@@ -123,7 +123,7 @@ public sealed class RepositoryHostBuildTests : IDisposable
 	/// </summary>
 	private string StageHost(string? rid, DateTime writtenUtc, string configuration = "Debug")
 	{
-		var directory = Path.Combine(_root, "src", "RoseMcp.LiveApp", "bin", configuration, "net10.0-windows");
+		var directory = Path.Combine(_root, "src", "RoseMcp.LiveApp", "bin", configuration, "net11.0-windows");
 		if (rid is not null) directory = Path.Combine(directory, rid);
 
 		Directory.CreateDirectory(directory);
@@ -142,7 +142,7 @@ public sealed class RepositoryHostBuildTests : IDisposable
 	private string StageWorker(DateTime writtenUtc, string configuration = "Debug")
 	{
 		var directory = Directory.CreateDirectory(
-			Path.Combine(_root, "src", "RoseMcp.Worker", "bin", configuration, "net10.0"));
+			Path.Combine(_root, "src", "RoseMcp.Worker", "bin", configuration, "net11.0"));
 
 		var name = OperatingSystem.IsWindows() ? "RoseMcp.Worker.exe" : "RoseMcp.Worker";
 		var path = Path.Combine(directory.FullName, name);

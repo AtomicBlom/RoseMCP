@@ -19,7 +19,7 @@ namespace RoseMcp.IntegrationTests;
 /// </para>
 /// <para>
 /// Here rather than in the unit suite because neither test project takes a compile reference on the
-/// host: it is net10.0-windows, and the broker reaches it as an MCP client over a pipe. The assembly
+/// host: it is net11.0-windows, and the broker reaches it as an MCP client over a pipe. The assembly
 /// is loaded from the build output instead, which is what puts this test's cost here even though it
 /// starts no process and loads no solution.
 /// </para>
@@ -59,7 +59,7 @@ public sealed class ToolParityTests
 			"RoseMcp.LiveApp",
 			"bin",
 			TestToolchain.Configuration(),
-			"net10.0-windows",
+			"net11.0-windows",
 			"RoseMcp.LiveApp.dll");
 
 		File.Exists(path).ShouldBeTrue($"the live-app host is not built at {path}");

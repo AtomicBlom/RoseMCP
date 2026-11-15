@@ -11,10 +11,11 @@
                and CI on every push, both of which run where somebody can act on a failure. The
                whole tree is published into a stage first, with the running instance untouched;
                only once that succeeds are the tray and any stdio server running from the install
-               stopped -- a running exe cannot be overwritten -- the stage copied over, and the
-               tray restarted. So the outage is a copy rather than a build, and a failed build leaves
-               the old instance serving. A session connected through the relay keeps its connection:
-               the relay sits in a folder this leaves alone unless the relay protocol changed,
+               stopped -- a running exe cannot be overwritten -- the old payload cleared, the stage
+               copied in, and the tray restarted. So the outage is a copy rather than a build, and a
+               failed build leaves the old instance serving. A session connected through the relay
+               keeps its connection: the relay sits in a folder this leaves alone unless the relay
+               protocol or its .NET major changed,
                reconnects to the new tray by itself and tells its client the tools changed only if
                they did, and the deploy says how many reconnected. What a deploy still costs is a
                solution reload on the first call.
@@ -470,6 +471,11 @@ if ($Mode -eq 'promote')
     $onWindowsRid = Test-WindowsRid $Runtime[0]
     $stopped = Stop-Install -Root $Destination -KeepCurrentRelay:$onWindowsRid
 
+    # Cleared before copying, as both installers do. The stage is fresh, but the install is not: a
+    # file or folder that has left the layout stays there through every promote that only copies over
+    # it, and is loaded by -- or, as a folder of its own, runs as -- a build that never shipped it.
+    Clear-InstallPayload -Root $Destination -KeepCurrentRelay:$onWindowsRid
+
     Write-Host "  copying $stage -> $Destination"
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
     Copy-InstallPayload -From $stage -To $Destination
@@ -501,7 +507,7 @@ if ($Mode -eq 'promote')
 
     if ($stopped.RelaysStopped -gt 0)
     {
-        Write-Host ("the relay protocol changed, so {0} relay(s) were stopped; their sessions need /mcp to start the new relay" -f $stopped.RelaysStopped)
+        Write-Host ("the relay's protocol or .NET version changed, so {0} relay(s) were stopped; their sessions need /mcp to start the new relay" -f $stopped.RelaysStopped)
     }
 
     if ($trayStarted -and $stopped.RelaysKept -gt 0)

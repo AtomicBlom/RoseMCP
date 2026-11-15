@@ -10,9 +10,9 @@
          repository is in the path to suppress it. -->
     <OutputType>WinExe</OutputType>
     <!-- Windows-only by nature: it loads the target's mscordbi and uses the UWP shell COM interfaces,
-         so it targets net10.0-windows (which satisfies the platform-compatibility analyzer without any
+         so it targets net11.0-windows (which satisfies the platform-compatibility analyzer without any
          extra runtime dependency, since it uses neither WinForms nor WPF). -->
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net11.0-windows</TargetFramework>
     <!-- Publishable per-RID: the broker launches the host in the *target's* architecture, because
          ICorDebug offers no cross-architecture path. All three, because all three are reachable:
          win-x86 is the default platform of the modern UWP project template and runs under WOW64 on

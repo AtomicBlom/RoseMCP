@@ -18,8 +18,8 @@
     Deliberately not in RoseMcp.slnx, so `dotnet build RoseMcp.slnx` neither builds nor needs it.
   -->
   <PropertyGroup>
-    <!-- Overrides the repository-wide net10.0: the WindowsAppSDK has no non-Windows target. -->
-    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <!-- Overrides the repository-wide net11.0: the WindowsAppSDK has no non-Windows target. -->
+    <TargetFramework>net11.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <IsPackable>false</IsPackable>
     <!-- Nothing here is compiled, and an empty project that insists on a documentation file or

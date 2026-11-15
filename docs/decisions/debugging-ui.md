@@ -78,12 +78,12 @@ warns about, and a session doing it repeatedly is a channel failing quietly.
 
 ## The shared UI is two projects, split by what a test can reach
 
-**Decision.** `RoseMcp.Ui.Core` is plain `net10.0` and holds everything testable: the rows a window
+**Decision.** `RoseMcp.Ui.Core` is plain `net11.0` and holds everything testable: the rows a window
 binds to, the formatting they carry, the merge that keeps them alive across a refresh, and the poll
-loop. `RoseMcp.Ui` is `net10.0-windows` with `UseWinUI` and holds the resource dictionaries, the
+loop. `RoseMcp.Ui` is `net11.0-windows` with `UseWinUI` and holds the resource dictionaries, the
 window chrome and the crash handler. Both apps reference both.
 
-**Why not one project.** A `net10.0` test project cannot reference a `net10.0-windows` assembly at
+**Why not one project.** A `net11.0` test project cannot reference a `net11.0-windows` assembly at
 all, so anything in the WinUI half is code no unit test can see. This repository has already settled
 that question twice, in the same direction: `XamlStackModules` lives in Contracts and markup parsing
 lives in `RoseMcp.XamlDiff`, both because the host that owns the behaviour cannot be referenced from
@@ -197,7 +197,7 @@ addresses, so it always works, and a caller that has a name can still use it.
 
 **Why in Contracts.** It is a pure function over strings, which is the exception that already put
 `XamlStackModules` and `ToolArgumentShape` there: the host that owns the behaviour is
-`net10.0-windows`, so a grammar living beside it is a grammar no test can see. Resolving a parsed
+`net11.0-windows`, so a grammar living beside it is a grammar no test can see. Resolving a parsed
 path against live `CorDebugValue`s stays in the host, where it cannot be tested without a target.
 The rule that keeps this honest is unchanged -- nothing holding state, touching Roslyn, or knowing
 what a tool does goes in Contracts.

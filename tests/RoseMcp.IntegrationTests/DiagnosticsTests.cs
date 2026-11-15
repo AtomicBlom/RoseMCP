@@ -58,6 +58,28 @@ public sealed class DiagnosticsTests(SharedWorkspaces workspaces)
 		named.Diagnostics.ShouldContain(entry => entry.Id == "CS0246");
 	}
 
+	/// <summary>
+	/// A project left on its framework's default language version compiles here as it does in its own
+	/// build. When the worker's Roslyn is older than the SDK's compiler, the newest version reads as the
+	/// one before it, and every use of a feature it adds is reported as CS9327, an error the real build
+	/// does not have.
+	/// </summary>
+	[Test]
+	public async Task Compiles_the_language_version_the_sdk_defaults_to()
+	{
+		using var fixture = FixtureSolution.Copy("NewestLanguage", "NewestLanguage.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var service = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		var result = await service.AnalyseAsync(
+			await session.ReadAsync(cancellationToken),
+			new DiagnosticsRequest { MinimumSeverity = Microsoft.CodeAnalysis.DiagnosticSeverity.Error },
+			cancellationToken);
+
+		result.Diagnostics.ShouldBeEmpty();
+	}
+
 	[Test]
 	public async Task Reports_an_error_introduced_out_of_band_with_its_location()
 	{

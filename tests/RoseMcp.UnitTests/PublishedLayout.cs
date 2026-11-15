@@ -15,6 +15,7 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 internal sealed record PublishedLayout(
 	IReadOnlyList<PublishedLayout.Runtime> Runtimes,
+	PublishedLayout.DotnetLayout Dotnet,
 	IReadOnlyList<PublishedLayout.Component> Components,
 	PublishedLayout.RelayLayout Relay,
 	PublishedLayout.LiveAppHostLayout LiveAppHost,
@@ -71,6 +72,10 @@ internal sealed record PublishedLayout(
 	/// <param name="LiveAppHosts">The debug hosts such a machine can execute, and so carries.</param>
 	public sealed record Runtime(string Rid, string OsArchitecture, string InnoCheck, IReadOnlyList<string> LiveAppHosts);
 
+	/// <summary>The .NET every RoseMCP process runs on.</summary>
+	/// <param name="Major">The major version: the runtimes an install needs, and the newest SDK the worker can load.</param>
+	public sealed record DotnetLayout(int Major);
+
 	/// <summary>One published project, and where its executable sits relative to the install root.</summary>
 	/// <param name="Project">The project under <c>src</c>.</param>
 	/// <param name="Executable">The apphost's name, without an extension.</param>
@@ -79,7 +84,7 @@ internal sealed record PublishedLayout(
 	/// <param name="HostsBroker">Whether a broker runs from its folder, and so resolves the others from there.</param>
 	public sealed record Component(string Project, string Executable, string Folder, bool WindowsOnly, bool HostsBroker);
 
-	/// <summary>The stdio relay, in a folder of its own that a deploy replaces only for another protocol.</summary>
+	/// <summary>The stdio relay, in a folder of its own that a deploy replaces only for another protocol or .NET major.</summary>
 	/// <param name="Project">The project under <c>src</c> published into it.</param>
 	/// <param name="Executable">The apphost's name, without an extension.</param>
 	/// <param name="Folder">Its folder under the install root, and under each runtime's payload in the package.</param>

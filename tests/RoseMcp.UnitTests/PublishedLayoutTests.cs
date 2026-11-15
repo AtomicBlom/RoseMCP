@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 using RoseMcp.Logging;
@@ -242,6 +243,20 @@ public sealed class PublishedLayoutTests : IDisposable
 		Layout.Relay.Folder.ShouldBe(RelayProtocol.Folder);
 		Layout.Relay.Executable.ShouldBe(Layout.ComponentFor(Layout.Relay.Project).Executable);
 		Layout.Components.Select(component => component.Folder).ShouldNotContain(Layout.Relay.Folder, "the relay's folder is its own");
+	}
+
+	/// <summary>
+	/// The .NET major the installers check for, offer and hold the relay to is the one the projects
+	/// target. A layout left behind by a retarget asks an install for runtimes nothing runs on, says
+	/// nothing of the ones it does, and keeps a relay built for the old major as current.
+	/// </summary>
+	[Test]
+	public void Names_the_dotnet_major_the_projects_target()
+	{
+		var target = new FrameworkName(AppContext.TargetFrameworkName!);
+
+		target.Identifier.ShouldBe(".NETCoreApp");
+		Layout.Dotnet.Major.ShouldBe(target.Version.Major);
 	}
 
 	/// <summary>

@@ -83,6 +83,51 @@ public sealed class TapEndpointRouteTests
 		refusal.ShouldContain("Test 1.0 endpoint");
 	}
 
+	/// <summary>
+	/// A framework that names the folders its endpoint loads from refuses a tap anywhere else, and the host
+	/// passes on which endpoint refused, which tap and why, rather than a bare failure.
+	/// </summary>
+	[Test]
+	public void Says_the_endpoint_refused_a_tap_outside_the_folders_it_loads_from()
+	{
+		var tap = TestTap();
+		var pid = Environment.ProcessId;
+		var elsewhere = Directory.CreateTempSubdirectory("rosemcp-taps-");
+		try
+		{
+			using var endpoint = TapEndpoint.Start(EndpointWire.PipeName(tap.Endpoint, pid), "Test", "1.0", tapDirectories: [elsewhere.FullName]);
+
+			var refusal = TapEndpointClient.Load(pid, tap, "unused|unused|unused", Patience);
+
+			refusal.ShouldNotBeNull().ShouldContain("Test 1.0 endpoint");
+			refusal.ShouldContain("not in a folder this endpoint loads taps from");
+		}
+		finally
+		{
+			elsewhere.Delete(recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// The same endpoint loads the tap once its folder is one it names: the folder restriction a careful
+	/// framework turns on admits a tap dropped where RoseMCP reads it.
+	/// </summary>
+	[Test]
+	public void Loads_a_tap_from_a_folder_the_endpoint_loads_from()
+	{
+		var tap = TestTap();
+		var pid = Environment.ProcessId;
+		using var endpoint = TapEndpoint.Start(EndpointWire.PipeName(tap.Endpoint, pid), "Test", "1.0",
+			tapDirectories: [Path.GetDirectoryName(TestTapPath)!]);
+		using var pipe = new XamlProviderPipe(NullLogger.Instance, TapProtocolRange.DroppedIn);
+		pipe.Listen().ShouldBeNull();
+
+		var refusal = TapEndpointClient.Load(pid, tap, $"{Path.GetTempPath()}|{pipe.Name}|{pipe.Nonce}", Patience);
+
+		refusal.ShouldBeNull();
+		pipe.WaitForProvider(Patience).ShouldNotBeNull(pipe.Refused);
+	}
+
 	[Test]
 	public void A_pipe_nobody_created_is_not_listening()
 	{

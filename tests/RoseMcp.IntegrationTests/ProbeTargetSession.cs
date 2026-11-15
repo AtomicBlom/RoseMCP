@@ -66,7 +66,7 @@ internal static class ProbeTargetSession
 	/// <summary>Where the probe target's build output is, refusing rather than starting nothing.</summary>
 	internal static string ProbeTargetPath()
 	{
-		var exe = Path.Combine(RepositoryRoot(), "tests", "DebugProbeTarget", "bin", Configuration(), "net10.0", "DebugProbeTarget.exe");
+		var exe = Path.Combine(RepositoryRoot(), "tests", "DebugProbeTarget", "bin", Configuration(), "net11.0", "DebugProbeTarget.exe");
 		if (!File.Exists(exe)) throw new FileNotFoundException("The debug probe target was not built.", exe);
 
 		return exe;

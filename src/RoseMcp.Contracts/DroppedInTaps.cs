@@ -14,7 +14,7 @@ namespace RoseMcp.Contracts;
 /// being inspected".
 /// </para>
 /// <para>
-/// Here rather than beside the host because the host is <c>net10.0-windows</c> and the unit suite cannot
+/// Here rather than beside the host because the host is <c>net11.0-windows</c> and the unit suite cannot
 /// reference it; what the host contributes -- the folders it read, whether a pipe exists -- is passed in.
 /// </para>
 /// </summary>

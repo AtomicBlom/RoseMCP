@@ -5,7 +5,7 @@ namespace RoseMcp.Contracts;
 /// <para>
 /// Beside the enum rather than in the live-app host for two reasons. The module names are what give
 /// the enum meaning to anything looking at a running process, so they are the same fact. And the
-/// ordering below is subtle enough to need a regression test, while the host is net10.0-windows and
+/// ordering below is subtle enough to need a regression test, while the host is net11.0-windows and
 /// neither test project takes a compile reference on it -- so a rule left there could only have been
 /// covered by launching real apps of three frameworks.
 /// </para>

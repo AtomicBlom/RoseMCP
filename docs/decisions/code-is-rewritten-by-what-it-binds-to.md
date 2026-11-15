@@ -83,7 +83,7 @@ needs Workspaces, which the matcher is kept free of.
 `Microsoft.CodeAnalysis.CSharp` alone, so the parse, the binding, the match, the rewrite and the
 rounds of compilation run anywhere a `Compilation` does -- including, later, inside an analyzer
 that reports a rule's matches as diagnostics during a build. The worker supplies what needs a
-`Solution`: import placement, formatting, and the edit pipeline. It targets `net10.0` like
+`Solution`: import placement, formatting, and the edit pipeline. It targets `net11.0` like
 `RoseMcp.XamlStubs`, and keeps to APIs an older Roslyn has, so moving it to `netstandard2.0` for an
 IDE is a retarget rather than a rewrite.
 
